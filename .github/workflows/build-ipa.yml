@@ -1,0 +1,136 @@
+# 公开中转仓专用构建流水线（由 scripts/make_public_build.py 覆盖到 .github/workflows/build-ipa.yml）
+#
+# 与私仓版本的差别（都是有原因的，别随手改回去）：
+#   1) 只构建星幕/心屋（夜航数据不得进公开仓 → 夜航一律不在中转仓构建）
+#   2) 只要求 FC_VAULT_KEY（夜航 token 是给夜航 feed 私有仓用的，星幕/心屋用不到，少放一把钥匙少一份风险）
+#   3) 产物必须加密后再上传（公开仓 artifact 人人可下，IPA 里嵌着密钥）
+name: build-ipa-2apps
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # 缺密钥 = 当场红灯（旧版只 WARNING → 静默产出「无数据/整页全黑」假包，用户白装一次）
+      - name: Inject secret + build stamp (硬门禁)
+        env:
+          FC_VAULT_KEY: ${{ secrets.FC_VAULT_KEY }}
+        run: |
+          set -euo pipefail
+          f="Packages/FilmCore/Sources/FilmCore/Product/ProductProfile.swift"
+          if [ -z "${FC_VAULT_KEY:-}" ]; then
+            echo "::error::FC_VAULT_KEY 未配置 —— feed/直播是 FCVB1 密文，缺钥 = 无数据 = 整页全黑，拒绝出包"
+            exit 1
+          fi
+          sed -i.bak "s|__FC_VAULT_KEY_B64__|$FC_VAULT_KEY|" "$f" && rm -f "$f.bak"
+          echo "fc vault key injected (len=${#FC_VAULT_KEY})"
+
+          STAMP=$(git rev-parse --short=12 HEAD)
+          sed -i.bak "s|__BUILD_STAMP__|$STAMP|" "$f" && rm -f "$f.bak"
+          echo "$STAMP" > /tmp/build_stamp.txt
+          echo "build stamp = $STAMP  (commit: $(git log -1 --pretty=%s))"
+
+          left=$(grep -c "__FC_VAULT_KEY_B64__\|__BUILD_STAMP__" "$f" || true)
+          if [ "$left" != "0" ]; then echo "::error::$left 个占位符未替换"; exit 1; fi
+
+      - name: Ensure xcodegen (预装优先 + 官方包兜底，绕开 brew 网络依赖)
+        run: |
+          set -euo pipefail
+          if command -v xcodegen >/dev/null 2>&1; then
+            echo "xcodegen preinstalled: $(xcodegen --version)"
+            exit 0
+          fi
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+          if brew install xcodegen; then
+            xcodegen --version
+            exit 0
+          fi
+          echo "brew 失败 → 取官方预编译包兜底"
+          curl -fL --retry 3 -o /tmp/xcodegen.zip \
+            https://github.com/yonaskolb/XcodeGen/releases/latest/download/xcodegen.zip
+          unzip -q /tmp/xcodegen.zip -d /tmp/xg
+          sudo cp /tmp/xg/xcodegen/bin/xcodegen /usr/local/bin/xcodegen
+          sudo chmod +x /usr/local/bin/xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build two apps (unsigned, device SDK)
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          for scheme in XingmuISO XinwuISO; do
+            echo "===== build $scheme ====="
+            set -o pipefail
+            if ! xcodebuild -project FilmThree.xcodeproj \
+              -scheme "$scheme" \
+              -configuration Release \
+              -destination 'generic/platform=iOS' \
+              -derivedDataPath build/DerivedData \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+              build 2>&1 | tee "/tmp/$scheme.log" | tail -5; then
+              echo "===== $scheme FAILED: error lines ====="
+              grep -E "error:" "/tmp/$scheme.log" | sort -u | head -80 || true
+              exit 1
+            fi
+            app=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "$scheme.app")
+            echo "app found: $app"
+            [ -n "$app" ] || { echo "::error::$scheme.app 未产出"; exit 1; }
+
+            # 产物指纹断言：二进制里必须能找到本次提交 SHA —— 抓「缓存复用/检错 ref/旧产物冒充」
+            STAMP=$(cat /tmp/build_stamp.txt)
+            if ! grep -a -q "$STAMP" "$app/$scheme"; then
+              echo "::error::$scheme 产物里找不到构建指纹 $STAMP（怀疑用了缓存或检错提交）"
+              exit 1
+            fi
+            echo "build stamp found in binary: $STAMP"
+
+            # hero 内置资源必须真进 app bundle（防「代码写了但资源没打进去」）
+            echo "===== $scheme hero bundle check ====="
+            mani=$(find "$app" -name "hbn_manifest.json" | head -1)
+            if [ -z "$mani" ]; then
+              echo "::error::$scheme 缺少 hbn_manifest.json（HeroBundled 未打进 bundle）"
+              exit 1
+            fi
+            echo "manifest: $mani"
+            jcount=$(find "$app" -name "hbn_*.jpg" -o -name "hbn_*.png" -o -name "hbn_*.webp" | wc -l | tr -d ' ')
+            echo "hero images in bundle: $jcount"
+            if [ "$jcount" -lt 15 ]; then
+              echo "::error::$scheme hero 图仅 $jcount 张（要求 >=15）"
+              exit 1
+            fi
+            cnt=$(python3 -c "import json;print(len(json.load(open('$mani'))))")
+            echo "manifest entries: $cnt"
+            if [ "$cnt" -lt 15 ]; then
+              echo "::error::$scheme manifest 条目 $cnt < 15"
+              exit 1
+            fi
+
+            mkdir -p "artifact/$scheme/Payload"
+            cp -R "$app" "artifact/$scheme/Payload/"
+            (cd "artifact/$scheme" && zip -qry "../$scheme.ipa" Payload)
+            rm -rf "artifact/$scheme"
+          done
+          ls -la artifact
+
+      # 公开仓 artifact 人人可下 → 必须先加密；ART_PASS 只在 Secret 与用户本机凭据册
+      - name: Encrypt IPAs (公开仓禁止明文产物)
+        env:
+          ART_PASS: ${{ secrets.ART_PASS }}
+        run: python3 scripts/art_encrypt.py
+
+      - name: Upload encrypted IPAs
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ipas-enc
+          path: |
+            artifact/*.ipa.enc
+            artifact/art.key.json
+          retention-days: 7

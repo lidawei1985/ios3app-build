@@ -1,0 +1,132 @@
+# ============================================================================
+# Codemagic 免费云构建通道（三端 ISO iOS 无签名 IPA）
+#   · 免费额度：500 macOS M2 分钟/月，每月自动重置；1 并行；产物保留 30 天
+#   · 支持【私有仓库】→ 夜航（成人流）也能在这里构建，产物只对登录用户可见，不会像公开中转仓那样泄露密钥
+#   · 不需要信用卡
+# ----------------------------------------------------------------------------
+# 一次性网页前置（详细图文见 F:/IOS3APP/ios_ctrl/CODEMAGIC_SETUP.md）：
+#   1) https://codemagic.io → Sign up with GitHub
+#   2) Add application → GitHub → 授权 → Install GitHub App → 勾选 ios-three-apps
+#   3) 项目类型选【Other】（本仓用 XcodeGen，仓里没有 .xcodeproj，选 iOS 会要求指定工程文件而失败）
+#   4) App settings → Environment variables → 新增两个变量并勾选 Secure：
+#        FC_VAULT_KEY        （FC 发布层 FCVB1 解密密钥，32B 原始字节的 base64）
+#        YEHANG_FEED_TOKEN   （夜航 feed 私有仓只读 token）
+#      ⚠️ 不勾 Secure 会被写进构建日志 = 泄露
+#      ⚠️ 两个都必须配：**故意不设兜底**——今天的事故就是"密钥缺失 → 静默构建出一个
+#         无数据、整页全黑的假包"，装到手机上看着像"代码没上线"。现在缺任一个 = 当场红灯。
+#   5) Start new build → 选 build-three-iso 工作流 → 跑完在 Artifacts 里下载 3 个 IPA
+# ----------------------------------------------------------------------------
+# 与本仓 .github/workflows/build-ipa.yml 一一对应（同一份校验、同一产物结构），改一个必须同步改另一个。
+# ============================================================================
+workflows:
+  build-three-iso:
+    name: build three ISO apps (unsigned)
+    instance_type: mac_mini_m2          # 免费额度机型（mac_mini_m4 按分钟计费，别选）
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      # 密钥来自 Codemagic → App settings → Environment variables（不要在 yaml 里写 `X: $X` 自引用，
+      # 未在 UI 配置时会直接报 "variable not found" 而整个构建起不来）
+    scripts:
+      - name: Inject secrets + build stamp
+        script: |
+          set -uo pipefail
+          f="Packages/FilmCore/Sources/FilmCore/Product/ProductProfile.swift"
+
+          # ① 硬门禁：密钥缺失直接红灯（绝不再产"无数据全黑包"）
+          if [ -z "${FC_VAULT_KEY:-}" ]; then
+            echo "ERROR: FC_VAULT_KEY 未配置 —— feed/直播是 FCVB1 密文，缺钥 = 无数据 = 整页全黑。"
+            echo "       请到 App settings → Environment variables 添加（勾 Secure）后重跑。"
+            exit 1
+          fi
+          if [ -z "${YEHANG_FEED_TOKEN:-}" ]; then
+            echo "ERROR: YEHANG_FEED_TOKEN 未配置 —— 夜航 feed 私有仓拉不到。"
+            echo "       请到 App settings → Environment variables 添加（勾 Secure）后重跑。"
+            exit 1
+          fi
+
+          # ② 注入
+          sed -i.bak "s|__YEHANG_TOKEN_PLACEHOLDER__|$YEHANG_FEED_TOKEN|" "$f" && rm -f "$f.bak"
+          sed -i.bak "s|__FC_VAULT_KEY_B64__|$FC_VAULT_KEY|" "$f" && rm -f "$f.bak"
+          echo "token injected (len=${#YEHANG_FEED_TOKEN})"
+          echo "vault key injected (len=${#FC_VAULT_KEY})"
+
+          # ③ 构建指纹：写进「本次实际检出的提交短 SHA」
+          STAMP=$(git rev-parse --short=12 HEAD)
+          sed -i.bak "s|__BUILD_STAMP__|$STAMP|" "$f" && rm -f "$f.bak"
+          echo "$STAMP" > /tmp/build_stamp.txt
+          echo "build stamp = $STAMP  (commit: $(git log -1 --pretty=%s))"
+
+          left=$(grep -c "__YEHANG_TOKEN_PLACEHOLDER__\|__FC_VAULT_KEY_B64__\|__BUILD_STAMP__" "$f" || true)
+          if [ "$left" != "0" ]; then echo "ERROR: 仍有 $left 个占位符未替换"; exit 1; fi
+
+      - name: Ensure xcodegen (预装优先 + brew + 官方包兜底，绕开 runner 网络依赖)
+        script: |
+          set -euo pipefail
+          if command -v xcodegen >/dev/null 2>&1; then
+            echo "xcodegen preinstalled: $(xcodegen --version)"; exit 0
+          fi
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+          if brew install xcodegen; then xcodegen --version; exit 0; fi
+          echo "brew 失败 → 取官方预编译包兜底"
+          curl -fL --retry 3 -o /tmp/xcodegen.zip \
+            https://github.com/yonaskolb/XcodeGen/releases/latest/download/xcodegen.zip
+          unzip -q /tmp/xcodegen.zip -d /tmp/xg
+          sudo cp /tmp/xg/xcodegen/bin/xcodegen /usr/local/bin/xcodegen
+          sudo chmod +x /usr/local/bin/xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        script: xcodegen generate
+
+      - name: Build three apps (unsigned, device SDK) + 产物指纹断言
+        script: |
+          set -euo pipefail
+          STAMP=$(cat /tmp/build_stamp.txt)
+          mkdir -p artifact
+          for scheme in XingmuISO XinwuISO YehangISO; do
+            echo "===== build $scheme ====="
+            set -o pipefail
+            if ! xcodebuild -project FilmThree.xcodeproj \
+              -scheme "$scheme" \
+              -configuration Release \
+              -destination 'generic/platform=iOS' \
+              -derivedDataPath build/DerivedData \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+              build 2>&1 | tee "/tmp/$scheme.log" | tail -5; then
+              echo "===== $scheme FAILED: error lines ====="
+              grep -E "error:" "/tmp/$scheme.log" | sort -u | head -80 || true
+              exit 1
+            fi
+            app=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "$scheme.app")
+            echo "app found: $app"
+            [ -n "$app" ] || { echo "ERROR: $scheme.app 未产出"; exit 1; }
+
+            # ★ 指纹断言：产物二进制里必须能找到本次提交 SHA —— 抓"缓存复用/检错 ref/旧产物冒充"
+            if ! grep -a -q "$STAMP" "$app/$scheme"; then
+              echo "ERROR: $scheme 产物里找不到构建指纹 $STAMP（怀疑用了缓存或检错提交）"
+              exit 1
+            fi
+            echo "build stamp found in binary: $STAMP"
+
+            # 硬校验：hero 内置资源必须真进 app bundle（防「代码写了但资源没打进去」蒙混过 CI）
+            echo "===== $scheme hero bundle check ====="
+            mani=$(find "$app" -name "hbn_manifest.json" | head -1)
+            if [ -z "$mani" ]; then echo "ERROR: $scheme 缺少 hbn_manifest.json（HeroBundled 未打进 bundle）"; exit 1; fi
+            echo "manifest: $mani"
+            jcount=$(find "$app" \( -name "hbn_*.jpg" -o -name "hbn_*.png" -o -name "hbn_*.webp" \) | wc -l | tr -d ' ')
+            echo "hero images in bundle: $jcount"
+            if [ "$jcount" -lt 15 ]; then echo "ERROR: $scheme hero 图仅 $jcount 张（要求 >=15）"; exit 1; fi
+            cnt=$(python3 -c "import json;print(len(json.load(open('$mani'))))")
+            echo "manifest entries: $cnt"
+            if [ "$cnt" -lt 15 ]; then echo "ERROR: $scheme manifest 条目 $cnt < 15"; exit 1; fi
+
+            mkdir -p "artifact/$scheme/Payload"
+            cp -R "$app" "artifact/$scheme/Payload/"
+            (cd "artifact/$scheme" && zip -qry "../$scheme.ipa" Payload)
+            rm -rf "artifact/$scheme"
+          done
+          echo "----- 产物清单（含指纹 $STAMP）-----"
+          ls -la artifact
+    artifacts:
+      - artifact/*.ipa

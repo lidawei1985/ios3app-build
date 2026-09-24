@@ -1,0 +1,81 @@
+# XcodeGen 工程定义：三款独立 iOS App 共享 FilmCore/FilmUI 包。
+# 用法（macOS）：brew install xcodegen && xcodegen generate && open FilmThree.xcodeproj
+name: FilmThree
+options:
+  bundleIdPrefix: tv.filmcollector.app
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  FilmCore:
+    path: Packages/FilmCore
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""            # 签名时填入 Apple Developer Team ID（见 docs/SIGNING_AND_RELEASE.md）
+    CODE_SIGN_STYLE: Automatic
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "1"     # iPhone 优先
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  XingmuISO:
+    type: application
+    platform: iOS
+    sources:
+      - Apps/Xingmu
+    dependencies:
+      - package: FilmCore
+      - package: FilmCore
+        product: FilmUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tv.filmcollector.iso.xingmu
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: Apps/Xingmu/Info.plist
+      properties:
+        CFBundleDisplayName: 星幕ISO移动版
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIBackgroundModes: [audio]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true     # 生产源含 http 混合流（与 Android 端 TlsCompat 同语义）
+        ITSAppUsesNonExemptEncryption: false
+  XinwuISO:
+    type: application
+    platform: iOS
+    sources:
+      - Apps/Xinwu
+    dependencies:
+      - package: FilmCore
+      - package: FilmCore
+        product: FilmUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tv.filmcollector.iso.xinwu
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: Apps/Xinwu/Info.plist
+      properties:
+        CFBundleDisplayName: 心屋ISO移动版
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIBackgroundModes: [audio]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        ITSAppUsesNonExemptEncryption: false
+schemes:
+  XingmuISO:
+    build:
+      targets: { XingmuISO: all }
+    run:
+      config: Debug
+  XinwuISO:
+    build:
+      targets: { XinwuISO: all }
+    run:
+      config: Debug
