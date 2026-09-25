@@ -6,6 +6,7 @@ import FilmCore
 public struct LibraryView: View {
     @EnvironmentObject private var store: CatalogStore
     @EnvironmentObject private var library: UserLibrary
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
     @State private var segment = 0
@@ -36,11 +37,13 @@ public struct LibraryView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .listRowBackground(Color.clear)
+                    .listRowBackground(Color.clear)
                 }
             }
 
             Section("更多") {
                 LabeledRow(label: "离线缓存", value: "暂无可下载内容")
+                    .listRowBackground(Color.clear)
                 Button {
                     if let url = URL(string: "mailto:feedback@filmcollector.tv?subject=\(store.profile.appName)%20用户反馈") {
                         UIApplication.shared.open(url)
@@ -49,26 +52,37 @@ public struct LibraryView: View {
                     Text("帮助与反馈").font(.subheadline)
                         .foregroundStyle(theme.textPrimary)
                 }
+                .listRowBackground(Color.clear)
             }
 
             Section("数据") {
                 LabeledRow(label: "收录影片", value: "\(store.catalog.items.count)")
+                    .listRowBackground(Color.clear)
                 LabeledRow(label: "片库总量（feed）", value: "\(store.ledger.sourceCount)")
+                    .listRowBackground(Color.clear)
                 LabeledRow(label: "隔离拦截", value: "\(store.ledger.isolationDroppedCount)")
+                    .listRowBackground(Color.clear)
                 LabeledRow(label: "重复去重", value: "\(store.ledger.duplicateIDCount)")
+                    .listRowBackground(Color.clear)
                 Button("数量台账明细") { showLedgerDetail = true }
                     .foregroundStyle(theme.accent)
+                    .listRowBackground(Color.clear)
                 Button("手动刷新片库") {
                     Task { await store.syncAll() }
                 }
                 .foregroundStyle(theme.accent)
+                .listRowBackground(Color.clear)
             }
 
             Section("关于") {
                 LabeledRow(label: "产品", value: store.profile.appName)
+                    .listRowBackground(Color.clear)
                 LabeledRow(label: "内容定位", value: store.profile.tagline)
+                    .listRowBackground(Color.clear)
                 LabeledRow(label: "数据适配器", value: CatalogCache.adapterVersion)
+                    .listRowBackground(Color.clear)
                 LabeledRow(label: "Feed 版本", value: store.ledger.version ?? "-")
+                    .listRowBackground(Color.clear)
             }
         }
         .scrollContentBackground(.hidden)
@@ -98,7 +112,9 @@ public struct LibraryView: View {
                 emptyRow(icon: "heart", text: "还没有收藏，去首页逛逛吧")
             } else {
                 ForEach(library.favorites) { item in
-                    NavigationLink(value: item) { LibraryRow(item: item) }
+                    Button { router.open(item) } label: { LibraryRow(item: item) }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
                 }
             }
         }
@@ -110,7 +126,7 @@ public struct LibraryView: View {
                 emptyRow(icon: "clock", text: "暂无观看记录")
             } else {
                 ForEach(library.history) { entry in
-                    NavigationLink(value: entry.item) {
+                    Button { router.open(entry.item) } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             LibraryRow(item: entry.item)
                             if entry.durationSeconds > 0 {
@@ -121,6 +137,8 @@ public struct LibraryView: View {
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.clear)
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
                             library.removeHistoryEntry(id: entry.id)
@@ -192,20 +210,31 @@ struct LedgerSheet: View {
             List {
                 Section("链路数量") {
                     LabeledRow(label: "SOURCE（feed manifest）", value: "\(ledger.sourceCount)")
+                        .listRowBackground(Color.clear)
                     LabeledRow(label: "FEED（实拉解码）", value: "\(ledger.feedFetchedCount)")
+                        .listRowBackground(Color.clear)
                     LabeledRow(label: "APP CATALOG（入库）", value: "\(ledger.catalogCount)")
+                        .listRowBackground(Color.clear)
                     LabeledRow(label: "首屏轻量包", value: "\(ledger.homeCount)")
+                        .listRowBackground(Color.clear)
                 }
                 Section("丢弃/异常（含原因）") {
                     LabeledRow(label: "隔离拦截（安全网）", value: "\(ledger.isolationDroppedCount)")
+                        .listRowBackground(Color.clear)
                     ForEach(ledger.isolationReasons.sorted(by: >), id: \.key) { k, v in
                         LabeledRow(label: "  ↳ \(k)", value: "\(v)")
+                            .listRowBackground(Color.clear)
                     }
                     LabeledRow(label: "重复 ID 去重", value: "\(ledger.duplicateIDCount)")
+                        .listRowBackground(Color.clear)
                     LabeledRow(label: "解码失败", value: "\(ledger.decodeErrorCount)")
+                        .listRowBackground(Color.clear)
                     LabeledRow(label: "空海报（保留+占位）", value: "\(ledger.emptyPosterCount)")
+                        .listRowBackground(Color.clear)
                     LabeledRow(label: "无播放源（保留）", value: "\(ledger.noPlayURLCount)")
+                        .listRowBackground(Color.clear)
                     LabeledRow(label: "未知分类（保留）", value: "\(ledger.unknownCategoryCount)")
+                        .listRowBackground(Color.clear)
                 }
                 Section {
                     if ledger.shrinkDetected {

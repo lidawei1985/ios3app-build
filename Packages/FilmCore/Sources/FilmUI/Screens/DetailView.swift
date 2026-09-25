@@ -15,6 +15,7 @@ public struct DetailView: View {
     private let incoming: FeedItem
     @EnvironmentObject private var library: UserLibrary
     @EnvironmentObject private var store: CatalogStore
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
     @Environment(\.dismiss) private var dismiss
 
@@ -77,12 +78,9 @@ public struct DetailView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 10) {
                                 ForEach(related) { rel in
-                                    // 显式 destination（同 PosterRail/PosterGrid）：详情页已是「深层推入页」，
-                                    // value 路由在此解析失效 → 点相关推荐进的是别的片（用户实测 BUG，35包修）。
-                                    // .id(dedupId) 再保一层：强制每个条目独立视图身份，@State 必重新初始化。
-                                    NavigationLink {
-                                        DetailView(item: rel).id(rel.dedupId)
-                                    } label: {
+                                    // 相关推荐也走详情卡弹层：router.item 换片 → sheet 内容 .id 重建
+                                    //（@State 必重新初始化，根除「点相关推荐进的不是这个」的实例复用 BUG）。
+                                    Button { router.open(rel) } label: {
                                         VStack(alignment: .leading, spacing: 5) {
                                             PosterImage(urlString: rel.bestPosterURL?.absoluteString)
                                                 .frame(width: 108, height: 160)
@@ -104,16 +102,26 @@ public struct DetailView: View {
             .padding(.bottom, 40)
         }
         .background(heroTintBackground.ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+        // 详情卡形态：无导航栏，右上浮层「收藏 + 关闭」（原型同款）。
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 22) {
                 Button {
                     library.toggleFavorite(item)
                 } label: {
                     Image(systemName: library.isFavorite(item) ? "heart.fill" : "heart")
                         .foregroundStyle(library.isFavorite(item) ? theme.accent : .white)
                 }
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .foregroundStyle(.white)
+                }
             }
+            .font(.system(size: 17, weight: .semibold))
+            .shadow(color: .black.opacity(0.45), radius: 3, y: 1)
+            .padding(.trailing, 16)
+            .padding(.top, 10)
         }
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreen(item: item, startAtResume: startAtResume,
@@ -293,7 +301,6 @@ public struct DetailView: View {
             ZStack {
                 Color.clear         // 不铺实底，透出整页取色背景（与主页 HeroSlide 同构）
                 fadeLayer           // 底图：底部渐隐到全透明，无硬边
-                stageHaze           // 化雾层（真高斯模糊，只贴下沿）
                 groundLayer         // 落地雾带（两端透明，无实色落点）
                 sideVignette
                 topScrim
@@ -304,13 +311,18 @@ public struct DetailView: View {
         }
     }
 
-    /// 底图渐隐（主页 fadeLayer 同款）：海报下部逐步透明，化进整页取色背景。
+    /// 底图渐隐（主页 fadeLayer 七改同款，2026-09-25）：删高斯雾化带，长程平滑融合。
+    /// 横线机制与主页一致：stageHaze 在 0.86~0.985 显形、最后 0.015 内突然归零，
+    /// 该归零边就是横线本体。改为长程渐隐、0.96 处完全归零，底边前后全纯背景。
     private var fadeLayer: some View {
         stagePoster
             .mask(LinearGradient(stops: [
                 .init(color: .black, location: 0.00),
-                .init(color: .black, location: 0.45),
-                .init(color: .black.opacity(0.55), location: 0.72),
+                .init(color: .black, location: 0.48),
+                .init(color: .black.opacity(0.80), location: 0.64),
+                .init(color: .black.opacity(0.48), location: 0.78),
+                .init(color: .black.opacity(0.18), location: 0.89),
+                .init(color: .clear, location: 0.96),
                 .init(color: .clear, location: 1.00)
             ], startPoint: .top, endPoint: .bottom))
     }
@@ -326,33 +338,21 @@ public struct DetailView: View {
         ], startPoint: .top, endPoint: .bottom)
     }
 
-    private func stageImage(blur: CGFloat) -> some View {
+    private func stageImage() -> some View {
         GeometryReader { geo in
             PosterImage(urlString: (item.bestBackdropURL ?? item.bestPosterURL)?.absoluteString,
                         cornerRadius: 0, contentMode: .fill)
                 .scaleEffect(1.26)                       // 原型 transform:scale(1.26)
                 .saturation(1.06).brightness(-0.08)      // 原型 filter:saturate(1.06) brightness(.92)
-                // 2026-09-24 23:22 用户指令（与主页同）：顶部对齐不裁头，裁切全落底部雾化区
+                // 2026-09-24 23:22 用户指令（与主页同）：顶部对齐不裁头，裁切全落底部融合区
                 .frame(width: geo.size.width, height: geo.size.height * 1.25, alignment: .top)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
                 .clipped()
-                .blur(radius: blur)
         }
     }
 
-    private var stagePoster: some View { stageImage(blur: 0) }
-
-    /// 底部高斯雾带：与主页 hazeLayer 同参数（2026-09-24 23:23 用户指令：只贴最底边，不糊海报本体）。
-    private var stageHaze: some View {
-        stageImage(blur: 9)
-            .mask(LinearGradient(stops: [
-                .init(color: .clear, location: 0.00),
-                .init(color: .clear, location: 0.86),
-                .init(color: .black, location: 0.94),
-                .init(color: .black, location: 0.985),
-                .init(color: .clear, location: 1.00)
-            ], startPoint: .top, endPoint: .bottom))
-    }
+    private var stagePoster: some View { stageImage() }
+    // stageHaze 高斯雾带已于 2026-09-25 删除（七改）：它就是横线本体，机制见 fadeLayer 注释。
 
     /// 两侧暗角（原型 `.vg`）
     private var sideVignette: some View {
@@ -544,7 +544,9 @@ public struct DetailView: View {
                                 Text(n).font(.footnote).lineLimit(1)
                             }
                             .padding(.leading, 4).padding(.trailing, 10).padding(.vertical, 3)
-                            .background(theme.card, in: Capsule())
+                            // 2026-09-25 用户钦点：主演人名胶囊=导航条式透明玻璃
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
                             .foregroundStyle(theme.textPrimary)
                         }
                         .buttonStyle(.plain)
@@ -665,8 +667,10 @@ public struct DetailView: View {
                             Text("源\(idx + 1)")
                                 .font(.subheadline.weight(.semibold))
                                 .padding(.horizontal, 18).padding(.vertical, 11)
-                            .background(theme.card, in: Capsule())
-                            .foregroundStyle(theme.textPrimary)
+                            // 2026-09-25 用户钦点：线路 chips=导航条式透明玻璃；默认线路 accent 描边标出
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(Capsule().stroke(idx == 0 ? theme.accent.opacity(0.55) : .white.opacity(0.14), lineWidth: idx == 0 ? 1 : 0.5))
+                            .foregroundStyle(idx == 0 ? theme.accent : theme.textPrimary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -713,7 +717,9 @@ public struct DetailView: View {
                             .lineLimit(1)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
-                            .background(theme.card, in: RoundedRectangle(cornerRadius: 8))
+                            // 2026-09-25 用户钦点：选集格=导航条式透明玻璃
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.14), lineWidth: 0.5))
                             .foregroundStyle(theme.textPrimary)
                     }
                     .buttonStyle(.plain)

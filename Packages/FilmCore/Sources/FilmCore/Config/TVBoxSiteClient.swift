@@ -265,6 +265,8 @@ public actor TVBoxSiteClient {
                 }
             }
         }
+        // 熔断记账（2026-09-25 用户钦点「源坏了自动补救」）：超时/非200/解码失败 = ok=false
+        SourceHealth.shared.record(site.key, ok: ok)
         return CMSListPage(items: items, page: pg, pageCount: pageCount,
                            total: total, perPage: perPage == 0 ? items.count : perPage,
                            ok: ok)
@@ -279,14 +281,22 @@ public actor TVBoxSiteClient {
     public func detail(vodId: String) async -> FeedItem? {
         guard let data = await api(["ac": "detail", "ids": vodId]),
               let rsp = decodeCMS(data),
-              let first = rsp.list?.first else { return nil }
+              let first = rsp.list?.first else {
+            SourceHealth.shared.record(site.key, ok: false)
+            return nil
+        }
+        SourceHealth.shared.record(site.key, ok: true)
         return map(first)
     }
 
-    /// 搜索（ac=detail&wd=）。
+    /// 搜索（ac=detail&wd=）。空结果≠源坏（可能真没这片），只有网络层失败才记熔断。
     public func search(_ keyword: String) async -> [FeedItem] {
         guard let data = await api(["ac": "detail", "wd": keyword]),
-              let rsp = decodeCMS(data) else { return [] }
+              let rsp = decodeCMS(data) else {
+            SourceHealth.shared.record(site.key, ok: false)
+            return []
+        }
+        SourceHealth.shared.record(site.key, ok: true)
         return (rsp.list ?? []).compactMap { map($0) }
     }
 

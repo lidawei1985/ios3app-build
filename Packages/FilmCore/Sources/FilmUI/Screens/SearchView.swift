@@ -72,14 +72,14 @@ public struct SearchView: View {
         } else {
             ScrollView {
                 if !results.isEmpty {
-                    sectionHeader("片库")
+                    sectionDivider("自有片库")
                     PosterGrid(items: results, columns: 3)
                         .padding(.bottom, 6)
                 }
                 if !tvResults.isEmpty {
                     // 三端通用的「源上直接搜」（2026-09-22：搜不到本地就穿透到源，用户：
                     // 「别不三级蜜桃成熟时我搜索是不是得能看到找到」）
-                    sectionHeader(store.profile.mode == "normal" ? "电视剧 · 网络源" : "源上直搜 · 可直接播")
+                    sectionDivider("内置源结果 · 可直接播")
                     PosterGrid(items: tvResults, columns: 3)
                         .padding(.bottom, 6)
                 }
@@ -117,6 +117,22 @@ public struct SearchView: View {
             }
         }
         .background(theme.background)
+    }
+
+    /// 分区隔条：上下发丝线夹住小字标（2026-09-25 用户钦点恢复——
+    /// 「在下面有个把海报隔离开的 写着内置源结果」），自有片库与内置源结果一眼分清
+    private func sectionDivider(_ title: String) -> some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(theme.textSecondary.opacity(0.16)).frame(height: 0.5)
+            Text(title)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(theme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            Rectangle().fill(theme.textSecondary.opacity(0.16)).frame(height: 0.5)
+        }
+        .padding(.top, 12)
     }
 
     private func sectionHeader(_ title: String) -> some View {

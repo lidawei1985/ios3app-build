@@ -202,6 +202,9 @@ public struct CategoryBrowseView: View {
                     PosterGrid(items: pageSlice, columns: 3)
                         .padding(.vertical, 12)
 
+                    // 内置源并轨入口（2026-09-25 钦点）：本大类下还有内置源的分类 → 点进看源内容
+                    SourceGroupEntryLine(title: activeGroup?.title ?? "")
+
                     pager
                 }
             }
@@ -468,7 +471,7 @@ public struct CategoryBrowseView: View {
                 LazyHStack(spacing: 8) {
                     chip(name: "全部", selected: selectedSubID == nil) { selectedSubID = nil }
                     ForEach(g.subs) { s in
-                        chip(name: "\(s.label) \(s.count)", selected: selectedSubID == s.id) {
+                        chip(name: s.label, selected: selectedSubID == s.id) {
                             selectedSubID = selectedSubID == s.id ? nil : s.id
                         }
                     }
@@ -491,7 +494,7 @@ public struct CategoryBrowseView: View {
                     chipLabel(name: "地区")
                     chip(name: "全部", selected: selectedArea == nil) { selectedArea = nil }
                     ForEach(areasCache) { a in
-                        chip(name: "\(a.name) \(a.count)", selected: selectedArea == a.name) {
+                        chip(name: a.name, selected: selectedArea == a.name) {
                             selectedArea = selectedArea == a.name ? nil : a.name
                         }
                     }
@@ -541,7 +544,7 @@ public struct CategoryBrowseView: View {
                         chipLabel(name: "年份")
                         chip(name: "全部", selected: selectedYear == nil) { selectedYear = nil }
                         ForEach(yearsExpanded ? yearsCache : Array(yearsCache.prefix(12))) { y in
-                            chip(name: "\(y.year) \(y.count)", selected: selectedYear == y.year) {
+                            chip(name: y.year, selected: selectedYear == y.year) {
                                 selectedYear = selectedYear == y.year ? nil : y.year
                             }
                         }
@@ -576,17 +579,17 @@ public struct CategoryBrowseView: View {
                 .font(.footnote.weight(selected ? .bold : .regular))
                 .lineLimit(1)
                 .padding(.horizontal, 12).padding(.vertical, 7)
-                // 2026-09-23 用户钦定：选中态**玻璃感**（不要白底、不要实色 accent）——
-                // 亮玻璃=white .22 + 亮边 .36；未选=white .08 暗玻璃。透出整页取色底。
+                // 2026-09-25 用户钦点：分类按钮统一**导航条式透明玻璃**（ultraThinMaterial 毛玻璃
+                // + 发丝描边），跟随变色系统（accent）。选中=accent 字+accent 描边；未选=素字淡框。
                 .background {
                     if selected {
-                        Capsule().fill(.white.opacity(0.22))
-                            .overlay(Capsule().stroke(.white.opacity(0.36), lineWidth: 1))
+                        Capsule().fill(.ultraThinMaterial)
+                            .overlay(Capsule().stroke(theme.accent.opacity(0.55), lineWidth: 1))
                     } else {
-                        Capsule().fill(.white.opacity(0.08))
+                        Capsule().fill(.ultraThinMaterial)
+                            .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
                     }
                 }
-                .foregroundStyle(selected ? .white : theme.textSecondary)
                 .contentShape(Capsule())   // 整枚胶囊都可点（硬化命中区，防横滚手势吞点击）
         }
         .buttonStyle(.plain)

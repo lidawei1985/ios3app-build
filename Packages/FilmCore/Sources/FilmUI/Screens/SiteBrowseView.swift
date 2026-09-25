@@ -60,9 +60,12 @@ public struct SiteBrowseView: View {
         var order: [String] = []
         var map: [String: [SiteCategory]] = [:]
         for c in categories {
-            guard let t = NavPolicy.navTitle(forSourceCategory: c.name, mode: mode) else { continue }
-            if map[t] == nil { order.append(t) }
-            map[t, default: []].append(c)
+            // 2026-09-25 并轨：navTitleOrNewcomer —— 命中我们的大类就并进去，
+            // 没有的分类直接新立一组（用户钦点「他的分类都会进到我们对应的分类；
+            // 有的进没有的分类就直接出现新分类」），不再丢弃任何过了红线的源分类。
+            guard let t = NavPolicy.navTitleOrNewcomer(c.name, mode: mode) else { continue }
+            if map[t.title] == nil { order.append(t.title) }
+            map[t.title, default: []].append(c)
         }
         return order.map { NavBucket(title: $0, cats: map[$0] ?? []) }
     }
@@ -176,7 +179,9 @@ public struct SiteBrowseView: View {
                 .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(theme.card, in: Capsule())
+        // 2026-09-25 用户钦点：搜索框统一导航条式透明玻璃（毛玻璃+发丝框），透出变色底
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
         .padding(.horizontal, 16).padding(.vertical, 6)
     }
 
@@ -223,10 +228,14 @@ public struct SiteBrowseView: View {
                     TextField("搜索源名称 / 接口地址", text: $pickerQuery)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .listRowBackground(Color.clear)
                 }
                 let q = pickerQuery.trimmingCharacters(in: .whitespaces).lowercased()
-                let filtered = q.isEmpty ? allSites
+                let pre = q.isEmpty ? allSites
                     : allSites.filter { $0.name.lowercased().contains(q) || $0.api.lowercased().contains(q) }
+                // 熔断的源沉底（不隐藏——保留入口便于冷却后半开探测自愈）
+                let filtered = pre.filter { SourceHealth.shared.sortKey($0.key) == 0 }
+                    + pre.filter { SourceHealth.shared.sortKey($0.key) == 1 }
                 let cms = filtered.filter { $0.type != 3 }
                 let spiders = filtered.filter { $0.type == 3 }
                 Section {
@@ -242,11 +251,13 @@ public struct SiteBrowseView: View {
                                     Text(typeLabel(s.type)).font(.caption2).foregroundStyle(theme.textSecondary)
                                 }
                             }
+                            .listRowBackground(Color.clear)
                         }
                     }
                     if cms.isEmpty {
                         Text(q.isEmpty ? "没有可用的点播源" : "没有匹配「\(pickerQuery)」的点播源")
                             .font(.footnote).foregroundStyle(theme.textSecondary)
+                            .listRowBackground(Color.clear)
                     }
                 } header: {
                     // 术语归一（35包）：这里列的是「点播源」（站点），不再叫"线路"——
@@ -273,6 +284,7 @@ public struct SiteBrowseView: View {
                                     if switchingLine { ProgressView().scaleEffect(0.7) }
                                 }
                             }
+                            .listRowBackground(Color.clear)
                         }
                     } header: {
                         Text("换配置线路（内置实测 \(repos.count) 条）")
@@ -288,6 +300,7 @@ public struct SiteBrowseView: View {
                                 Spacer()
                                 Text("需引擎 · 开发中").font(.caption2).foregroundStyle(theme.textSecondary)
                             }
+                            .listRowBackground(Color.clear)
                         }
                     } header: {
                         Text("Spider 源（\(spiders.count) · 需引擎）")
@@ -296,6 +309,7 @@ public struct SiteBrowseView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
             .navigationTitle("切换源")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -333,6 +347,7 @@ public struct SiteBrowseView: View {
             let cfg = TVBoxConfigStore.shared
             cfg.activateBuiltinRepo(repo)
             await cfg.refreshAll()
+            SourceHealth.shared.reset()   // 新线路另一批源，健康账清零
             let fresh = cfg.displayResult.sites
             if !fresh.isEmpty {
                 refreshedSites = fresh

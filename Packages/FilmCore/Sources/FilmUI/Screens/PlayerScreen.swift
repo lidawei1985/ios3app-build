@@ -79,6 +79,14 @@ public struct PlayerScreen: View {
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
     @State private var seekToast: String?
+    /// v13（2026-09-25 用户钦点「按手机音量键能看见声音大小的条」）：
+    /// MPVolumeView 锚点会抑制系统音量 HUD → 端上自绘音量条，
+    /// KVO 监听系统音量变化（物理音量键）+ 右半屏拖动调音量时同步显示。
+    @State private var volumeHUDValue: Double?
+    @State private var volumeHUDHideTask: Task<Void, Never>?
+    @State private var volumeObserver: NSKeyValueObservation?
+    /// 静音键（用户钦点「播放器没有静音很不方便」）——只控 AVPlayer.isMuted，不动系统音量。
+    @State private var isMuted = false
     @State private var hideTask: Task<Void, Never>?
     @State private var isLandscape = false
     @State private var dragMode: PlayerDragMode = .idle
@@ -96,13 +104,28 @@ public struct PlayerScreen: View {
     // 48包：居中三钮并回控制层（centerTransportRow），窗口级 WindowControlBar 停用——
     // 它与控制层显隐两条路，用户实测"暂停快进没了"即显隐对不上。类文件保留备回切。
     @State private var savedRate: Double = {
-        let v = UserDefaults.standard.double(forKey: "filmui.playerRate")
-        return v > 0 ? v : 1.0
+        // 设置页落地（2026-09-25）：默认倍速 = 播放器手动记忆 > 设置页「默认倍速」 > 1.0
+        let remembered = UserDefaults.standard.double(forKey: "filmui.playerRate")
+        if remembered > 0 { return remembered }
+        let d = UserDefaults.standard.string(forKey: "settings.defaultRate").flatMap(Double.init) ?? 1.0
+        return d > 0 ? d : 1.0
     }()
 
     public static let rates: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
 
     @AppStorage("settings.skipIntroSeconds") private var skipIntroSetting = 0
+    // 设置页落地（2026-09-25）：自动连播 / 后台播放由设置页接管
+    @AppStorage("settings.autoNextEpisode") private var autoNextSetting = true
+    @AppStorage("settings.backgroundPlay") private var backgroundPlay = true
+
+    /// 后台继续播放：激活 playback 音频会话（UIBackgroundModes=audio 已在 project.yml 配置，
+    /// 缺这步 = 会话不活跃，锁屏/切后台 AVPlayer 即停——此前后台播放失效的根因）。
+    private func activateAudioSessionIfNeeded() {
+        guard backgroundPlay else { return }
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .moviePlayback)
+        try? session.setActive(true)
+    }
 
     public init(item: FeedItem, startAtResume: Bool = false, startLine: Int = 0,
                 extraLines: [URL] = [], onClose: (() -> Void)? = nil,
@@ -180,6 +203,32 @@ public struct PlayerScreen: View {
                 .padding(20)
             }
 
+            // v13 音量提示条（用户钦点：按手机音量键能看见声音大小的条）
+            // 爱腾优式：左侧竖向玻璃细条 + 喇叭图标；物理音量键与右半屏拖动共用。
+            if let v = volumeHUDValue {
+                VStack(spacing: 8) {
+                    Image(systemName: (v <= 0.001 || isMuted) ? "speaker.slash.fill"
+                                        : (v < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.3.fill"))
+                        .font(.system(size: 15)).foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 3)
+                    GeometryReader { geo in
+                        ZStack(alignment: .bottom) {
+                            Capsule().fill(.white.opacity(0.25))
+                            Capsule().fill(.white).frame(height: geo.size.height * v)
+                        }
+                    }
+                    .frame(width: 6, height: 140)
+                }
+                .padding(14)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .padding(.leading, 22)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.15), value: volumeHUDValue)
+                .allowsHitTesting(false)
+            }
+
             // 跳过片头（大牌标配：片头区间右下角浮现；设置里可自定义秒数，默认 85s）
             // 46包（用户：「啥按钮都加黑框」）：无底框化——白字+投影，与居中控钮同一套视觉
             if showSkipIntro {
@@ -248,6 +297,11 @@ public struct PlayerScreen: View {
             if savedRate != 1.0 { model.setRate(savedRate) }
             setLandscape(true)
             scheduleHide()
+            activateAudioSessionIfNeeded()
+            // v13 音量提示条：KVO 监听系统音量（物理音量键）——MPVolumeView 锚点抑制了系统 HUD
+            volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { _, _ in
+                Task { @MainActor in showVolumeHUD(Double(PlayerVolumeController.current())) }
+            }
             // 46包：撤掉「Build 20260922-xx」闪现——小白用户看不懂还截图问「这是啥玩意」；
             // 包版本核验走 LC 内二进制探针，不再打扰播放画面。
         }
@@ -255,6 +309,9 @@ public struct PlayerScreen: View {
             gone = true
             model.stop()
             setLandscape(false)
+            volumeObserver?.invalidate()
+            volumeObserver = nil
+            volumeHUDHideTask?.cancel()
         }
         .onChange(of: model.failed) { _ in
             // 失败面板出现时控件层保持可见（重试按钮在面板里）；居中三钮由
@@ -429,6 +486,22 @@ public struct PlayerScreen: View {
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("画面比例：\(model.aspect.shortTitle)")
+                // v13 静音键（2026-09-25 用户钦点「播放器没有静音很不方便」）：
+                // 只控 AVPlayer.isMuted，不动系统音量；图标随状态切换。
+                Button {
+                    isMuted.toggle()
+                    model.player?.isMuted = isMuted
+                    showSeekToast(isMuted ? "已静音" : "已取消静音")
+                    scheduleHide()
+                } label: {
+                    Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.system(size: 17))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.75), radius: 4, y: 1)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel(isMuted ? "取消静音" : "静音")
                 // 投屏（AirPlay，系统原生按钮，大牌标配）
                 RoutePickerView().frame(width: 26, height: 26)
                 // 分享（系统分享面板）
@@ -809,6 +882,7 @@ public struct PlayerScreen: View {
             let target = min(max(startVolume - Float(value.translation.height) / 500, 0), 1)
             PlayerVolumeController.set(target)
             seekToast = "音量 \(Int(target * 100))%"
+            showVolumeHUD(Double(target))
         case .episode:
             // 上滑（translate 负）= 下一集；下滑 = 上一集。实时给方向提示，松手才真正切换。
             let up = value.translation.height < 0
@@ -892,6 +966,17 @@ public struct PlayerScreen: View {
         Task {
             try? await Task.sleep(nanoseconds: 900_000_000)
             seekToast = nil
+        }
+    }
+
+    /// v13 音量提示条：显示竖向音量条，1.2s 无操作自动隐藏。
+    /// 物理音量键（KVO）与右半屏拖动共用同一入口。
+    private func showVolumeHUD(_ v: Double) {
+        volumeHUDValue = min(max(v, 0), 1)
+        volumeHUDHideTask?.cancel()
+        volumeHUDHideTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if !Task.isCancelled { volumeHUDValue = nil }
         }
     }
 
@@ -1151,6 +1236,10 @@ public final class PlayerViewModel: NSObject, ObservableObject {
     /// 播放结束 → 自动连播下一集（剧集模式；电影播完停在结尾，与大牌一致）。
     private func handlePlaybackDidFinish() {
         isBuffering = false
+        // 设置页落地（2026-09-25）：「自动播下一集」开关接管剧集连播（关 = 播完停在结尾）
+        // 注意：本函数在 PlayerViewModel（非 View）里，@AppStorage 不可见，须直读 UserDefaults
+        let autoNext = UserDefaults.standard.object(forKey: "settings.autoNextEpisode") as? Bool ?? true
+        guard autoNext else { return }
         guard hasNextEpisode else { return }
         playEpisode(currentLine + 1)
     }

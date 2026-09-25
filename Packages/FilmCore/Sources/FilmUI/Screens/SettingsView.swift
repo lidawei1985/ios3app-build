@@ -1,178 +1,278 @@
 import SwiftUI
 import FilmCore
 
-/// 设置页（settings_v2 定稿落地 2026-09-25）：
-/// 首屏 = 「当前生效」发丝线圈壳（生效配置/生效线路/解析源 三行可点直换，不用上下翻找）
-///        + 无框搜索（跨组直达）+ 透明玻璃胶囊分组入口；
-/// 全部分组收成二级页（点哪个进哪个的表），TVBOX 基底能力一项不减：
-/// 我的源 / 配置历史 / 添加配置 / 刷新 / 内置线路 / 解析结果（仓库·点播源·直播组·聚合搜索）
-/// / 播放设置 / 外观 / 数据备份 / 缓存 / 关于。强调色走 FilmTheme.accent，跟随系统亮暗与产品变色。
+/// 设置页（settings_v2 原型像素级落地 2026-09-25）：
+/// · 顶部常驻「经典分组 | 状态优先 | 紧凑」变体切换（accent 下划线）+ 无框搜索
+/// · 状态优先首屏 = 绿点「当前生效」中枢卡（30 圆角发丝线壳，三行点选直换 + 继续浏览海报行）
+/// · 全部分组收成透明玻璃胶囊入口 → 页内二级页（‹ 返回 + 居中标题 + N 项，发丝线壳装行）
+/// · 强调色全部走 FilmTheme.accent —— 跟随产品「变色」系统与深浅色主题
 public struct SettingsView: View {
     @EnvironmentObject private var store: CatalogStore
     @EnvironmentObject private var tvbox: TVBoxConfigStore
     @Environment(\.filmTheme) private var theme
 
+    @AppStorage("settings.layoutVariant") private var variantRaw = "状态优先"
     @State private var query = ""
     @State private var activePicker: StatusField?
+    @State private var subGroup: SettingsGroup?
+
+    private enum Variant: String, CaseIterable {
+        case classic = "经典分组"
+        case status = "状态优先"
+        case compact = "紧凑"
+    }
+
+    private var variant: Variant { Variant(rawValue: variantRaw) ?? .status }
 
     public init() {}
-
-    // MARK: - 首屏
-
-    public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                statusShell
-                searchField
-                if normalizedQuery.isEmpty {
-                    groupEntries
-                } else {
-                    searchResults
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 30)
-        }
-        .background(theme.background.ignoresSafeArea())
-        .navigationTitle("设置")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $activePicker) { field in
-            StatusPickerSheet(field: field)
-        }
-    }
 
     private var normalizedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    // MARK: 当前生效线圈壳（settings_v2：三行可点直换 + 继续浏览）
+    // MARK: - 首屏骨架（顶部常驻：变体切换 + 搜索；下方滚动区）
 
-    private var statusShell: some View {
+    public var body: some View {
         VStack(spacing: 0) {
-            statusRow(title: "生效配置", value: activeConfigName) { activePicker = .config }
-            shellDivider
-            statusRow(title: "生效线路", value: activeLineName) { activePicker = .line }
-            shellDivider
-            statusRow(title: "解析源", value: activeParseName) { activePicker = .parse }
-            shellDivider
-            if let last = lastBrowsedSite, !tvbox.displayResult.sites.isEmpty {
-                NavigationLink {
-                    SiteBrowseView(site: last, sites: Array(tvbox.displayResult.sites))
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "play.circle.fill")
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 26)
-                        Text("继续浏览 · \(last.name)")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(theme.textPrimary)
-                            .lineLimit(1)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(theme.textSecondary)
+            variantSwitch
+            searchField
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if variant == .status && normalizedQuery.isEmpty {
+                        statusCard
                     }
-                    .padding(.vertical, 13)
+                    if normalizedQuery.isEmpty {
+                        groupEntries
+                    } else {
+                        searchResults
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 40)
+            }
+        }
+        .background(theme.background.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
+        .sheet(item: $activePicker) { field in
+            StatusPickerSheet(field: field)
+        }
+        .overlay {
+            if let g = subGroup {
+                SubPageShell(group: g, itemCount: subItemCount(g), onBack: {
+                    subGroup = nil
+                }) {
+                    destination(of: g)
+                }
+                .background(theme.background.ignoresSafeArea())
+                .transition(.move(edge: .trailing))
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: subGroup)
+    }
+
+    // MARK: 变体切换（原型 .switch：激活项 accent 2px 下划线）
+
+    private var variantSwitch: some View {
+        HStack(spacing: 20) {
+            ForEach(Variant.allCases, id: \.self) { v in
+                Button {
+                    variantRaw = v.rawValue
+                } label: {
+                    VStack(spacing: 5) {
+                        Text(v.rawValue)
+                            .font(.subheadline)
+                            .fontWeight(variant == v ? .semibold : .regular)
+                            .foregroundStyle(variant == v ? theme.textPrimary : theme.textSecondary)
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(variant == v ? theme.accent : Color.clear)
+                            .frame(height: 2)
+                    }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
+            Spacer()
         }
-        .padding(.horizontal, 14)
-        .overlay(
-            RoundedRectangle(cornerRadius: 22)
-                .stroke(theme.accent.opacity(0.22), lineWidth: 0.8)
-        )
-        .padding(.top, 8)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
     }
 
-    private var shellDivider: some View {
-        Rectangle().fill(theme.textSecondary.opacity(0.14)).frame(height: 0.5)
-    }
-
-    private func statusRow(title: String, value: String, onTap: @escaping () -> Void) -> some View {
-        Button(action: onTap) {
-            HStack(spacing: 10) {
-                Text(title).font(.subheadline).foregroundStyle(theme.textPrimary)
-                Spacer()
-                Text(value)
-                    .font(.subheadline)
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(theme.textSecondary)
-            }
-            .padding(.vertical, 13)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: 搜索（无框 + 发丝横线，跨组直达）
+    // MARK: 搜索（无框 + 发丝底横线 + 一键清空）
 
     private var searchField: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.subheadline)
-                    .foregroundStyle(theme.textSecondary)
-                TextField("搜索设置", text: $query)
+                    .foregroundStyle(theme.textSecondary.opacity(0.5))
+                TextField("搜索设置，如 倍速、源、备份…", text: $query)
                     .font(.subheadline)
+                    .foregroundStyle(theme.textPrimary)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 if !query.isEmpty {
                     Button {
                         query = ""
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
+                        Text("×")
                             .font(.subheadline)
                             .foregroundStyle(theme.textSecondary)
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.vertical, 12)
-            Rectangle().fill(theme.textSecondary.opacity(0.14)).frame(height: 0.5)
+            Rectangle()
+                .fill(theme.textSecondary.opacity(0.16))
+                .frame(height: 0.5)
         }
-        .padding(.top, 10)
+        .padding(.horizontal, 14)
     }
 
-    // MARK: 玻璃胶囊分组入口
+    // MARK: 当前生效中枢卡（绿点标题 + 30 圆角发丝线壳）
+
+    private var statusCard: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(statusDotColor)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: statusDotColor.opacity(0.7), radius: 4)
+                Text("当前生效")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.accent)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+            VStack(spacing: 0) {
+                statusRow(title: "生效配置", value: activeConfigName) { activePicker = .config }
+                statusDivider
+                statusRow(title: "生效线路", value: activeLineName) { activePicker = .line }
+                statusDivider
+                statusRow(title: "解析源", value: activeParseName) { activePicker = .parse }
+                statusDivider
+                continueRow
+            }
+            .padding(.horizontal, 18)
+            .overlay(
+                RoundedRectangle(cornerRadius: 30)
+                    .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+            )
+        }
+        .padding(.top, 8)
+    }
+
+    private var statusDotColor: Color {
+        Color(red: 0.20, green: 0.78, blue: 0.35)
+    }
+
+    private var statusDivider: some View {
+        Rectangle()
+            .fill(theme.textSecondary.opacity(0.16))
+            .frame(height: 0.5)
+    }
+
+    /// 原型 .statrow：左灰键 + 右白粗值 + 细箭头
+    private func statusRow(title: String, value: String, onTap: @escaping () -> Void) -> some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary)
+                Spacer()
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                    .multilineTextAlignment(.trailing)
+                Image(systemName: "chevron.right")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary.opacity(0.55))
+            }
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 原型 .statgo：玻璃海报块 + 继续浏览（TVBox「下次进入」语义）
+    @ViewBuilder
+    private var continueRow: some View {
+        if let last = lastBrowsedSite, !tvbox.displayResult.sites.isEmpty {
+            NavigationLink {
+                SiteBrowseView(site: last, sites: Array(tvbox.displayResult.sites))
+            } label: {
+                HStack(spacing: 10) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.accent.opacity(0.07))
+                        .frame(width: 34, height: 46)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+                        )
+                        .overlay(
+                            Image(systemName: "play.fill")
+                                .font(.subheadline)
+                                .foregroundStyle(theme.accent)
+                        )
+                    Text("继续浏览 · \(last.name)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.textSecondary.opacity(0.55))
+                }
+                .padding(.top, 6)
+                .padding(.bottom, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: 玻璃胶囊分组入口（点进 = 页内二级页）
 
     private var groupEntries: some View {
         VStack(spacing: 11) {
             ForEach(SettingsGroup.allCases) { g in
-                NavigationLink { destination(of: g) } label: { groupPill(g) }
-                    .buttonStyle(.plain)
+                Button {
+                    subGroup = g
+                } label: {
+                    groupPill(g)
+                }
+                .buttonStyle(.plain)
             }
         }
-        .padding(.top, 14)
+        .padding(.top, 11)
     }
 
-    /// 玻璃胶囊（拆成独立子视图：整条表达式太重会拖垮 Swift 类型检查器）
+    /// 原型 .gpill：accent 9% 底 + 32% 描边 + 图标/箭头等宽光学居中
     private func groupPill(_ g: SettingsGroup) -> some View {
         HStack(spacing: 10) {
             Image(systemName: g.icon)
-                .font(.subheadline.weight(.medium))
+                .font(.subheadline)
                 .foregroundStyle(theme.accent)
-                .frame(width: 22)
+                .frame(width: 20)
             Text(g.rawValue)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
-                .frame(maxWidth: .infinity)   // 图标/箭头等宽 → 光学居中
+                .frame(maxWidth: .infinity)
             Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
+                .font(.subheadline)
                 .foregroundStyle(theme.textSecondary)
-                .frame(width: 22)
+                .frame(width: 20)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(Capsule().fill(theme.accent.opacity(0.08)))
-        .overlay(Capsule().stroke(theme.accent.opacity(0.28), lineWidth: 0.8))
+        .padding(.horizontal, 18)
+        .padding(.vertical, variant == .compact ? 10 : 14)
+        .background(Capsule().fill(theme.accent.opacity(0.09)))
+        .overlay(Capsule().stroke(theme.accent.opacity(0.32), lineWidth: 1))
         .contentShape(Capsule())
     }
 
-    // MARK: 搜索结果（跨组直达）
+    // MARK: 搜索结果（跨组直达，沿用分组索引）
 
     private var searchResults: some View {
         let hits = searchHits(for: normalizedQuery)
@@ -188,15 +288,11 @@ public struct SettingsView: View {
                 ForEach(hits) { hit in
                     NavigationLink { destination(of: hit.group) } label: { hitRow(hit) }
                         .buttonStyle(.plain)
-                    hairline
+                    statusDivider
                 }
             }
         }
         .padding(.top, 6)
-    }
-
-    private var hairline: some View {
-        Rectangle().fill(theme.textSecondary.opacity(0.14)).frame(height: 0.5)
     }
 
     private func hitRow(_ hit: SearchHit) -> some View {
@@ -258,7 +354,19 @@ public struct SettingsView: View {
         }
     }
 
-    // MARK: - 状态数据（首屏线圈壳与选择清单共用）
+    /// 二级页右上角「N 项」（原型 .subcnt）；源与线路随配置动态计数
+    private func subItemCount(_ g: SettingsGroup) -> String {
+        switch g {
+        case .sources: return "\(tvbox.displayResult.sites.count) 项"
+        case .playback: return "5 项"
+        case .appearance: return "1 项"
+        case .backup: return "2 项"
+        case .cache: return "1 项"
+        case .about: return "5 项"
+        }
+    }
+
+    // MARK: - 状态数据（首屏中枢卡与选择清单共用）
 
     private var activeConfigName: String {
         if let u = tvbox.activeURL, let s = tvbox.subscriptions.first(where: { $0.url == u }) { return s.name }
@@ -300,6 +408,49 @@ public struct SettingsView: View {
     }
 }
 
+// MARK: - 页内二级页壳（原型 .subhead：‹ accent 返回 + 居中标题 + N 项）
+
+private struct SubPageShell<Content: View>: View {
+    let group: SettingsGroup
+    let itemCount: String
+    let onBack: () -> Void
+    @ViewBuilder let content: Content
+
+    @Environment(\.filmTheme) private var theme
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Text(group.rawValue)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                Text(itemCount)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary.opacity(0.55))
+                    .padding(.trailing, 14)
+                    .frame(width: 60, alignment: .trailing)
+            }
+            .padding(.vertical, 10)
+            ScrollView {
+                content
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 40)
+            }
+        }
+    }
+}
+
 // MARK: - 分组定义（标题统一 4 字，关于 2 字）
 
 private enum SettingsGroup: String, CaseIterable, Identifiable {
@@ -324,7 +475,133 @@ private enum SettingsGroup: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - 当前生效选择清单（点线圈壳里的行弹出，即选即生效）
+// MARK: - 当前生效选择清单（原型底部选择单：毛玻璃圆角面板 + ✓ 当前行 + 取消胶囊）
+
+private struct StatusPickerSheet: View {
+    let field: StatusField
+    @EnvironmentObject private var tvbox: TVBoxConfigStore
+    @Environment(\.filmTheme) private var theme
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(field.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 13)
+                .padding(.bottom, 9)
+            options
+            Button {
+                dismiss()
+            } label: {
+                Text("取消")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(theme.textPrimary.opacity(0.10))
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.top, 9)
+            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(theme.background.opacity(0.72))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        )
+        .presentationDetents([.medium, .large])
+        .presentationBackground(.clear)
+    }
+
+    @ViewBuilder
+    private var options: some View {
+        switch field {
+        case .config:
+            if tvbox.subscriptions.isEmpty {
+                emptyHint("暂无配置历史。到「源与线路」里用「添加配置地址」加一个。")
+            }
+            ForEach(tvbox.subscriptions) { sub in
+                optRow(name: sub.name, detail: sub.url, active: sub.url == tvbox.activeURL) {
+                    tvbox.activate(sub)   // TVBox 行为：点选 = 切换生效配置
+                    dismiss()
+                }
+            }
+        case .line:
+            if tvbox.builtinRepoOptions.isEmpty {
+                emptyHint("暂无内置线路（或已被全部删除）。")
+            }
+            ForEach(tvbox.builtinRepoOptions) { repo in
+                optRow(name: repo.name, detail: repo.url, active: repo.url == tvbox.activeBuiltinRepoURL) {
+                    tvbox.activateBuiltinRepo(repo)
+                    dismiss()
+                }
+            }
+        case .parse:
+            if tvbox.displayResult.repos.isEmpty {
+                emptyHint("当前配置没有解析出多仓。多仓配置解析后在这里直接点选加载。")
+            }
+            ForEach(tvbox.displayResult.repos) { r in
+                optRow(name: r.name, detail: r.url, active: r.url == tvbox.activeRepoURL) {
+                    tvbox.activateRepo(r)
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    private func emptyHint(_ t: String) -> some View {
+        Text(t)
+            .font(.footnote)
+            .foregroundStyle(theme.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 20)
+    }
+
+    /// 原型 .opt：当前行 accent 加粗 + ✓，行顶发丝线
+    private func optRow(name: String, detail: String, active: Bool, onTap: @escaping () -> Void) -> some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.subheadline)
+                        .fontWeight(active ? .semibold : .regular)
+                        .foregroundStyle(active ? theme.accent : theme.textPrimary)
+                        .lineLimit(1)
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if active {
+                    Image(systemName: "checkmark")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.accent)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(theme.textSecondary.opacity(0.16))
+                .frame(height: 0.5)
+        }
+    }
+}
+
+
+// MARK: - 状态字段定义（保留原枚举）
 
 private enum StatusField: String, Identifiable {
     case config, line, parse
@@ -336,80 +613,6 @@ private enum StatusField: String, Identifiable {
         case .line: return "选择生效线路"
         case .parse: return "选择解析仓库"
         }
-    }
-}
-
-private struct StatusPickerSheet: View {
-    let field: StatusField
-    @EnvironmentObject private var tvbox: TVBoxConfigStore
-    @Environment(\.filmTheme) private var theme
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                switch field {
-                case .config:
-                    if tvbox.subscriptions.isEmpty {
-                        Text("暂无配置历史。到「源与线路」里用「添加配置地址」加一个。")
-                            .font(.footnote).foregroundStyle(theme.textSecondary)
-                    }
-                    ForEach(tvbox.subscriptions) { sub in
-                        optionRow(name: sub.name, detail: sub.url,
-                                  active: sub.url == tvbox.activeURL) {
-                            tvbox.activate(sub)   // TVBox 行为：点选 = 切换生效配置
-                            dismiss()
-                        }
-                    }
-                case .line:
-                    if tvbox.builtinRepoOptions.isEmpty {
-                        Text("暂无内置线路（儿童端不提供内置线路，或已被全部删除）。")
-                            .font(.footnote).foregroundStyle(theme.textSecondary)
-                    }
-                    ForEach(tvbox.builtinRepoOptions) { repo in
-                        optionRow(name: repo.name, detail: repo.url,
-                                  active: repo.url == tvbox.activeBuiltinRepoURL) {
-                            tvbox.activateBuiltinRepo(repo)
-                            dismiss()
-                        }
-                    }
-                case .parse:
-                    if tvbox.displayResult.repos.isEmpty {
-                        Text("当前配置没有解析出多仓。多仓配置解析后在这里直接点选加载。")
-                            .font(.footnote).foregroundStyle(theme.textSecondary)
-                    }
-                    ForEach(tvbox.displayResult.repos) { r in
-                        optionRow(name: r.name, detail: r.url,
-                                  active: r.url == tvbox.activeRepoURL) {
-                            tvbox.activateRepo(r)
-                            dismiss()
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.background.ignoresSafeArea())
-            .navigationTitle(field.title)
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    private func optionRow(name: String, detail: String, active: Bool, onTap: @escaping () -> Void) -> some View {
-        Button(action: onTap) {
-            HStack(spacing: 10) {
-                Image(systemName: active ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(active ? theme.accent : theme.textSecondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name).font(.subheadline.weight(.medium))
-                        .foregroundStyle(theme.textPrimary).lineLimit(1)
-                    Text(detail).font(.caption2).foregroundStyle(theme.textSecondary).lineLimit(1)
-                }
-                Spacer()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -1021,7 +1224,7 @@ private struct SourceGroupView: View {
     }
 }
 
-// MARK: - 二级页：播放设置
+// MARK: - 二级页：播放设置（原型行样式：无框行 + 发丝线 + iOS 开关 + Menu 直选）
 
 private struct PlaybackGroupView: View {
     @Environment(\.filmTheme) private var theme
@@ -1033,55 +1236,159 @@ private struct PlaybackGroupView: View {
     @AppStorage("settings.hardwareDecode") private var hardwareDecode = true
 
     var body: some View {
-        List {
-            Section {
-                Picker("默认倍速", selection: $defaultRate) {
-                    ForEach(["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"], id: \.self) { Text("\(dropTrailingZero($0))x").tag($0) }
+        VStack(spacing: 0) {
+            Menu {
+                ForEach(["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"], id: \.self) { r in
+                    Button("默认 \(dropTrailingZero(r))x") { defaultRate = r }
                 }
-                Stepper("跳过片头：\(skipIntro)s", value: $skipIntro, in: 0...90, step: 5)
-                Toggle("后台继续播放", isOn: $backgroundPlay)
-                Toggle("自动播下一集", isOn: $autoNext)
-                Toggle("硬解码（省电）", isOn: $hardwareDecode)
-            } footer: {
-                Text("以上设置对所有点播/直播播放生效，即改即用。")
+            } label: {
+                valueRow(icon: "bolt", title: "默认倍速", value: "\(dropTrailingZero(defaultRate))x")
             }
+            hairline
+            Menu {
+                ForEach([0, 5, 10, 15, 20, 30, 45, 60, 90], id: \.self) { s in
+                    Button("跳过 \(s) 秒") { skipIntro = s }
+                }
+            } label: {
+                valueRow(icon: "forward.end", title: "跳过片头", value: "\(skipIntro)s")
+            }
+            hairline
+            toggleRow(icon: "moon.zzz", title: "后台继续播放", sub: "锁屏/切后台不断声", isOn: $backgroundPlay)
+            hairline
+            toggleRow(icon: "arrow.right.circle", title: "自动播下一集", sub: nil, isOn: $autoNext)
+            hairline
+            toggleRow(icon: "cpu", title: "硬解码", sub: "更省电（iOS 恒为开）", isOn: $hardwareDecode)
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
-        .navigationTitle("播放设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 30)
+                .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+        )
     }
 
+    /// 即改即用的说明（footer 语义收进页内一行小字）
     private func dropTrailingZero(_ s: String) -> String {
         s.hasSuffix(".0") ? String(s.dropLast(2)) : s
     }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(theme.textSecondary.opacity(0.16))
+            .frame(height: 0.5)
+    }
+
+    private func valueRow(icon: String, title: String, value: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 22)
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(theme.textPrimary)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(theme.textSecondary)
+            Image(systemName: "chevron.right")
+                .font(.subheadline)
+                .foregroundStyle(theme.textSecondary.opacity(0.55))
+        }
+        .padding(.vertical, 14)
+        .contentShape(Rectangle())
+    }
+
+    private func toggleRow(icon: String, title: String, sub: String?, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textPrimary)
+                if let sub {
+                    Text(sub)
+                        .font(.subheadline)
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(theme.accent)
+                .fixedSize()
+        }
+        .padding(.vertical, 12)
+    }
 }
 
-// MARK: - 二级页：外观设置
+// MARK: - 二级页：外观设置（原型 .seg 分段：描边圆角 + accent 选中块）
 
 private struct AppearanceGroupView: View {
     @Environment(\.filmTheme) private var theme
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
 
     var body: some View {
-        List {
-            Section {
-                Picker("外观", selection: $appearanceRaw) {
-                    ForEach(AppearanceMode.allCases) { m in Text(m.title).tag(m.rawValue) }
-                }
-                .pickerStyle(.segmented)
-            } footer: {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "paintpalette")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 22)
+                Text("外观")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+                segControl
+            }
+            .padding(.vertical, 14)
+            .padding(.horizontal, 18)
+            VStack(alignment: .leading, spacing: 4) {
                 Text("跟随系统时会随手机深浅色自动切换；播放页与直播页始终深色。")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 12)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 30)
+                .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+        )
+    }
+
+    private var segControl: some View {
+        HStack(spacing: 2) {
+            ForEach(AppearanceMode.allCases) { m in
+                Button {
+                    appearanceRaw = m.rawValue
+                } label: {
+                    Text(m.title)
+                        .font(.caption)
+                        .fontWeight(appearanceRaw == m.rawValue ? .semibold : .regular)
+                        .foregroundStyle(appearanceRaw == m.rawValue ? theme.textPrimary : theme.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(appearanceRaw == m.rawValue ? theme.accent.opacity(0.18) : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
-        .navigationTitle("外观设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .padding(2)
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+        )
     }
 }
 
-// MARK: - 二级页：数据备份
+// MARK: - 二级页：数据备份（原型行样式：图标 + 标题 + 副标 + 箭头）
 
 private struct BackupGroupView: View {
     @EnvironmentObject private var tvbox: TVBoxConfigStore
@@ -1090,93 +1397,169 @@ private struct BackupGroupView: View {
     @State private var backupMessage = ""
 
     var body: some View {
-        List {
-            Section {
-                Button {
-                    if let json = tvbox.exportState() {
-                        UIPasteboard.general.string = json
-                        backupMessage = "已复制到剪贴板（\(json.count) 字符），存到备忘录即可长期保存"
-                    } else {
-                        backupMessage = "导出失败"
-                    }
-                } label: {
-                    Label("导出配置（复制到剪贴板）", systemImage: "square.and.arrow.up")
+        VStack(spacing: 0) {
+            actionRow(icon: "square.and.arrow.up", title: "导出配置", sub: "复制到剪贴板") {
+                if let json = tvbox.exportState() {
+                    UIPasteboard.general.string = json
+                    backupMessage = "已复制到剪贴板（\(json.count) 字符），存到备忘录即可长期保存"
+                } else {
+                    backupMessage = "导出失败"
                 }
-                .foregroundStyle(theme.accent)
-
-                Button {
-                    let text = UIPasteboard.general.string ?? ""
-                    if tvbox.importState(text) {
-                        backupMessage = "导入成功，正在刷新当前配置…"
-                        Task { await tvbox.refreshAll() }
-                    } else {
-                        backupMessage = "剪贴板里没有有效的配置备份"
-                    }
-                } label: {
-                    Label("从剪贴板导入配置", systemImage: "square.and.arrow.down")
+            }
+            hairline
+            actionRow(icon: "square.and.arrow.down", title: "从剪贴板导入配置", sub: "换机/清数据后一键恢复") {
+                let text = UIPasteboard.general.string ?? ""
+                if tvbox.importState(text) {
+                    backupMessage = "导入成功，正在刷新当前配置…"
+                    Task { await tvbox.refreshAll() }
+                } else {
+                    backupMessage = "剪贴板里没有有效的配置备份"
                 }
-                .foregroundStyle(theme.accent)
-
-                if !backupMessage.isEmpty {
-                    Text(backupMessage).font(.caption).foregroundStyle(theme.textSecondary)
-                }
-            } footer: {
-                Text("备份包含：配置历史 + 当前生效配置 + 自定义点播/直播源。先「导出」存好，换机或清数据后「导入」即恢复。")
+            }
+            if !backupMessage.isEmpty {
+                Text(backupMessage)
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
-        .navigationTitle("数据备份")
-        .navigationBarTitleDisplayMode(.inline)
+        .overlay(
+            RoundedRectangle(cornerRadius: 30)
+                .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+        )
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(theme.textSecondary.opacity(0.16))
+            .frame(height: 0.5)
+    }
+
+    private func actionRow(icon: String, title: String, sub: String?, onTap: @escaping () -> Void) -> some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline)
+                        .foregroundStyle(theme.textPrimary)
+                    if let sub {
+                        Text(sub)
+                            .font(.subheadline)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary.opacity(0.55))
+            }
+            .padding(.vertical, 14)
+            .padding(.horizontal, 18)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
-// MARK: - 二级页：缓存下载
+// MARK: - 二级页：缓存下载（原型 .row.act：danger 行 accent 加粗）
 
 private struct CacheGroupView: View {
     @EnvironmentObject private var store: CatalogStore
     @Environment(\.filmTheme) private var theme
 
+    @State private var doneMessage = ""
+
     var body: some View {
-        List {
-            Section {
-                Button {
-                    URLCache.shared.removeAllCachedResponses()
-                    store.clearSnapshot()
-                } label: {
-                    Label("清除片库与图片缓存", systemImage: "trash")
+        VStack(spacing: 0) {
+            Button {
+                URLCache.shared.removeAllCachedResponses()
+                store.clearSnapshot()
+                doneMessage = "已清除。片库封面会重新下载，不影响收藏与播放记录。"
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "trash")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 22)
+                    Text("清除片库与图片缓存")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.accent)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.textSecondary.opacity(0.55))
                 }
-                .foregroundStyle(theme.accent)
-            } footer: {
-                Text("清除后片库封面会重新下载，不影响收藏与播放记录。")
+                .padding(.vertical, 14)
+                .padding(.horizontal, 18)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if !doneMessage.isEmpty {
+                Text(doneMessage)
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
-        .navigationTitle("缓存下载")
-        .navigationBarTitleDisplayMode(.inline)
+        .overlay(
+            RoundedRectangle(cornerRadius: 30)
+                .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+        )
     }
 }
 
-// MARK: - 二级页：关于
+// MARK: - 二级页：关于（原型 .statrow：左灰键 + 右白粗值）
 
 private struct AboutGroupView: View {
     @EnvironmentObject private var store: CatalogStore
     @Environment(\.filmTheme) private var theme
 
     var body: some View {
-        List {
-            Section {
-                LabeledRow(label: "产品", value: store.profile.appName)
-                LabeledRow(label: "构建标记", value: AppBuildInfo.mark)
-                LabeledRow(label: "内容定位", value: store.profile.tagline)
-                LabeledRow(label: "数据适配器", value: CatalogCache.adapterVersion)
-                LabeledRow(label: "Feed 版本", value: store.ledger.version ?? "-")
-            }
+        VStack(spacing: 0) {
+            aboutRow(k: "产品", v: store.profile.appName)
+            hairline
+            aboutRow(k: "版本 / 构建", v: AppBuildInfo.mark)
+            hairline
+            aboutRow(k: "内容定位", v: store.profile.tagline)
+            hairline
+            aboutRow(k: "数据适配器", v: CatalogCache.adapterVersion)
+            hairline
+            aboutRow(k: "Feed 版本", v: store.ledger.version ?? "-")
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
-        .navigationTitle("关于")
-        .navigationBarTitleDisplayMode(.inline)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 30)
+                .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
+        )
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(theme.textSecondary.opacity(0.16))
+            .frame(height: 0.5)
+    }
+
+    private func aboutRow(k: String, v: String) -> some View {
+        HStack(spacing: 10) {
+            Text(k)
+                .font(.subheadline)
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+            Text(v)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(1)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.vertical, 12)
     }
 }

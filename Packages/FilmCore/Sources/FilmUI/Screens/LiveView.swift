@@ -842,11 +842,18 @@ struct LivePlayerScreen: View {
             // 缓冲横幅（27号包 用户钦定）：卡了显示「缓冲中，请稍等」+ 手动换源入口。
             // 61包（用户：「我要手动切换信号源」）——「换信号源」= **强制换到同台下一条线路**，
             // 不再走 autoHeal 的"没有备线就什么都不做"（那条路让单线路频道点了没反应）。
+            // v13（2026-09-25 用户反馈「直播没有图像时无法返回」）——横幅第一位加「返回」：
+            // 黑屏卡住时这条横幅是唯一稳定可见的 UI，返回键必须常驻在这。
             if stallBanner && !failed {
                 HStack(spacing: 14) {
                     ProgressView().tint(.white)
                     Text(reconnectTries > 0 ? "正在重连信号…" : "缓冲中，请稍等…")
                         .font(.footnote).foregroundStyle(.white)
+                    Button {
+                        exitAction()
+                    } label: {
+                        Text("返回").font(.footnote.bold()).foregroundStyle(.yellow)
+                    }
                     if nextLineExists {
                         Button {
                             forceNextLine()
@@ -1074,7 +1081,12 @@ struct LivePlayerScreen: View {
         //   ② 起播不预设缓冲目标（0 = 拿到首个可播分片就出画）；
         //   ③ 关掉 HLS 起播门槛（把"必须攒够几片"降为"有片就播"）。
         item.preferredPeakBitRate = 2_000_000
-        item.preferredForwardBufferDuration = 0
+        // v13（2026-09-25 实测数据根治「播几秒就黑」）：PC 端 60 秒逐秒测量证实
+        // 免费源分片平均 4.8s 一片（最大断供 6.1s），零前向缓冲下播放时钟频繁停摆，
+        // 守护 6s 亮横幅 / 12s 强杀重连 = 黑白交替死循环。
+        // 修法：前向缓冲 0→20s——起播速度不变（首片即出画），后台持续攒 20s 余量，
+        // 5s 级断供不再触发停摆。守护链保留作保险（真死链照常跳台）。
+        item.preferredForwardBufferDuration = 20
         item.canUseNetworkResourcesForLiveStreamingWhilePaused = false
         let p = AVPlayer()
         // 28号包（用户反馈直播加载太慢）：直播流跳过"最小卡顿等待"，拿到流立即播
@@ -1156,7 +1168,7 @@ struct LivePlayerScreen: View {
         guard let ch = current else { return }
         guard let p = player else { startPlay(); return }
         let item = AVPlayerItem(url: ch.url)
-        item.preferredForwardBufferDuration = 0   // 57包：重连也立即出画（同 startPlay）
+        item.preferredForwardBufferDuration = 20   // v13：0→20s（同 startPlay，慢源断供扛得住）
         p.replaceCurrentItem(with: item)
         p.playImmediately(atRate: 1.0)
         lastProgressAt = Date()

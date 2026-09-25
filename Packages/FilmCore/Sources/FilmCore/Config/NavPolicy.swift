@@ -141,6 +141,9 @@ public enum NavPolicy {
         for g in navGroups(forMode: mode) where g.match.contains(where: { name.contains($0) }) {
             return g.title
         }
+        // 2026-09-25 放开后：到了这里说明分类已过红线/排除但没命中组 —— 不再丢弃，
+        // 星幕/心屋回退新立分类（夜航已在上方进「其他」；与 navTitleOrNewcomer 同口径）。
+        return name
         // 夜航兜底（2026-09-22 用户：「索倪只是样板，还有很多源都有这些分类，剩下的就是把源并进我们的分类」）：
         // 实测 9 个在线成人源共 **172 个题材类目**（强奸乱伦/制服诱惑/SM调教/丝袜美腿/探花系列/
         // 麻豆传媒/人妻熟女/校园春色…）。这些不是「伦理/三级/成人动漫/写真热舞」任一类，
@@ -150,32 +153,55 @@ public enum NavPolicy {
         return nil
     }
 
+    /// 源分类名 → 导航标题（**并轨版**，2026-09-25 用户钦点「内置源内容进分类」）。
+    ///
+    /// 与 `navTitle(forSourceCategory:mode:)` 的唯一区别：星幕/心屋下「过了红线与排除词、
+    /// 但没命中任何导航组」的源分类，不再丢弃（nil），而是**作为新分类出现**
+    /// （用户原话：「有的进没有的分类就直接出现新分类」）。
+    /// 夜航行为不变（未命中的题材类目统一进「其他」）。
+    /// - Returns: `(title, isNewCategory)`；`nil` = 红线/排除词拦下，本端不可见。
+    public static func navTitleOrNewcomer(_ name: String, mode: String) -> (title: String, isNew: Bool)? {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return nil }
+        if isAdultCategory(n) { return mode == "adult" ? ("其他", false) : nil }
+        switch mode {
+        case "adult":
+            // 2026-09-25 放开：成人源里夹带的正常影视分类（剧集/综艺…）不再拦，只挡儿童向
+            if contains(n, kidCategoryMarks) { return nil }
+            for g in adultGroups where g.match.contains(where: { n.contains($0) }) {
+                return (g.title, false)
+            }
+            return ("其他", false)
+        case "child":
+            // 2026-09-25 放开：kidUnsafe（恐怖/战争等）不再拦，只留成人红线
+            for g in childGroups where g.match.contains(where: { n.contains($0) }) {
+                return (g.title, false)
+            }
+            return (n, true)
+        default:
+            // 2026-09-25 放开：normalExcludedWords（综艺/体育等）不再拦，没命中就新立分类
+            for g in normalGroups where g.match.contains(where: { n.contains($0) }) {
+                return (g.title, false)
+            }
+            return (n, true)
+        }
+    }
+
     /// 本端是否允许这个源分类（分类级闸门）。
     ///
-    /// 顺序很关键：**先判红线，再判目标范围**。
-    ///  - 成人分类（伦理/三级/成人动漫/写真热舞/题材类目…）：只有夜航可放行；
-    ///  - 夜航**默认全收**（源本身就是成人源），只挡明确的儿童向分类；
-    ///  - 心屋反向：成人分类已拦，再拦儿童不宜（恐怖/惊悚/犯罪/战争/悬疑…）；
-    ///  - 星幕：成人分类已拦，另外综艺/体育/纪录片/预告解说 不要（短剧 2026-09-23 起独立放行）。
+    /// **2026-09-25 用户钦点放开**：「内置源原本多少分类就多少就行 这个不要被控制」
+    /// —— 端隔离大幅撤除：星幕不再砍综艺/体育/纪录片，心屋不再砍恐怖/战争等，
+    /// 夜航不再砍剧集/综艺等正常影视分类。**只保留两条线**：
+    ///  ① 成人分类（伦理/三级/写真热舞/性题材类目…）只给夜航 —— 心屋是儿童 App，
+    ///     成人内容进儿童端是硬红线（2026-09-22 钦定，不随本次放开）；
+    ///  ② 夜航仍挡明确的儿童向分类（用户 2026-09-22 钦定：「普通动漫片、儿童片绝对进不了夜航」）。
+    /// 条目级闸门 `allowsItem` 的**标题**判词不变（星幕/心屋照样挡成人向片名）。
     public static func allowsCategory(_ name: String, mode: String) -> Bool {
         let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !n.isEmpty else { return false }
         if isAdultCategory(n) { return mode == "adult" }
-        switch mode {
-        case "adult":
-            // ① 明确儿童向分类（用户：「普通动漫片、儿童片绝对进不了夜航」）
-            if contains(n, kidCategoryMarks) { return false }
-            // ② 非成人正常影视分类（综艺/体育/剧集/院线片/短剧/真动画/小说…）
-            //    普查：14 个成人源里 12 个都夹带这些。含成人向标记的（里番/无码/三级/情色/AV…）除外。
-            if contains(n, adultExcludedCategoryWords) && !contains(n, adultKeepMarks) { return false }
-            return true
-        case "child":
-            if contains(n, kidUnsafeCategoryWords) { return false }
-            return navGroups(forMode: "child").contains { g in g.match.contains { n.contains($0) } }
-        default:
-            if contains(n, normalExcludedWords) { return false }
-            return navGroups(forMode: "normal").contains { g in g.match.contains { n.contains($0) } }
-        }
+        if mode == "adult" && contains(n, kidCategoryMarks) { return false }
+        return true
     }
 
     /// 是否成人向分类（跨端红线：只允许夜航）。

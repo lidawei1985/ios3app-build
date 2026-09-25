@@ -5,6 +5,7 @@ import FilmCore
 /// 流式出结果：每个源搜完立即归位显示，不等全量完成；并发 8 路，20s 超时由 client 自带。
 public struct AggregateSearchView: View {
     let sites: [TVBoxSite]
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
     @State private var keyword = ""
@@ -14,7 +15,10 @@ public struct AggregateSearchView: View {
     /// site.id → 该源搜索结果（源顺序稳定，完成后按 sites 顺序归位展示）
     @State private var buckets: [String: [FeedItem]] = [:]
 
-    public init(sites: [TVBoxSite]) { self.sites = sites }
+    public init(sites: [TVBoxSite]) {
+        // 熔断的源不参与聚合搜索（冷却 10 分钟到期后自然放行半开探测，成功即复活）
+        self.sites = sites.filter { !SourceHealth.shared.isSkipped($0.key) }
+    }
 
     public var body: some View {
         List {
@@ -31,6 +35,7 @@ public struct AggregateSearchView: View {
                     }
                     .disabled(keyword.trimmingCharacters(in: .whitespaces).isEmpty || searching)
                 }
+                .listRowBackground(Rectangle().fill(.ultraThinMaterial))
             } footer: {
                 Text("同时在 \(sites.count) 个点播源里搜索，按源分组展示（TVBox 聚合搜索同款）。")
             }
@@ -54,12 +59,11 @@ public struct AggregateSearchView: View {
                 if let items = buckets[s.id], !items.isEmpty {
                     Section("\(s.name)（\(items.count)）") {
                         ForEach(items.prefix(30)) { item in
-                            NavigationLink {
-                                DetailView(item: item)
-                            } label: {
+                            Button { router.open(item) } label: {
                                 row(item)
                             }
                             .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
                         }
                     }
                 }

@@ -16,7 +16,14 @@ public struct FilmTheme {
     public init(accentHex: String) {
         accent = Color(hex: accentHex) ?? .red
         background = Self.adaptive(dark: "#0B0E14", light: "#FFFFFF")
-        card = Self.adaptive(dark: "#151A23", light: "#F1F3F7")
+        // 2026-09-25 玻璃化：card 从实底深灰改为半透明（深=白5.5% / 浅=黑4%）——
+        // 同一份 card 被 40+ 处胶囊/卡片/骨架共用，此处一处改 = 全 APP 黑卡变玻璃，
+        // 底色由 background 透出来，跟「变色」accent 系统无缝融入。
+        card = Color(UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor.white.withAlphaComponent(0.055)
+                : UIColor.black.withAlphaComponent(0.04)
+        })
         textPrimary = Self.adaptive(dark: "#F2F4F8", light: "#15181E")
         textSecondary = Self.adaptive(dark: "#9AA3B2", light: "#69707D")
     }

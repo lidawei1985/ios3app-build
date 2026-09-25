@@ -19,7 +19,11 @@
   INV-4  topScrim 只允许 .black 低α（<=0.35）压暗，禁止取色实色（mid/deep 实色
          与页面光晕产生色相差，滑动中相邻页把色相差带到页面两侧）
   INV-5  fadeLayer 的 mask 末端（location: 1.00）必须是 .clear
-  INV-6  hazeLayer 的 mask 首尾都必须是 .clear
+  INV-6  hazeLayer/stageHaze 必须不存在（2026-09-25 七改：高斯雾带在 0.86~0.985 显形、
+         最后 0.015 内突然归零——该「归零边」就是横线本体；雾带收得越窄线越明显。
+         正解 = 删雾带，海报长程平滑渐隐直接融进页面背景。任何窄雾带方案禁止回潮）
+  INV-7  fadeLayer 必须在底边前完全归零：存在 .clear stop 且位置 <= 0.97
+         （保证底边前后若干像素是纯背景，裁切/舍入误差落进纯透明区）
 
 用法：
   python scripts/check_hero_seam.py            # 正常检查
@@ -105,16 +109,15 @@ def main() -> int:
     f_last = re.search(r"\.init\(color: \.clear, location: 1\.00\)", fade) is not None
     ck("INV-5 fadeLayer 末端透明", f_last, "末端透明=%s" % f_last)
 
-    h_first = re.search(r"\.init\(color: \.clear, location: 0\.00\)", haze) is not None
-    h_last = re.search(r"\.init\(color: \.clear, location: 1\.00\)", haze) is not None
-    ck("INV-6 hazeLayer 首尾透明", h_first and h_last,
-       "首透明=%s 末透明=%s" % (h_first, h_last))
+    # INV-6 雾带禁止回潮（2026-09-25 七改）：hazeLayer/stageHaze 不得存在
+    ck("INV-6 高斯雾带已删除(hazeLayer/stageHaze)", haze == "",
+       "hazeLayer残留=%s" % bool(haze))
 
-    # INV-7 防雾化过大：haze 第一个非透明 stop 的位置必须 >= 0.55
-    h_locs = [float(x) for x in re.findall(r"location: ([\d.]+)\)", haze)]
-    solid_locs = [x for x in h_locs if x >= 0.55]
-    ck("INV-7 起雾位置>=0.55", bool(solid_locs),
-       "mask 位置=%s" % h_locs)
+    # INV-7 长程融合判据：fadeLayer 必须在底边前(<=0.97)完全归零
+    f_locs = [float(x) for x in re.findall(r"location: ([\d.]+)\)", fade)]
+    zero_before_edge = [x for x in f_locs if x <= 0.97]
+    ck("INV-7 fadeLayer 底边前归零(<=0.97)", bool(zero_before_edge),
+       "clear落点=%s" % zero_before_edge)
 
     # INV-8 防下面没变化：heroBackground 必须有实体取色底（不得退回 theme.background 当底色）
     ck("INV-8 整页底色=取色实体", "deep.scaled(" in bgblock and "theme.background" not in bgblock,

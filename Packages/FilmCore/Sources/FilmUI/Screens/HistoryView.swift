@@ -12,6 +12,7 @@ import FilmCore
 /// 2) body 不能堆太长链式表达式（Swift 类型检查会超时），故拆成 historyList / HistoryRow。
 public struct HistoryView: View {
     @EnvironmentObject private var library: UserLibrary
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
     public init() {}
@@ -40,9 +41,10 @@ public struct HistoryView: View {
     private var historyList: some View {
         List {
             ForEach(library.history) { entry in
-                NavigationLink(value: entry.item) {
+                Button { router.open(entry.item) } label: {
                     HistoryRow(entry: entry)
                 }
+                .buttonStyle(.plain)
                 .listRowBackground(Color.clear)
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {

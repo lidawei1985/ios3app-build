@@ -17,6 +17,9 @@ import FilmCore
 public struct CategoryIndexView: View {
     @EnvironmentObject private var store: CatalogStore
     @Environment(\.filmTheme) private var theme
+    /// 内置源分类聚合（2026-09-25 用户钦点「内置源内容进分类」）：
+    /// 命中现有大类的在行内标「含内置源」，没命中的新立分类直接出现在列表尾部。
+    @StateObject private var src = SourceCategoryIndex.shared
 
     @State private var showEmpty = false
     @State private var byName = false
@@ -27,6 +30,17 @@ public struct CategoryIndexView: View {
     private var groups: [NavCatalog.Group] {
         NavCatalog.groups(categories: store.catalog.categories,
                           mode: TVBoxConfigStore.currentProductMode())
+    }
+
+    /// 由内置源新立的分类行（feed 里没有的大类，用户钦点「有的进没有的分类就直接出现新分类」）。
+    struct SourceRow: Identifiable {
+        let title: String
+        var id: String { title }
+    }
+
+    /// 源新立分类（按首现顺序）。
+    private var sourceRows: [SourceRow] {
+        src.newcomerTitles.map { SourceRow(title: $0) }
     }
 
     /// 按当前排序规则整理后的大类。
@@ -72,11 +86,38 @@ public struct CategoryIndexView: View {
                                         Text("合并 \(g.catIDs.count) 个源分类")
                                             .font(.caption2).foregroundStyle(theme.textSecondary)
                                     }
+                                    if src.hasSource(inGroup: g.title) {
+                                        Text("含内置源")
+                                            .font(.caption2.weight(.medium)).foregroundStyle(theme.accent)
+                                            .lineLimit(1)
+                                    }
                                 }
                                 Spacer()
-                                Text("\(g.count)")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(g.count > 0 ? theme.textSecondary : theme.accent)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2).foregroundStyle(theme.textSecondary)
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Divider().padding(.leading, 16)
+                    }
+
+                    // 内置源新立分类（2026-09-25 钦点：有的进没有的分类就直接出现新分类）
+                    ForEach(sourceRows) { r in
+                        NavigationLink {
+                            SourceGroupBrowseView(title: r.title)
+                        } label: {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(r.title)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(theme.textPrimary)
+                                        .lineLimit(1)
+                                    Text("内置源新分类")
+                                        .font(.caption2.weight(.medium)).foregroundStyle(theme.accent)
+                                }
+                                Spacer()
                                 Image(systemName: "chevron.right")
                                     .font(.caption2).foregroundStyle(theme.textSecondary)
                             }
@@ -92,5 +133,6 @@ public struct CategoryIndexView: View {
         .background(theme.background.ignoresSafeArea())
         .navigationTitle("全部分类")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await src.load() }
     }
 }

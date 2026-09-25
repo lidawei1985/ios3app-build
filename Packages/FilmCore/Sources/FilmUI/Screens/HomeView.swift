@@ -7,6 +7,7 @@ public struct MainTabView: View {
     let profile: ProductProfile
     @EnvironmentObject private var store: CatalogStore
     @EnvironmentObject private var library: UserLibrary
+    @StateObject private var detailRouter = DetailRouter()
     @Environment(\.filmTheme) private var theme
     @State private var selection = 0
     /// 外观档位（跟随系统 / 深色 / 浅色）—— 2026-09-22 起不再锁死深色
@@ -20,21 +21,18 @@ public struct MainTabView: View {
         TabView(selection: $selection) {
             NavigationStack {
                 HomeView(profile: profile)
-                    .navigationDestination(for: FeedItem.self) { DetailView(item: $0) }
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
             .tag(0)
 
             NavigationStack {
                 CategoryBrowseView()
-                    .navigationDestination(for: FeedItem.self) { DetailView(item: $0) }
             }
             .tabItem { Label("分类", systemImage: "square.grid.2x2.fill") }
             .tag(1)
 
             NavigationStack {
                 SearchView()
-                    .navigationDestination(for: FeedItem.self) { DetailView(item: $0) }
             }
             .tabItem { Label("搜索", systemImage: "magnifyingglass") }
             .tag(2)
@@ -50,12 +48,15 @@ public struct MainTabView: View {
 
             NavigationStack {
                 LibraryView()
-                    .navigationDestination(for: FeedItem.self) { DetailView(item: $0) }
             }
             .tabItem { Label("我的", systemImage: "person.crop.circle.fill") }
             .tag(4)
         }
         .tint(theme.accent)
+        .sheet(item: $detailRouter.item) { item in
+            detailCardContent(item: item, router: detailRouter)
+        }
+        .environmentObject(detailRouter)
         .preferredColorScheme(AppearanceMode(rawValue: appearanceRaw)?.colorScheme)
         // 直播页点「返回」= 真退出：停播 + 跳回首页（防后台出声）
         .onReceive(NotificationCenter.default.publisher(for: .liveExitToHome)) { _ in
@@ -92,6 +93,7 @@ public struct HomeView: View {
     let profile: ProductProfile
     @EnvironmentObject private var store: CatalogStore
     @EnvironmentObject private var library: UserLibrary
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
     public init(profile: ProductProfile) { self.profile = profile }
@@ -409,7 +411,7 @@ public struct HomeView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
                     ForEach(Array(library.history.prefix(20).enumerated()), id: \.element.id) { _, entry in
-                        NavigationLink(value: entry.item) {
+                        Button { router.open(entry.item) } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 PosterImage(urlString: entry.item.bestPosterURL?.absoluteString)
                                     .frame(width: 108, height: 160)
@@ -463,10 +465,9 @@ struct HeroSlide: View {
                                 //   原 `theme.background` 会让 hero 矩形内是主题底色，与页面取色背景不同色
                                 //   → hero 底边/顶边各出现一条边界线。改透明 = 透明处直接透出页面取色背景。
             fadeLayer          // ② 底图（底部渐隐到全透明，无硬边）
-            hazeLayer          // ③ 化雾层（真高斯模糊，只在下段显形）
-            groundLayer        // ④ 落地雾带（两端都是透明的取色雾，不再有实色落点）
-            topScrim           // ⑤ 顶部压暗（取色系，与页面背景同源）
-            titleBlock         // ⑥ 衬线标题
+            groundLayer        // ③ 落地雾带（两端都是透明的取色雾，不再有实色落点）
+            topScrim           // ④ 顶部压暗（取色系，与页面背景同源）
+            titleBlock         // ⑤ 衬线标题
         }
         .frame(height: height)
         .clipped()
@@ -474,41 +475,36 @@ struct HeroSlide: View {
 
     // MARK: 图层
 
-    /// 海报层：`blur = 0` 是底图，`blur = 9` 是化雾层（同一张图，走 PosterLoader 缓存，不重复下载）。
-    /// 2026-09-24 23:22 用户指令：「主视觉海报怎么总是把顶部裁切成半个人或头，不能以顶部显示吗？下面地方那么多」
-    /// → **顶部对齐**：海报顶部与容器顶对齐（人物头部完整），裁切全部落在底部（雾化带盖住）。
-    /// frame 仍高 1.30h：多出的 0.30h 是给 blur 雾带的采样余量（blur 需要图像延伸出容器边界）。
-    private func poster(blur: CGFloat) -> some View {
+    /// 海报层（2026-09-25 七改）：高斯化雾层已整体删除（它就是横线本体，见 fadeLayer 注释），
+    /// blur 参数随之消亡。海报顶部对齐不裁头（2026-09-24 23:22 用户指令），
+    /// frame 仍高 1.30h：多出的 0.30h 给底部渐隐留出素材纵深（渐隐发生在容器内最后 60%）。
+    private func poster() -> some View {
         GeometryReader { geo in
             PosterImage(urlString: item.bestPosterURL?.absoluteString, cornerRadius: 0, contentMode: .fill)
                 .frame(width: geo.size.width, height: geo.size.height * 1.30, alignment: .top)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
                 .clipped()
-                .blur(radius: blur)
         }
     }
 
+    /// 底图渐隐（2026-09-25 七改·**删雾化，长程融合**——用户钦定「不雾化就是一体的融入背景」）。
+    /// 横线真根因（六改后仍复发，本次挖到机制层）：hazeLayer 高斯雾带在 0.86~0.985 显形，
+    /// 却要在最后 0.015（≈7px）内从全显跳到全透明——这条「突然归零」的边界本身就是一条
+    /// 高对比横线；雾带收得越窄（v4 23:23 指令），边界越生硬，用户看到的线越明显。
+    /// **无效做法（禁止再试）**：任何「贴底边窄雾带」方案都自带这条归零边。
+    /// 正解：不雾化——海报用**长程平滑渐隐**直接融进页面取色背景：
+    /// 不透明段保持到 0.42，随后 55% 的跨度内缓慢衰减，**在 0.96 处完全归零**，
+    /// 底边前后 4% 全是纯背景 → 任何裁切/舍入误差都落在纯透明区，物理上无线可现。
     private var fadeLayer: some View {
-        poster(blur: 0)
+        poster()
             .mask(LinearGradient(stops: [
                 .init(color: .black, location: 0.00),
-                .init(color: .black, location: 0.40),
-                .init(color: .black.opacity(0.72), location: 0.62),
-                .init(color: .black.opacity(0.24), location: 0.82),
-                .init(color: .clear, location: 1.00)
-            ], startPoint: .top, endPoint: .bottom))
-    }
-
-    private var hazeLayer: some View {
-        poster(blur: 9)
-            .mask(LinearGradient(stops: [
-                // 2026-09-24 23:23 用户指令：「雾化最边缘尽量不要雾化海报本身」
-                // → 雾带收窄到只贴底边 ~14%（原 0.70 起雾盖了 30%，把海报下段糊掉了）。
-                // 海报现在顶对齐且图像延伸出容器底部，本无硬边；雾带只做最后的柔和过渡。
-                .init(color: .clear, location: 0.00),
-                .init(color: .clear, location: 0.86),
-                .init(color: .black, location: 0.94),
-                .init(color: .black, location: 0.985),
+                .init(color: .black, location: 0.42),
+                .init(color: .black.opacity(0.82), location: 0.58),
+                .init(color: .black.opacity(0.55), location: 0.72),
+                .init(color: .black.opacity(0.24), location: 0.84),
+                .init(color: .black.opacity(0.08), location: 0.91),
+                .init(color: .clear, location: 0.96),
                 .init(color: .clear, location: 1.00)
             ], startPoint: .top, endPoint: .bottom))
     }
@@ -617,12 +613,13 @@ struct HeroCarousel: View {
     let height: CGFloat
     @Binding var palette: HeroPalette
     @State private var index = 0
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
     var body: some View {
         TabView(selection: $index) {
             ForEach(Array(items.enumerated()), id: \.offset) { i, item in
-                NavigationLink(value: item) {
+                Button { router.open(item) } label: {
                     HeroSlide(item: item, logoName: logoName, height: height,
                               palette: palette, pageIndex: i, pageCount: items.count)
                 }

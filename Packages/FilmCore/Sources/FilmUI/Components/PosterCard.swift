@@ -74,6 +74,7 @@ public struct PosterCard: View {
 public struct PosterRail: View {
     let title: String
     let items: [FeedItem]
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
     public init(title: String, items: [FeedItem]) {
@@ -89,8 +90,8 @@ public struct PosterRail: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
                     ForEach(items.prefix(30)) { item in
-                        // 显式 destination：value 路由在旧式推入的页面里有 iOS 18 解析失效坑（推送即弹回）
-                        NavigationLink { DetailView(item: item) } label: {
+                        // 详情卡弹层（2026-09-25 钦定）：底部圆角卡片，不再整页推入
+                        Button { router.open(item) } label: {
                             PosterCard(item: item)
                                 .frame(width: 104)
                         }
@@ -110,6 +111,7 @@ public struct PosterGrid: View {
     let items: [FeedItem]
     var columns: Int = 3
     var badges: [String: String] = [:]
+    @EnvironmentObject private var router: DetailRouter
 
     public init(items: [FeedItem], columns: Int = 3, badges: [String: String] = [:]) {
         self.items = items; self.columns = columns; self.badges = badges
@@ -118,8 +120,8 @@ public struct PosterGrid: View {
     public var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: columns), spacing: 16) {
             ForEach(items) { item in
-                // 显式 destination（同 PosterRail：绕开 value 路由在深层推入页的解析坑）
-                NavigationLink { DetailView(item: item) } label: {
+                // 详情卡弹层（同 PosterRail）
+                Button { router.open(item) } label: {
                     PosterCard(item: item, badge: badges[item.dedupId])
                 }
                 .buttonStyle(.plain)

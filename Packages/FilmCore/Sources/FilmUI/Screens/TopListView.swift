@@ -17,6 +17,7 @@ public struct TopListView: View {
     }
 
     @EnvironmentObject private var store: CatalogStore
+    @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
     @State private var board: Board = .hot
@@ -48,7 +49,7 @@ public struct TopListView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.prefix(30).enumerated()), id: \.element.id) { idx, it in
-                        NavigationLink { DetailView(item: it) } label: {
+                        Button { router.open(it) } label: {
                             HStack(spacing: 12) {
                                 Text("\(idx + 1)")
                                     .font(.title3.weight(.heavy).monospacedDigit())
