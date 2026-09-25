@@ -12,6 +12,19 @@ public struct LibraryView: View {
     @State private var segment = 0
     @State private var showLedgerDetail = false
     @State private var pushSettings = false   // 直播页「去添加直播源」programmatic 推入
+    /// v14：整页取色底跟首页/分类页同源（用户：「你看首页什么样，我的和搜索就是什么样子」）
+    @ObservedObject private var tint = HeroTintStore.shared
+
+    /// 与分类页同一个公式：mid α.40 → deep×0.94（0.31 处）→ 近黑收口，颜色连着不跳色。
+    private var tintBackground: some View {
+        let p = tint.current
+        return LinearGradient(stops: [
+            .init(color: p.mid.alpha(0.40), location: 0.00),
+            .init(color: p.deep.scaled(0.94).color, location: 0.31),
+            .init(color: Color(hex: "#0A0A0D") ?? .black, location: 0.76)
+        ], startPoint: .top, endPoint: .bottom)
+        .animation(.easeInOut(duration: 0.9), value: tint.current)
+    }
 
     public init() {}
 
@@ -65,13 +78,26 @@ public struct LibraryView: View {
                     .listRowBackground(Color.clear)
                 LabeledRow(label: "重复去重", value: "\(store.ledger.duplicateIDCount)")
                     .listRowBackground(Color.clear)
-                Button("数量台账明细") { showLedgerDetail = true }
-                    .foregroundStyle(theme.accent)
-                    .listRowBackground(Color.clear)
-                Button("手动刷新片库") {
-                    Task { await store.syncAll() }
+                // v14：红字按钮 → 亮玻璃胶囊（首页同款 rgba(255,255,255,.10)+亮边；accent 红字太扎眼）
+                Button { showLedgerDetail = true } label: {
+                    Text("数量台账明细").font(.body)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Capsule().fill(.white.opacity(0.10)))
+                        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
+                        .foregroundStyle(theme.textPrimary)
                 }
-                .foregroundStyle(theme.accent)
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+                Button {
+                    Task { await store.syncAll() }
+                } label: {
+                    Text("手动刷新片库").font(.body)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Capsule().fill(.white.opacity(0.10)))
+                        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .buttonStyle(.plain)
                 .listRowBackground(Color.clear)
             }
 
@@ -87,7 +113,7 @@ public struct LibraryView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(theme.background.ignoresSafeArea())
+        .background(tintBackground)
         .navigationTitle("我的")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -115,8 +141,9 @@ public struct LibraryView: View {
             Text(title).font(.subheadline)
                 .fontWeight(segment == tag ? .semibold : .regular)
                 .padding(.horizontal, 16).padding(.vertical, 7)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().stroke(segment == tag ? theme.accent.opacity(0.55) : .white.opacity(0.14), lineWidth: 0.5))
+                // 首页同款亮玻璃（不能超薄材质：深色下=黑膜，2026-09-25 用户实测证伪）
+                .background(Capsule().fill(.white.opacity(0.10)))
+                .overlay(Capsule().stroke(segment == tag ? theme.accent.opacity(0.55) : .white.opacity(0.12), lineWidth: segment == tag ? 1 : 0.5))
                 .foregroundStyle(segment == tag ? theme.textPrimary : theme.textSecondary)
         }
         .buttonStyle(.plain)

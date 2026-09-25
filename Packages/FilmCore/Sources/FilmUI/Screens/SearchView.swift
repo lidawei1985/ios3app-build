@@ -19,6 +19,19 @@ public struct SearchView: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var tvSearchTask: Task<Void, Never>?
     @AppStorage("film.recent.searches") private var recentRaw: String = ""
+    /// v14：整页取色底跟首页/分类页同源（用户：「你看首页什么样，我的和搜索就是什么样子」）
+    @ObservedObject private var tint = HeroTintStore.shared
+
+    /// 与分类页同一个公式：mid α.40 → deep×0.94（0.31 处）→ 近黑收口，颜色连着不跳色。
+    private var tintBackground: some View {
+        let p = tint.current
+        return LinearGradient(stops: [
+            .init(color: p.mid.alpha(0.40), location: 0.00),
+            .init(color: p.deep.scaled(0.94).color, location: 0.31),
+            .init(color: Color(hex: "#0A0A0D") ?? .black, location: 0.76)
+        ], startPoint: .top, endPoint: .bottom)
+        .animation(.easeInOut(duration: 0.9), value: tint.current)
+    }
 
     public init() {}
 
@@ -38,9 +51,9 @@ public struct SearchView: View {
                 }
             }
             .padding(12)
-            // v14：导航条式透明玻璃（超薄材质 + 发丝线描边），替换半透明实底
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.14), lineWidth: 0.5))
+            // v14：首页同款亮玻璃（白 10% + 亮边；超薄材质在深色下是黑膜，实测证伪）
+            .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.10)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.12), lineWidth: 1))
             .padding(.horizontal, 16).padding(.top, 8)
 
             if showSuggestions && !query.isEmpty && !suggestions.isEmpty { suggestionsLayer }
@@ -51,7 +64,7 @@ public struct SearchView: View {
             }
             content
         }
-        .background(theme.background.ignoresSafeArea())
+        .background(tintBackground)
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
         .task { loadRecent() }
@@ -118,7 +131,7 @@ public struct SearchView: View {
                 Divider().padding(.leading, 40)
             }
         }
-        .background(theme.background)
+        .background(Color.clear)   // v14：实色块清掉，透出整页取色底
     }
 
     /// 分区隔条：上下发丝线夹住小字标（2026-09-25 用户钦点恢复——
