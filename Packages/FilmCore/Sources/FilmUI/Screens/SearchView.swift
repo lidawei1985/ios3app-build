@@ -38,7 +38,9 @@ public struct SearchView: View {
                 }
             }
             .padding(12)
-            .background(theme.card, in: RoundedRectangle(cornerRadius: 12))
+            // v14：导航条式透明玻璃（超薄材质 + 发丝线描边），替换半透明实底
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.14), lineWidth: 0.5))
             .padding(.horizontal, 16).padding(.top, 8)
 
             if showSuggestions && !query.isEmpty && !suggestions.isEmpty { suggestionsLayer }

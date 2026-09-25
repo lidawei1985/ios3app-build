@@ -1205,7 +1205,9 @@ struct LivePlayerScreen: View {
                     // 61包（用户：「还是会卡很久才会播 换台也是卡住」）——起播/换台的容忍时间下调：
                     // 分片已重建为小片（≤6s 优先）+ 列表升温，正常台 2s 内出画；
                     // 3s 还没出画就是这条线路不行，没必要让用户干等 5s，直接换。
-                    if gap > 3 {
+                    // 61包下调到 3s；v14（用户复测「直播不好用」）回调到 8s：
+                    // PC 实测慢源 4.8s/片，首帧常要 5~8s，3s 判死会把慢而活的线路全部错杀。
+                    if gap > 8 {
                         lastProgressAt = Date()
                         failFastTries += 1
                         if failFastTries <= 3 { autoHeal(sameChannelOnly: true) }

@@ -1,9 +1,9 @@
 import SwiftUI
 import FilmCore
 
-/// 设置页（settings_v2 原型像素级落地 2026-09-25）：
-/// · 顶部常驻「经典分组 | 状态优先 | 紧凑」变体切换（accent 下划线）+ 无框搜索
-/// · 状态优先首屏 = 绿点「当前生效」中枢卡（30 圆角发丝线壳，三行点选直换 + 继续浏览海报行）
+/// 设置页（settings_v2 原型落地 2026-09-25；v14 用户钦定砍掉原型演示用变体切换器）：
+/// · 顶部无框搜索（原型切换器只是设计稿预览开关，不是功能——搬进 APP 造成红条+布局混乱，已删）
+/// · 首屏 = 绿点「当前生效」中枢卡（30 圆角发丝线壳，三行点选直换 + 继续浏览海报行）
 /// · 全部分组收成透明玻璃胶囊入口 → 页内二级页（‹ 返回 + 居中标题 + N 项，发丝线壳装行）
 /// · 强调色全部走 FilmTheme.accent —— 跟随产品「变色」系统与深浅色主题
 public struct SettingsView: View {
@@ -11,18 +11,9 @@ public struct SettingsView: View {
     @EnvironmentObject private var tvbox: TVBoxConfigStore
     @Environment(\.filmTheme) private var theme
 
-    @AppStorage("settings.layoutVariant") private var variantRaw = "状态优先"
     @State private var query = ""
     @State private var activePicker: StatusField?
     @State private var subGroup: SettingsGroup?
-
-    private enum Variant: String, CaseIterable {
-        case classic = "经典分组"
-        case status = "状态优先"
-        case compact = "紧凑"
-    }
-
-    private var variant: Variant { Variant(rawValue: variantRaw) ?? .status }
 
     public init() {}
 
@@ -34,11 +25,10 @@ public struct SettingsView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            variantSwitch
             searchField
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if variant == .status && normalizedQuery.isEmpty {
+                    if normalizedQuery.isEmpty {
                         statusCard
                     }
                     if normalizedQuery.isEmpty {
@@ -68,33 +58,6 @@ public struct SettingsView: View {
             }
         }
         .animation(.easeInOut(duration: 0.22), value: subGroup)
-    }
-
-    // MARK: 变体切换（原型 .switch：激活项 accent 2px 下划线）
-
-    private var variantSwitch: some View {
-        HStack(spacing: 20) {
-            ForEach(Variant.allCases, id: \.self) { v in
-                Button {
-                    variantRaw = v.rawValue
-                } label: {
-                    VStack(spacing: 5) {
-                        Text(v.rawValue)
-                            .font(.subheadline)
-                            .fontWeight(variant == v ? .semibold : .regular)
-                            .foregroundStyle(variant == v ? theme.textPrimary : theme.textSecondary)
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(variant == v ? theme.accent : Color.clear)
-                            .frame(height: 2)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
     }
 
     // MARK: 搜索（无框 + 发丝底横线 + 一键清空）
@@ -266,7 +229,7 @@ public struct SettingsView: View {
                 .frame(width: 20)
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, variant == .compact ? 10 : 14)
+        .padding(.vertical, 14)
         .background(Capsule().fill(theme.accent.opacity(0.09)))
         .overlay(Capsule().stroke(theme.accent.opacity(0.32), lineWidth: 1))
         .contentShape(Capsule())

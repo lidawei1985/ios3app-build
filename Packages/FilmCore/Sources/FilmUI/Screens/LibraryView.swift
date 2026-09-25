@@ -17,13 +17,14 @@ public struct LibraryView: View {
 
     public var body: some View {
         List {
-            Picker("", selection: $segment) {
-                Text("收藏").tag(0)
-                Text("历史").tag(1)
+            // v14：系统分段选择器（灰色实心）→ 玻璃胶囊双按钮（跟随变色系统）
+            HStack(spacing: 8) {
+                segmentChip("收藏", 0)
+                segmentChip("历史", 1)
+                Spacer()
             }
-            .pickerStyle(.segmented)
             .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
+            .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
 
             if segment == 0 {
                 favoritesRows
@@ -104,6 +105,21 @@ public struct LibraryView: View {
             pushSettings = true
         }
         .sheet(isPresented: $showLedgerDetail) { LedgerSheet(ledger: store.ledger) }
+    }
+
+    /// v14：玻璃胶囊段选按钮（导航条式：超薄材质 + 发丝线，选中 accent 描边）
+    private func segmentChip(_ title: String, _ tag: Int) -> some View {
+        Button {
+            segment = tag
+        } label: {
+            Text(title).font(.subheadline)
+                .fontWeight(segment == tag ? .semibold : .regular)
+                .padding(.horizontal, 16).padding(.vertical, 7)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(segment == tag ? theme.accent.opacity(0.55) : .white.opacity(0.14), lineWidth: 0.5))
+                .foregroundStyle(segment == tag ? theme.textPrimary : theme.textSecondary)
+        }
+        .buttonStyle(.plain)
     }
 
     private var favoritesRows: some View {
@@ -248,6 +264,7 @@ struct LedgerSheet: View {
                     Text("版本：\(ledger.version ?? "-")　更新：\(ledger.updatedAt.map { $0.formatted() } ?? "-")")
                 }
             }
+            .scrollContentBackground(.hidden)
             .navigationTitle("数据台账")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
