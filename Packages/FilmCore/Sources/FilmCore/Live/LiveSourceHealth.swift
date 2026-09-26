@@ -4,7 +4,7 @@ import Foundation
 /// 每个 URL 记一个分数——播起来 +1，判死/幻灯片降级 -2（坏源快速沉底）。
 /// 同台多条线路时按分数降序选备线：历史上播得顺的源当第一候选，
 /// 从没出过问题的源（0 分）按表内原顺序兜底。分档上限防极端值堆积。
-public struct LiveSourceHealth {
+public final class LiveSourceHealth {
     public static let shared = LiveSourceHealth()
 
     private let storeKey = "live.srcHealth.v1"
