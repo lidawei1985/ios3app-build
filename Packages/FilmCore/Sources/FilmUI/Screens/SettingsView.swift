@@ -764,7 +764,17 @@ private struct SourceGroupView: View {
             .disabled(tvbox.refreshing || (tvbox.activeURL == nil && tvbox.activeBuiltinRepoURL == nil))
 
             if !tvbox.refreshMessage.isEmpty {
-                Text(tvbox.refreshMessage).font(.caption).foregroundStyle(theme.textSecondary)
+                // v16：拉取失败/兜底提示从灰小字升级为亮玻璃横幅（此前用户根本注意不到，
+                // 「选了内置线路没反应」的真相=拉取超时静默切回直连精选，必须让人看见）
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle.fill").font(.caption)
+                    Text(tvbox.refreshMessage).font(.caption).lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(Capsule().fill(.white.opacity(0.10)))
+                .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
             }
         } header: {
             Text("TVBox 配置 · 配置历史")

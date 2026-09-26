@@ -165,7 +165,9 @@ public enum TVBoxFetcher {
 
     /// authToken：GitHub 私有仓直播/配置文件鉴权（2026-09-21 夜航成人直播接入）。
     /// 仅对 github 域注入，避免把 token 泄给第三方 CDN。
-    public static func fetch(_ urlString: String, timeout: TimeInterval = 15,
+    /// v16：默认超时 15→25s（PC 实测「高天流云」就要 21.8s，手机更慢——15s 必超时触发静默兜底，
+    /// 用户看到的就是「选了这条内置线路没反应」）。
+    public static func fetch(_ urlString: String, timeout: TimeInterval = 25,
                              authToken: String? = nil) async -> Data? {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = timeout
