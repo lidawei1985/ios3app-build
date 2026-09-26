@@ -1,0 +1,40 @@
+{
+ "sites": [
+  {
+   "key": "vod_155apicomapiphpprovidevo",
+   "name": "155",
+   "type": 1,
+   "api": "https://155api.com/api.php/provide/vod"
+  },
+  {
+   "key": "vod_apidanaizicomapiphpprovi",
+   "name": "大奶子",
+   "type": 1,
+   "api": "https://apidanaizi.com/api.php/provide/vod/?ac=list"
+  },
+  {
+   "key": "vod_wwwmdzyapicomapiphpprovi",
+   "name": "魔都资源",
+   "type": 1,
+   "api": "https://www.mdzyapi.com/api.php/provide/vod/?ac=videolist"
+  },
+  {
+   "key": "vod_wwwpgxdycomapijsonphp",
+   "name": "黄AV",
+   "type": 1,
+   "api": "https://www.pgxdy.com/api/json.php"
+  },
+  {
+   "key": "vod_fhapi9comapiphpprovidevo",
+   "name": "💞番号资源💞",
+   "type": 1,
+   "api": "http://fhapi9.com/api.php/provide/vod/"
+  },
+  {
+   "key": "vod_lbapi9comapiphpprovidevo",
+   "name": "🔞乐播资源",
+   "type": 1,
+   "api": "https://lbapi9.com/api.php/provide/vod/"
+  }
+ ]
+}

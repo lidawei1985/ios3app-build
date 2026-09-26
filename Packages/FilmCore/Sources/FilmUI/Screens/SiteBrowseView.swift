@@ -238,33 +238,57 @@ public struct SiteBrowseView: View {
                     + pre.filter { SourceHealth.shared.sortKey($0.key) == 1 }
                 let cms = filtered.filter { $0.type != 3 }
                 let spiders = filtered.filter { $0.type == 3 }
-                Section {
-                    ForEach(cms) { s in
-                        Button { switchSite(s) } label: {
-                            HStack {
-                                Image(systemName: s.id == site.id ? "checkmark.circle.fill" : "circle")
-                                    .font(.footnote)
-                                    .foregroundStyle(s.id == site.id ? theme.accent : theme.textSecondary)
-                                Text(s.name).font(.subheadline).foregroundStyle(theme.textPrimary).lineLimit(1)
-                                Spacer()
-                                if allSites.count > 12 {
-                                    Text(typeLabel(s.type)).font(.caption2).foregroundStyle(theme.textSecondary)
-                                }
-                            }
-                            .listRowBackground(Color.clear)
-                        }
+                // 2026-09-26 分区（用户：「看不明白哪些是电影的哪些是成人的」）：
+                // 点播源按 影视 / 混合 / 自定义 / 成人 分组，成人区永远排最后。
+                let zoneGroups: [(title: String, items: [TVBoxSite])] = {
+                    var g: [DefaultSites.VodZone: [TVBoxSite]] = [:]
+                    for s in cms { g[DefaultSites.vodZone(of: s), default: []].append(s) }
+                    let order: [(DefaultSites.VodZone, String)] = [
+                        (.film, "影视源"), (.mixed, "混合源（影视+成人分类）"),
+                        (.custom, "自定义源"), (.adult, "成人源"),
+                    ]
+                    return order.compactMap { z, t in
+                        g[z].map { (t + " \($0.count)", $0) }
                     }
-                    if cms.isEmpty {
+                }()
+                if cms.isEmpty {
+                    Section {
                         Text(q.isEmpty ? "没有可用的点播源" : "没有匹配「\(pickerQuery)」的点播源")
                             .font(.footnote).foregroundStyle(theme.textSecondary)
                             .listRowBackground(Color.clear)
+                    } header: {
+                        // 术语归一（35包）：这里列的是「点播源」（站点），不再叫"线路"——
+                        // 与设置页「配置线路」（一份配置包）区分，用户曾问「两个列表为啥分开」
+                        Text("点播源 · 共 \(allSites.count)")
+                    } footer: {
+                        Text("点选立即切换整站内容并记住（下次直接进这个源）。")
                     }
-                } header: {
-                    // 术语归一（35包）：这里列的是「点播源」（站点），不再叫"线路"——
-                    // 与设置页「配置线路」（一份配置包）区分，用户曾问「两个列表为啥分开」
-                    Text("点播源 · 可用 \(cms.count) / 共 \(allSites.count)")
-                } footer: {
-                    Text("点选立即切换整站内容并记住（下次直接进这个源）。")
+                } else {
+                    ForEach(zoneGroups, id: \.title) { zone in
+                        Section {
+                            ForEach(zone.items) { s in
+                                Button { switchSite(s) } label: {
+                                    HStack {
+                                        Image(systemName: s.id == site.id ? "checkmark.circle.fill" : "circle")
+                                            .font(.footnote)
+                                            .foregroundStyle(s.id == site.id ? theme.accent : theme.textSecondary)
+                                        Text(s.name).font(.subheadline).foregroundStyle(theme.textPrimary).lineLimit(1)
+                                        Spacer()
+                                        if allSites.count > 12 {
+                                            Text(typeLabel(s.type)).font(.caption2).foregroundStyle(theme.textSecondary)
+                                        }
+                                    }
+                                    .listRowBackground(Color.clear)
+                                }
+                            }
+                        } header: {
+                            Text(zone.title)
+                        } footer: {
+                            if zone.items.contains(where: { DefaultSites.vodZone(of: $0) == .adult }) {
+                                Text("成人源仅夜航可见；影视源看片、成人源看成人内容，分区不会混。")
+                            }
+                        }
+                    }
                 }
                 // 内置实测「配置线路」也放进一键切换
                 // （用户钦定 2026-09-22：「内置27条实测为什么不在继续浏览的一键切换里」）

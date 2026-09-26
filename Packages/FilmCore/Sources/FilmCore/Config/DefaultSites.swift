@@ -39,12 +39,9 @@ public enum DefaultSites {
         TVBoxSite(key: "builtin:harv:okzyw-net-api-php-provide-vod-from-okm3u", name: "OK资源 2", api: "http://okzyw.net/api.php/provide/vod/from/okm3u8/at/xml", type: 1),
         TVBoxSite(key: "builtin:harv:okzyw-cc-api-php-provide-vod-from-okm3u8", name: "OK资源 3", api: "http://okzyw.cc/api.php/provide/vod/from/okm3u8/at/xml", type: 1),
         TVBoxSite(key: "builtin:harv:api-ukuapi88-com-api-php-provide-vod-ac-", name: "U酷资源", api: "https://api.ukuapi88.com/api.php/provide/vod/?ac=list", type: 1),
-        TVBoxSite(key: "builtin:harv:apilsbzy-com-api-php-provide-vod", name: "apilsbzy", api: "https://apilsbzy.com/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:tyyszy2-com-api-php-provide-vod", name: "tyyszy2", api: "http://tyyszy2.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:harv:tyyszy3-com-api-php-provide-vod", name: "tyyszy3", api: "http://tyyszy3.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:harv:www-wsyzy-cc-api-php-provide-vod", name: "www.wsyzy.cc", api: "http://www.wsyzy.cc/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:beiyong-slapibf-com-api-php-provide-vod-", name: "♥️森林采集", api: "https://beiyong.slapibf.com/api.php/provide/vod/?ac=list", type: 1),
-        TVBoxSite(key: "builtin:harv:apiyutu-com-api-php-provide-vod", name: "♥️玉兔采集", api: "https://apiyutu.com/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:api-xinlangapi-com-xinlangapi-php-provid", name: "♻️新浪.云播", api: "http://api.xinlangapi.com/xinlangapi.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:suoniapi-com-api-php-provide-vod-ac-list", name: "♻️索尼资源", api: "https://suoniapi.com/api.php/provide/vod/?ac=list", type: 1),
         TVBoxSite(key: "builtin:harv:sdzyapi-com-api-php-provide-vod", name: "♻️闪电.云播", api: "http://sdzyapi.com/api.php/provide/vod/", type: 1),
@@ -55,8 +52,6 @@ public enum DefaultSites {
         TVBoxSite(key: "builtin:harv:cj-yayazy-net-api-php-provide-vod", name: "丫丫资源", api: "https://cj.yayazy.net/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:api-guangsuapi-com-api-php-provide-vod", name: "光速资源(切)", api: "https://api.guangsuapi.com/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:tyyszyapi-com-api-php-provide-vod-ac-vid", name: "天涯资源", api: "https://tyyszyapi.com/api.php/provide/vod/?ac=videolist", type: 1),
-        TVBoxSite(key: "builtin:harv:api-xiaojizy-live-provide-vod", name: "小鸡窝", api: "https://api.xiaojizy.live/provide/vod", type: 1),
-        TVBoxSite(key: "builtin:harv:xiaojizy-live-provide-vod", name: "小鸡窝 2", api: "https://xiaojizy.live/provide/vod", type: 1),
         TVBoxSite(key: "builtin:harv:hhzyapi-com-api-php-provide-vod-ac-list", name: "影视 | 豪华资源", api: "https://hhzyapi.com/api.php/provide/vod/?ac=list", type: 1),
         TVBoxSite(key: "builtin:harv:ffzy-tv-api-php-provide-vod", name: "影视 | 非凡[直连]", api: "http://ffzy.tv/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:api-wujinapi-net-api-php-provide-vod", name: "无尽 | 采集", api: "https://api.wujinapi.net/api.php/provide/vod/", type: 1),
@@ -64,22 +59,22 @@ public enum DefaultSites {
         TVBoxSite(key: "builtin:harv:jszyapi-com-api-php-provide-vod", name: "极速资源", api: "https://jszyapi.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:harv:api-maoyanapi-top-api-php-provide-vod", name: "猫眼资源", api: "https://api.maoyanapi.top/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:www-hongniuzy3-com-api-php-provide-vod", name: "红牛资源3", api: "https://www.hongniuzy3.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:apilsbzy1-com-api-php-provide-vod", name: "老牛资源", api: "https://apilsbzy1.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:apilsbzy3-com-api-php-provide-vod", name: "老牛资源 2", api: "https://apilsbzy3.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:apilsbzy2-com-api-php-provide-vod", name: "老牛资源 3", api: "https://apilsbzy2.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:apilsbzy4-com-api-php-provide-vod", name: "老牛资源 4", api: "https://apilsbzy4.com/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:mtzy-me-api-php-provide-vod", name: "茅台 | 采集", api: "https://mtzy.me/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:caiji-maotaizy-cc-api-php-provide-vod-at", name: "茅台资源", api: "https://caiji.maotaizy.cc/api.php/provide/vod/at/josn/", type: 1),
         TVBoxSite(key: "builtin:harv:caiji-dbzy5-com-api-php-provide-vod-at-j", name: "豆瓣资源", api: "https://caiji.dbzy5.com/api.php/provide/vod/at/josn/", type: 1),
-        TVBoxSite(key: "builtin:harv:api-douapi-cc-api-php-provide-vod-ac-lis", name: "豆豆", api: "https://api.douapi.cc/api.php/provide/vod/?ac=list", type: 1),
         TVBoxSite(key: "builtin:harv:subocaiji-com-api-php-provide-vod", name: "速播 | 采集", api: "https://subocaiji.com/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:subocj-com-api-php-provide-vod-ac-videol", name: "速播资源", api: "https://subocj.com/api.php/provide/vod/?ac=videolist", type: 1),
         TVBoxSite(key: "builtin:harv:jyzyapi-com-provide-vod", name: "金鹰资源", api: "https://jyzyapi.com/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:api-ffzyapi-com-api-php-provide-vod", name: "非凡资源", api: "https://api.ffzyapi.com/api.php/provide/vod", type: 1),
-        TVBoxSite(key: "builtin:harv:heiliaozyapi-com-api-php-provide-vod", name: "黑料", api: "https://heiliaozyapi.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:harv:caiji-dyttzyapi-com-api-php-provide-vod-", name: "🎞️天堂┃采集", api: "http://caiji.dyttzyapi.com/api.php/provide/vod/from/dyttm3u8/at/m3u8/", type: 1),
         TVBoxSite(key: "builtin:harv:www-huyaapi-com-api-php-provide-vod-from", name: "🐯虎牙采集", api: "https://www.huyaapi.com/api.php/provide/vod/from/hym3u8", type: 1),
     ]
+
+    // ⛔ 2026-09-26 红线修复（用户实测心屋出现成人内容）：上面列表原有 11 条成人 CMS 源
+    //   （ac=list 全量机检 _probe_common_adult.py：分类含 强奸乱伦/三级/无码/人妻 等），
+    //   已全部移出——成人内容从此在心屋/星幕物理不可见。
+    //   apilsbzy 家族 5 条已移入 builtinAdultVodSources（仅夜航可见）；
+    //   森林/玉兔/小鸡窝×2/豆豆/黑料 6 条与成人列表同域名重复，直接删除。
 
     /// 混合源（**三端共有**；内容按端闸门分派，见 `NavPolicy`）。
     ///
@@ -109,7 +104,6 @@ public enum DefaultSites {
         TVBoxSite(key: "builtin:xiaojizy", name: "小鸡窝资源", api: "https://api.xiaojizy.live/provide/vod", type: 1),
         TVBoxSite(key: "builtin:senlin",   name: "森林采集",   api: "https://beiyong.slapibf.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:yb155",    name: "155资源",    api: "https://155api.com/api.php/provide/vod", type: 1),
-        TVBoxSite(key: "builtin:huyals",   name: "虎牙资源",   api: "https://www.huyaapi.com/api.php/provide/vod/at/json", type: 1),
         TVBoxSite(key: "builtin:ls2",      name: "老司机2",    api: "https://www.msnii.com/api/json.php", type: 0),
         TVBoxSite(key: "builtin:ls3",      name: "老司机3",    api: "https://www.xrbsp.com/api/json.php", type: 0),
         TVBoxSite(key: "builtin:ls5",      name: "老司机5",    api: "http://www.gdlsp.com/api/json.php", type: 0),
@@ -120,13 +114,39 @@ public enum DefaultSites {
         // 来源 lidawei1985/tvbox2 仓内 15 个成人配置（18+.txt / 二哈18+ / 巧计18+ / 成人路线 / 老马18+ 等）
         // → 正则容错提取 210 个 type0/1 源 → 域名去重 → ac=list 实测存活 39 → 再排除与上面重复的站点
         // → 净新增 17 条。合并脚本：F:\IOS3APP\ios_ctrl\merge_adult_sources.py
-        TVBoxSite(key: "builtin:adult:api-apibdzy-com", name: "APIBDZY",       api: "https://api.apibdzy.com/api.php/provide/vod?ac=list", type: 1),
         TVBoxSite(key: "builtin:adult:api-ddapi-cc",    name: "滴滴资源",      api: "https://api.ddapi.cc/api.php/provide/vod/", type: 0),
         TVBoxSite(key: "builtin:adult:harv:apidanaizi-com-api-php-provide-vod-ac-li", name: "大奶子", api: "https://apidanaizi.com/api.php/provide/vod/?ac=list", type: 1),
         TVBoxSite(key: "builtin:adult:harv:www-mdzyapi-com-api-php-provide-vod-ac-v", name: "魔都资源", api: "https://www.mdzyapi.com/api.php/provide/vod/?ac=videolist", type: 1),
         TVBoxSite(key: "builtin:adult:harv:www-pgxdy-com-api-json-php", name: "黄AV", api: "https://www.pgxdy.com/api/json.php", type: 1),
         TVBoxSite(key: "builtin:adult:harv:fhapi9-com-api-php-provide-vod", name: "💞番号资源💞", api: "http://fhapi9.com/api.php/provide/vod/", type: 1),
+        // 2026-09-26 域名去重修正：APIBDZY(api.apibdzy.com) 与 虎牙资源(www.huyaapi.com/at/json)
+        // 实测分类全是影视剧（ac=list 机检）——是影视源混进成人列表，与共通列表同域名重复，删除；
+        // 夜航经共通列表仍能看到它们（huyaapi 共通版走 /from/hym3u8，bdzy 共通版带 ?ac=list）。
+        // 2026-09-26 自共通列表移入（心屋出现成人内容的 11 条之一；成人 CMS，仅夜航可见）
+        TVBoxSite(key: "builtin:adult:apilsbzy",  name: "老牛资源",   api: "https://apilsbzy.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:adult:apilsbzy1", name: "老牛资源 2", api: "https://apilsbzy1.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:adult:apilsbzy2", name: "老牛资源 3", api: "https://apilsbzy2.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:adult:apilsbzy3", name: "老牛资源 4", api: "https://apilsbzy3.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:adult:apilsbzy4", name: "老牛资源 5", api: "https://apilsbzy4.com/api.php/provide/vod", type: 1),
     ]
+
+    /// 点播源分区（2026-09-26 用户钦定：「列表里没有分成人区和普通区，看不明白哪些是电影的哪些是成人的」）。
+    /// 每个站点按所属内置数组归区；自定义源单独一区。成人区只有夜航（adult 模式）会出现。
+    public enum VodZone: String, CaseIterable {
+        case film = "影视"
+        case mixed = "混合（影视+成人分类）"
+        case custom = "自定义"
+        case adult = "成人"
+    }
+
+    /// 站点 → 分区。按 key 精确判定（同域名可能既在影视也在成人列表，key 才是唯一身份）：
+    /// 混合 → 成人 → 内置影视 → 自定义。
+    public static func vodZone(of site: TVBoxSite) -> VodZone {
+        if builtinMixedVodSources.contains(where: { $0.key == site.key }) { return .mixed }
+        if builtinAdultVodSources.contains(where: { $0.key == site.key }) { return .adult }
+        if site.key.hasPrefix("builtin:") { return .film }
+        return .custom
+    }
 
     /// 按产品模式返回内置点播源：
     /// - 三端共有 = 通用影视源 + **混合源（索倪）**；

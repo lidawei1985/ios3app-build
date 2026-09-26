@@ -50,26 +50,41 @@ public final class CatalogStore: ObservableObject {
     // MARK: - 启动
 
     /// App 启动入口：快照秒开 + 后台同步。
+    ///
+    /// 36包 启动提速（用户 2026-09-26：「ISO 启动的时候首页显示的有点慢」）：
+    /// 旧流程根因＝**串行等待 + 主线程解码**：
+    ///  ① 先等磁盘缓存解码完（星幕全量 13 万条 JSON，数秒）才考虑上屏；
+    ///  ② `loadEmbeddedSnapshot()` 的读文件+JSON 解码跑在主线程（@MainActor 上）。
+    /// 新流程（三条，均不动数据格式）：
+    ///  ① 内嵌快照读盘+解码放后台线程；
+    ///  ② 内嵌快照（3~6MB，必然存在）与磁盘缓存**并发**解码，内嵌先上屏，
+    ///     磁盘缓存（上次全量同步产物，更全）后到**静默升级**，绝不互相等待；
+    ///  ③ 升级仅当新目录数 ≥ 当前（防降级闪变）。
     public func boot() async {
-        // 快照解码（13万条 JSON）放后台线程——主线程解码是「启动卡」根因之一（34包）
-        let snap = await Task.detached(priority: .userInitiated) { [cache] in cache.load() }.value
-        if let snap, snap.catalog.items.count > 0 {
+        let mode = profile.mode
+        let embeddedTask = Task.detached(priority: .userInitiated) { [weak self] () -> [FeedItem]? in
+            guard let self else { return nil }
+            return Self.loadEmbeddedSnapshot(mode: mode)
+        }
+        let diskTask = Task.detached(priority: .userInitiated) { [cache] in cache.load() }
+        // ① 内嵌快照小、几乎必先完成 → 首屏先亮
+        if let items = await embeddedTask.value, !items.isEmpty {
+            await applyEmbedded(items: items)
+            FilmLog.i("BOOT embedded snapshot first (36包提速): items=\(items.count)")
+        }
+        // ② 磁盘缓存后到：版本合法且更全 → 静默升级（不降级）
+        if let snap = await diskTask.value, snap.catalog.items.count > 0 {
             let versionKey = "\(snap.ledger.version ?? "nil")@\(profile.mode)@\(CatalogCache.adapterVersion)"
-            if snap.versionKey == versionKey {
+            if snap.versionKey == versionKey, snap.catalog.items.count >= catalog.items.count {
                 catalog = snap.catalog
                 ledger = snap.ledger
                 phase = .ready
-                FilmLog.i("BOOT snapshot hit: catalog=\(catalog.items.count)")
+                FilmLog.i("BOOT disk snapshot upgraded: catalog=\(catalog.items.count)")
             }
         }
-        if phase != .ready {
-            // 35包根治：打开就要显示——内嵌快照先行即时上屏，不等任何网络；
-            // 网络（home/全量）只做后台静默更新，永远不赌运气。
-            if await applyEmbeddedSnapshot() {
-                FilmLog.i("BOOT embedded snapshot first (35包)")
-            } else {
-                await bootFromHome()
-            }
+        // ③ 两路都没出目录（无内嵌资源且缓存空/旧格式）→ 走网络轻量首屏
+        if phase != .ready, catalog.items.isEmpty {
+            await bootFromHome()
         }
         await syncAll()          // 后台全量（不阻塞已渲染的首屏）
     }
@@ -78,17 +93,17 @@ public final class CatalogStore: ObservableObject {
     /// feed 分片全走 GitHub 系域名，手机网络间歇不通 → 全量同步失败 → 目录永远停在首屏40/分类。
     /// 快照随包（构建时从 feed 仓合并：adult=夜航2019部 / child=心屋3664部 / normal=星幕约3500部精选切片），
     /// 断网/同步失败也有可用目录；星幕全量 13 万条仍由后台同步补齐。
-    private var snapshotResource: (file: String, enabled: Bool) {
-        switch profile.mode {
-        case "adult": return ("yehang_feed_snapshot", true)
-        case "child": return ("xinwu_feed_snapshot", true)
-        default: return ("xingmu_feed_snapshot", true)   // 35包：星幕也内嵌，打开就要显示
+    private static func embeddedSnapshotFile(mode: String) -> String? {
+        switch mode {
+        case "adult": return "yehang_feed_snapshot"
+        case "child": return "xinwu_feed_snapshot"
+        default: return "xingmu_feed_snapshot"   // 35包：星幕也内嵌，打开就要显示
         }
     }
 
-    private func loadEmbeddedSnapshot() -> [FeedItem]? {
-        let (file, enabled) = snapshotResource
-        guard enabled else { return nil }
+    /// 内嵌快照读盘+解码（nonisolated：36包提速，允许在后台线程执行，不再占主线程）。
+    nonisolated private static func loadEmbeddedSnapshot(mode: String) -> [FeedItem]? {
+        guard let file = embeddedSnapshotFile(mode: mode) else { return nil }
         func read(_ name: String) -> Data? {
             let u = Bundle.module.url(forResource: name, withExtension: "json",
                                       subdirectory: "Resources")
@@ -109,8 +124,9 @@ public final class CatalogStore: ObservableObject {
         return all.isEmpty ? nil : all
     }
 
-    private func applyEmbeddedSnapshot() async -> Bool {
-        guard snapshotResource.enabled, let items = loadEmbeddedSnapshot(), !items.isEmpty else { return false }
+    /// 应用内嵌快照（读取已在外层后台化）。36包提速：只做目录构建与状态落位。
+    private func applyEmbedded(items: [FeedItem]) async {
+        guard !items.isEmpty else { return }
         let mode = profile.mode
         // 35包：聚合也下后台——快照 3~6MB 解码可容忍一次性开销，buildCatalog 循环不放主线程
         let (cat, led) = await Task.detached(priority: .userInitiated) {
@@ -118,11 +134,24 @@ public final class CatalogStore: ObservableObject {
                                      manifestCount: items.count, homeCount: items.count,
                                      version: "embedded")
         }.value
+        guard cat.items.count >= catalog.items.count else {
+            // 已有更全目录（磁盘缓存/首屏包先到）→ 不降级，但目录非空必须离开骨架屏
+            if !catalog.items.isEmpty { phase = .ready }
+            return
+        }
         catalog = cat
         ledger = led
         phase = .ready
-        FilmLog.i("EMBEDDED snapshot applied: \(items.count) items")
-        return true
+    }
+
+    /// 兼容入口（bootFromHome / syncAll 兜底路径沿用）：读盘 + 应用，一条龙。
+    private func applyEmbeddedSnapshot() async -> Bool {
+        let mode = profile.mode
+        guard let items = await Task.detached(priority: .userInitiated) {
+            Self.loadEmbeddedSnapshot(mode: mode)
+        }.value, !items.isEmpty else { return false }
+        await applyEmbedded(items: items)
+        return phase == .ready
     }
 
     /// 轻量首屏：home.json（分类统计 + posters + pool≤500）。
@@ -203,7 +232,7 @@ public final class CatalogStore: ObservableObject {
             networkOffline = true
             FilmLog.w("SYNC failed: \(error.localizedDescription)")
             // 夜航/心屋：全量同步失败且目录还是首屏小目录 → 快照兜底补全量（28/30号包）
-            if snapshotResource.enabled, catalog.items.count < 500 {
+            if Self.embeddedSnapshotFile(mode: profile.mode) != nil, catalog.items.count < 500 {
                 if await applyEmbeddedSnapshot() { return }
             }
             if catalog.items.isEmpty { phase = .failed(error.localizedDescription) }

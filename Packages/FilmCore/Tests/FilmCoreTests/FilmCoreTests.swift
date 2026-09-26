@@ -366,6 +366,42 @@ final class FilmCoreTests: XCTestCase {
         XCTAssertEqual(adult.count, normal.count + adultOnly.count)
     }
 
+    /// 域名级隔离红线（2026-09-26 心屋成人内容事故补强）：
+    /// 上面 ③ 只按 **key** 查重，而漏网的 11 条成人源换了 `builtin:harv:` 前缀 key ——
+    /// key 级检查全部通过却真实泄漏（判据无鉴别力的实证）。故必须补**域名级**判据：
+    /// ① 共通列表与成人列表不得共享任何域名；② 已机检判定为成人的 11 个域名永禁进共通列表；
+    /// ③ 成人列表的源必须归「成人区」（分区功能判据）。
+    func testAdultDomainIsolation() {
+        func domain(_ api: String) -> String {
+            guard let u = URL(string: api), let h = u.host else { return api.lowercased() }
+            return h.lowercased()
+        }
+        let adultDomains = Set(DefaultSites.builtinAdultVodSources.map { domain($0.api) })
+        // 2026-09-26 ac=list 全量机检判定为成人 CMS 的 11 个域名（_probe_common_adult.py）
+        let bannedDomains: Set<String> = [
+            "apilsbzy.com", "apilsbzy1.com", "apilsbzy2.com", "apilsbzy3.com", "apilsbzy4.com",
+            "beiyong.slapibf.com", "apiyutu.com", "api.xiaojizy.live", "xiaojizy.live",
+            "api.douapi.cc", "heiliaozyapi.com",
+        ]
+        for s in DefaultSites.builtinVodSources + DefaultSites.builtinMixedVodSources {
+            XCTAssertFalse(adultDomains.contains(domain(s.api)),
+                           "\(s.api) 域名同时在内置影视/成人列表——换 key 也挡（历史漏网手法）")
+            XCTAssertFalse(bannedDomains.contains(domain(s.api)),
+                           "\(s.api) 是已机检判定的成人源，严禁进星幕/心屋共通列表")
+        }
+        // 分区归位：成人列表成员必须判成 .adult（否则夜航源列表分区错乱）
+        for s in DefaultSites.builtinAdultVodSources {
+            XCTAssertEqual(DefaultSites.vodZone(of: s), .adult, "\(s.key) 应归成人区")
+        }
+        for s in DefaultSites.builtinMixedVodSources {
+            XCTAssertEqual(DefaultSites.vodZone(of: s), .mixed, "\(s.key) 应归混合区")
+        }
+        // 混合源（索倪）不得与成人列表同域名
+        for s in DefaultSites.builtinMixedVodSources {
+            XCTAssertFalse(adultDomains.contains(domain(s.api)), "混合源 \(s.api) 与成人列表同域名")
+        }
+    }
+
     /// 内置线路可见性（心屋=空集是**设计**，故设置页必须常显说明而不是整段隐藏）。
     func testBuiltinReposPerMode() {
         XCTAssertFalse(DefaultSites.builtinRepos(forMode: "normal").isEmpty)

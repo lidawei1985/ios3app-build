@@ -58,6 +58,26 @@ def block_repo_urls(src, decl):
     return re.findall(r'TVBoxSubscription\(name:\s*"[^"]*",\s*url:\s*"([^"]+)"', m.group(1))
 
 
+def block_sites(src, decl):
+    """取出 `static let <decl>... = [...]` 里所有 TVBoxSite 的 (key, api) 元组。"""
+    m = re.search(re.escape(decl) + r"[^\[]*\[(.*?)\n    \]", src, re.S)
+    if not m:
+        return None
+    return re.findall(r'TVBoxSite\(key:\s*"([^"]+)",\s*name:\s*"[^"]*",\s*api:\s*"([^"]+)"', m.group(1))
+
+
+def api_domain(api):
+    m = re.search(r"https?://([^/]+)", api)
+    return m.group(1).lower() if m else api.lower()
+
+
+BANNED_ADULT_DOMAINS = {
+    "apilsbzy.com", "apilsbzy1.com", "apilsbzy2.com", "apilsbzy3.com", "apilsbzy4.com",
+    "beiyong.slapibf.com", "apiyutu.com", "api.xiaojizy.live", "xiaojizy.live",
+    "api.douapi.cc", "heiliaozyapi.com",
+}
+
+
 def func_body(src, header_re):
     m = re.search(header_re + r".*?\n    \}", src, re.S)
     return m.group(0) if m else ""
@@ -117,6 +137,20 @@ def main():
     print("[4] 内容隔离红线（成人专用源不得出现在星幕/心屋）")
     overlap = set(normal) & set(adult_keys)
     check(not overlap, "共有源与成人专用源 key 无重叠（重叠=%s）" % (sorted(overlap) or "无"))
+
+    print("[4b] ★ 域名级隔离红线（2026-09-26 心屋成人内容事故：11 条成人源换 harv: key 漏进共通列表，"
+          "上面的 key 级判据全部放行——判据无鉴别力的实证）")
+    common_sites = block_sites(sw, "builtinVodSources:") or []
+    mixed_sites = block_sites(sw, "builtinMixedVodSources:") or []
+    adult_sites = block_sites(sw, "builtinAdultVodSources:") or []
+    adult_domains = {api_domain(a) for _, a in adult_sites}
+    common_domains = [api_domain(a) for _, a in common_sites]
+    mixed_domains = [api_domain(a) for _, a in mixed_sites]
+    d_overlap = set(common_domains) & adult_domains
+    check(not d_overlap, "共通/成人列表域名无重叠（重叠=%s）" % (sorted(d_overlap) or "无"))
+    d_banned = set(common_domains + mixed_domains) & BANNED_ADULT_DOMAINS
+    check(not d_banned, "已机检判定的 11 个成人域名不在共通列表（命中=%s）" % (sorted(d_banned) or "无"))
+    check("vodZone" in sw and "enum VodZone" in sw, "分区助手 vodZone/VodZone 存在（列表分区判据）")
 
     print("[5] 内置线路（DefaultSites.swift）")
     repos_normal = block_repo_urls(sw, "builtinRepos:")

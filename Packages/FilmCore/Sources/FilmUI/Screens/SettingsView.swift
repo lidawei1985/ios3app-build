@@ -134,10 +134,27 @@ public struct SettingsView: View {
     }
 
     // MARK: 首屏·点播源可视化（钦定 2026-09-26：放「当前生效」里，chips 一眼看清，默认收起省屏）
+    // 2026-09-26 分区改版（用户：「列表里没有分成人区和普通区，看不明白哪些是电影的哪些是成人的」）：
+    // 展开后按 影视 / 混合 / 自定义 / 成人 四区分组渲染，每区带标题和数量。
 
     private var sitesVizSection: some View {
         let sites = tvbox.displayResult.sites
-        let visible = sites.prefix(sitesExpanded ? 80 : 8)
+        // 分区：影视 → 混合 → 自定义 → 成人（顺序固定；空区不渲染）
+        let zones: [(title: String, items: [TVBoxSite])] = {
+            var film: [TVBoxSite] = [], mixed: [TVBoxSite] = [], custom: [TVBoxSite] = [], adult: [TVBoxSite] = []
+            for s in sites {
+                switch DefaultSites.vodZone(of: s) {
+                case .film: film.append(s)
+                case .mixed: mixed.append(s)
+                case .custom: custom.append(s)
+                case .adult: adult.append(s)
+                }
+            }
+            return [("影视源 \(film.count)", film), ("混合源 \(mixed.count)", mixed),
+                    ("自定义 \(custom.count)", custom), ("成人源 \(adult.count)", adult)]
+                .filter { !$0.items.isEmpty }
+        }()
+        let collapsed = sites.prefix(8)
         return VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 10) {
                 Text("点播源")
@@ -161,33 +178,13 @@ public struct SettingsView: View {
                 Text("暂无点播源——到「源与线路」添加配置或选一条内置线路即可解析出站点")
                     .font(.caption)
                     .foregroundStyle(theme.textSecondary.opacity(0.6))
-            } else {
+            } else if !sitesExpanded {
+                // 收起态：只露影视区前 8 个（默认不吵；成人区要点「全部」才见）
                 FlowLayout(spacing: 6) {
-                    ForEach(visible) { s in
-                        NavigationLink {
-                            SiteBrowseView(site: s, sites: Array(sites))
-                        } label: {
-                            HStack(spacing: 4) {
-                                if s.key.hasPrefix("builtin:") {
-                                    Text("内")
-                                        .font(.system(size: 8, weight: .bold))
-                                        .foregroundStyle(theme.textPrimary.opacity(0.85))
-                                        .padding(.horizontal, 3).padding(.vertical, 1)
-                                        .background(theme.textPrimary.opacity(0.12), in: Capsule())
-                                }
-                                Text(s.name)
-                                    .lineLimit(1)
-                            }
-                            .font(.caption)
-                            .foregroundStyle(theme.textPrimary.opacity(0.88))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(theme.textPrimary.opacity(0.06)))
-                            .overlay(Capsule().stroke(theme.textSecondary.opacity(0.14), lineWidth: 0.5))
-                        }
-                        .buttonStyle(.plain)
+                    ForEach(Array(collapsed)) { s in
+                        siteChip(s)
                     }
-                    if !sitesExpanded, sites.count > 8 {
+                    if sites.count > 8 {
                         Button { sitesExpanded = true } label: {
                             Text("+\(sites.count - 8) 更多")
                                 .font(.caption)
@@ -199,9 +196,49 @@ public struct SettingsView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            } else {
+                // 展开态：分区渲染
+                ForEach(zones, id: \.title) { zone in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(zone.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
+                        FlowLayout(spacing: 6) {
+                            ForEach(zone.items) { s in
+                                siteChip(s)
+                            }
+                        }
+                    }
+                }
             }
         }
         .padding(.vertical, 10)
+    }
+
+    /// 单个源 chip（内 = 内置影视源；成 = 成人区）
+    private func siteChip(_ s: TVBoxSite) -> some View {
+        NavigationLink {
+            SiteBrowseView(site: s, sites: Array(tvbox.displayResult.sites))
+        } label: {
+            HStack(spacing: 4) {
+                if s.key.hasPrefix("builtin:") {
+                    Text(DefaultSites.vodZone(of: s) == .adult ? "成" : "内")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(theme.textPrimary.opacity(0.85))
+                        .padding(.horizontal, 3).padding(.vertical, 1)
+                        .background(theme.textPrimary.opacity(0.12), in: Capsule())
+                }
+                Text(s.name)
+                    .lineLimit(1)
+            }
+            .font(.caption)
+            .foregroundStyle(theme.textPrimary.opacity(0.88))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(theme.textPrimary.opacity(0.06)))
+            .overlay(Capsule().stroke(theme.textSecondary.opacity(0.14), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
     }
 
     private var statusDivider: some View {
