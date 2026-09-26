@@ -64,7 +64,19 @@ public struct TVBoxParseResult: Codable, Hashable {
 
 public enum TVBoxParser {
 
-    public static func parse(data: Data) -> TVBoxParseResult {
+    private static func resolve(_ ref: String, baseURL: String?) -> String {
+        if ref.hasPrefix("http://") || ref.hasPrefix("https://") || ref.hasPrefix("bundle:") {
+            return ref
+        }
+        guard let base = baseURL,
+              let baseU = URL(string: base),
+              let resolved = URL(string: ref, relativeTo: baseU)?.absoluteString else {
+            return ref
+        }
+        return resolved
+    }
+
+    public static func parse(data: Data, baseURL: String? = nil) -> TVBoxParseResult {
         if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
            text.hasPrefix("#EXTM3U") {
             let channels = M3UParser.parse(text)
@@ -76,30 +88,31 @@ public enum TVBoxParser {
             return TVBoxParseResult(message: "无法解析：既不是 TVBox JSON 也不是 M3U 文本")
         }
         var result = TVBoxParseResult()
-        // 多仓
+        // 多仓（2026-09-26 fix：子仓相对路径拼回父配置地址，否则 ./0821.json 直接请求必挂）
         if let urls = obj.urls, !urls.isEmpty {
             result.repos = urls.compactMap { entry in
                 guard let u = entry.url, !u.isEmpty else { return nil }
-                return TVBoxSubscription(name: entry.name ?? "未命名仓库", url: u)
+                return TVBoxSubscription(name: entry.name ?? "未命名仓库", url: resolve(u, baseURL: baseURL))
             }
         }
         if let house = obj.storeHouse, !house.isEmpty {
             result.repos += house.compactMap { entry in
                 guard let u = entry.sourceUrl, !u.isEmpty else { return nil }
-                return TVBoxSubscription(name: entry.sourceName ?? "未命名仓库", url: u)
+                return TVBoxSubscription(name: entry.sourceName ?? "未命名仓库", url: resolve(u, baseURL: baseURL))
             }
         }
-        // 单仓点播
+        // 单仓点播：只保留 type 0/1 直连 CMS 站（spider type 3 需要 jar 引擎，手机端跑不了；
+        // 带 ext 的站需要额外扩展参数，当前也不支持）。用户实测 298 站里 291 个 type 3 全打不开。
         if let sites = obj.sites {
             result.sites = sites.compactMap { s in
-                guard let name = s.name, !name.isEmpty else { return nil }
-                return TVBoxSite(key: s.key ?? name, name: name, api: s.api ?? "", type: s.type)
+                guard let name = s.name, !name.isEmpty,
+                      let type = s.type, (type == 0 || type == 1),
+                      s.ext?.isEmpty ?? true
+                else { return nil }
+                let api = resolve(s.api ?? "", baseURL: baseURL)
+                guard !api.isEmpty else { return nil }
+                return TVBoxSite(key: s.key ?? name, name: name, api: api, type: s.type)
             }
-            // 可用直连站（type 0/1）置顶、spider（type 3，需引擎手机端不可用）沉底——
-            // 稳定分区保持原相对顺序；用户实测「滚过上百个打不开的站」反人类（2026-09-21）
-            let indexed = result.sites.enumerated().map { ($0.offset, $0.element) }
-            result.sites = indexed.filter { ($0.1.type ?? 0) != 3 }.map { $0.1 }
-                + indexed.filter { ($0.1.type ?? 0) == 3 }.map { $0.1 }
         }
         // 单仓直播
         if let lives = obj.lives {
@@ -127,7 +140,7 @@ public enum TVBoxParser {
 private struct TVBoxRawConfig: Codable {
     struct RepoEntry: Codable { let url: String?; let name: String? }
     struct HouseEntry: Codable { let sourceUrl: String?; let sourceName: String? }
-    struct SiteEntry: Codable { let key: String?; let name: String?; let type: Int?; let api: String? }
+    struct SiteEntry: Codable { let key: String?; let name: String?; let type: Int?; let api: String?; let ext: String? }
     struct LiveEntry: Codable {
         let name: String?
         let type: Int?
@@ -347,16 +360,27 @@ public final class TVBoxConfigStore: ObservableObject {
             refreshMessage = "「\(activeName)」拉取失败，请检查地址或稍后重试"
             return
         }
-        let parsed = TVBoxParser.parse(data: data)
+        let parsed = TVBoxParser.parse(data: data, baseURL: url)
         if !parsed.repos.isEmpty {
-            // 多仓：TVBox 原版行为 = 选仓加载，不自动合并
+            // 多仓：自动按顺序尝试加载仓库，第一个能打开的仓库直接出内容，用户无需再选
             if let repo = activeRepoURL, parsed.repos.contains(where: { $0.url == repo }) {
                 await loadRepo(repo, parent: parsed)
             } else {
-                activeRepoURL = nil
-                lastResult = parsed               // 亮出仓列表供点选
-                refreshMessage = "多仓配置（\(parsed.repos.count) 个仓库）：请点选仓库加载内容"
-                persistResult()
+                var loaded = false
+                for repo in parsed.repos {
+                    activeRepoURL = repo.url
+                    await loadRepo(repo.url, parent: parsed)
+                    if refreshMessage.hasPrefix("仓「") {
+                        loaded = true
+                        break
+                    }
+                }
+                if !loaded {
+                    activeRepoURL = nil
+                    lastResult = parsed
+                    refreshMessage = "多仓配置（\(parsed.repos.count) 个仓库）：均无法加载，请换线路"
+                    persistResult()
+                }
             }
             return
         }
@@ -425,13 +449,26 @@ public final class TVBoxConfigStore: ObservableObject {
             return
         }
         guard let payload = data else { return }
-        let parsed = TVBoxParser.parse(data: payload)
+        let parsed = TVBoxParser.parse(data: payload, baseURL: builtinURL)
         if !parsed.repos.isEmpty {
-            // 内置线路要开箱即用：多仓自动加载首个仓（用户仍可在设置页换仓/换线路）
-            let sel = activeRepoURL.flatMap { sel in parsed.repos.first(where: { $0.url == sel }) }
-                ?? parsed.repos[0]
-            activeRepoURL = sel.url
-            await loadRepo(sel.url, parent: parsed)
+            // 内置线路要开箱即用：多仓自动按顺序试仓，第一个能打开的直接出内容
+            var loaded = false
+            let preferred = activeRepoURL.flatMap { sel in parsed.repos.first(where: { $0.url == sel }) }
+            let ordered = preferred.map { [$0] + parsed.repos.filter { $0.url != sel } } ?? parsed.repos
+            for repo in ordered {
+                activeRepoURL = repo.url
+                await loadRepo(repo.url, parent: parsed)
+                if refreshMessage.hasPrefix("仓「") {
+                    loaded = true
+                    break
+                }
+            }
+            if !loaded {
+                activeRepoURL = nil
+                lastResult = parsed
+                refreshMessage = "内置线路「\(name)」多仓均无法加载，请换一条线路"
+                persistResult()
+            }
         } else {
             lastResult = parsed
             refreshMessage = "内置线路「\(name)」：\(parsed.message)"
@@ -454,8 +491,10 @@ public final class TVBoxConfigStore: ObservableObject {
 
     private func loadRepo(_ repoURL: String, parent: TVBoxParseResult) async {
         if let data = await TVBoxFetcher.fetch(repoURL) {
-            let parsed = TVBoxParser.parse(data: data)
+            let parsed = TVBoxParser.parse(data: data, baseURL: repoURL)
             var merged = parsed
+            // 保留父多仓的仓库列表，这样「解析源」行能显示当前进的是哪个仓，也便于切仓
+            merged.repos = parent.repos
             let repoName = parent.repos.first(where: { $0.url == repoURL })?.name ?? "仓库"
             merged.message = "仓「\(repoName)」：\(parsed.message)"
             lastResult = merged
