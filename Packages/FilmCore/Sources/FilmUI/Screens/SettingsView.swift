@@ -954,7 +954,7 @@ private struct SourceGroupView: View {
         }
     }
 
-    private func builtinChip(_ repo: TVBoxRepoOption) -> some View {
+    private func builtinChip(_ repo: TVBoxSubscription) -> some View {
         let active = repo.url == tvbox.activeBuiltinRepoURL
         return Button {
             tvbox.activateBuiltinRepo(repo)
