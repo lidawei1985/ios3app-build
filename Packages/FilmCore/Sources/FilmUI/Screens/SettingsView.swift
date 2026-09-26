@@ -404,12 +404,14 @@ private struct SubPageShell<Content: View>: View {
                     .frame(width: 60, alignment: .trailing)
             }
             .padding(.vertical, 10)
-            ScrollView {
-                content
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
-                    .padding(.bottom, 40)
-            }
+            // v17 关键修复：这里**不能包 ScrollView**——「源与线路」子页是 List，
+            // List 套 ScrollView 会塌缩成零高度（用户实况：右上角「26 项」在、内容全空）。
+            // 子页各自负责滚动：List 自滚；其余五个短 VStack 直接平铺。
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 40)
         }
     }
 }

@@ -737,6 +737,11 @@ struct LivePlayerScreen: View {
     @State private var failFastTries = 0     // 坏链快速换备线计数（同台最多3条，全死才跳台）
     @State private var closed = false
     @State private var lastProgressAt = Date()
+    // v17 源健康度：switchedAt=换线时刻（幻灯片检测豁免窗口）；recordedOK=已记成功的 URL；
+    // slideTries=幻灯片贴地秒数（连续 3 秒缓冲水位 <1.5s 即降级换线）
+    @State private var switchedAt = Date.distantPast
+    @State private var recordedOK: String?
+    @State private var slideTries = 0
     @State private var watchdog: Task<Void, Never>?
     @State private var timeObs: Any?
     /// 原地重连计数（2026-09-22 用户：「直播一直卡着不动，一直缓冲中」）。
@@ -1044,6 +1049,8 @@ struct LivePlayerScreen: View {
         index = idx
         pinned = channels[idx]   // 60包：换台同步更新 pinned（表刷新仍不改台）
         failed = false
+        switchedAt = Date()      // v17：幻灯片检测豁免窗口从换线时刻起算
+        slideTries = 0
         if let ch = current { LiveLastChannel.save(ch.name) }
         // 61包（用户：「换台也是卡住…卡一会才能正常播放」）——换台动作要立刻在 UI 上成立：
         // ① 先把旧的播放器**彻底停掉**（pause + replaceCurrentItem(nil)），
@@ -1122,6 +1129,26 @@ struct LivePlayerScreen: View {
                 self.failFastTries = 0
                 self.reconnectTries = 0                  // 出画 = 重连成功，计数归零
                 if self.tuning { self.tuning = false }   // 时间在走 = 画面已出
+                // v17 健康度：这条源真播起来了 → +1（每条线路只记一次）
+                if let u = self.current?.url, self.recordedOK != u {
+                    LiveSourceHealth.shared.record(u, ok: true)
+                    self.recordedOK = u
+                }
+                // v17 幻灯片检测（用户实况「一帧一帧卡着放」）：时间在走但缓冲水位
+                // <1.5s = 下载追不上播放。连续 3 秒贴地直接降级换备线，不再等 12s
+                // 完全卡死才动。起播 8s 内豁免（水位本来就在爬坡）。
+                if self.everPlayed, Date().timeIntervalSince(self.switchedAt) > 8,
+                   let item = p.currentItem,
+                   let r = item.loadedTimeRanges.last?.timeRangeValue {
+                    let ahead = (r.start + r.duration) - p.currentTime().seconds
+                    if p.rate > 0 && ahead < 1.5 { self.slideTries += 1 } else { self.slideTries = 0 }
+                    if self.slideTries >= 3, let u = self.current?.url {
+                        LiveSourceHealth.shared.record(u, ok: false)
+                        self.slideTries = 0
+                        self.lastProgressAt = Date()
+                        self.autoHeal(sameChannelOnly: true)
+                    }
+                }
                 // 61包：**出画后不再抬高缓冲门槛**（60包以前抬到 8s + 打开 automaticallyWaitsToMinimizeStalling）。
                 // 免费源分片普遍 6~20s，抬高门槛 = 每次出画都要重攒一大段，
                 // 用户感受到的就是「卡一会儿才正常播放」。低延迟优先：维持 0 + 不等待。
@@ -1174,6 +1201,8 @@ struct LivePlayerScreen: View {
         p.replaceCurrentItem(with: item)
         p.playImmediately(atRate: 1.0)
         lastProgressAt = Date()
+        switchedAt = Date()      // v17：重连也重给 8s 爬坡豁免
+        slideTries = 0
         tuning = true
         item.observe(\.status, options: [.new]) { it, _ in
             Task { @MainActor in
@@ -1213,7 +1242,11 @@ struct LivePlayerScreen: View {
                         lastProgressAt = Date()
                         failFastTries += 1
                         if failFastTries <= 3 { autoHeal(sameChannelOnly: true) }
-                        else { failFastTries = 0; stepChannel(1) }
+                        else {
+                            failFastTries = 0
+                            if let u = current?.url { LiveSourceHealth.shared.record(u, ok: false) }
+                            stepChannel(1)
+                        }
                     }
                 } else {
                     // 播起来后卡住（2026-09-22 修正「一直卡着不动一直缓冲中」）：
@@ -1228,9 +1261,10 @@ struct LivePlayerScreen: View {
                         if reconnectTries <= 1 {
                             reconnectSameURL()                 // ① 同 URL 重新拉流
                         } else if reconnectTries <= 3 {
-                            autoHeal(sameChannelOnly: true)    // ② 换同名备用线路
+                            autoHeal(sameChannelOnly: true)    // ② 换同名备用线路（记败+选优在 autoHeal 内）
                         } else {
                             reconnectTries = 0
+                            if let u = current?.url { LiveSourceHealth.shared.record(u, ok: false) }
                             stepChannel(1)                     // ③ 最后手段：跳下一台
                         }
                     }
@@ -1269,11 +1303,15 @@ struct LivePlayerScreen: View {
     private func autoHeal(sameChannelOnly: Bool = false) {
         guard let ch = current else { return }
         let base = normalized(ch.name)
-        // 1) 同名备用线路
-        if let backup = channels.firstIndex(where: {
-            $0.id != ch.id && normalized($0.name) == base
-        }) {
-            switchTo(backup)
+        // v17：这条线被判死/降级 → 健康度 -2，坏源快速沉底
+        LiveSourceHealth.shared.record(ch.url, ok: false)
+        // 1) 同名备用线路——按健康度降序挑**最好**的那条（用户钦点：好源在第一位）
+        let candidates = channels.indices.filter {
+            channels[$0].id != ch.id && normalized(channels[$0].name) == base
+        }
+        if !candidates.isEmpty {
+            let ranked = LiveSourceHealth.ranked(candidates.map { channels[$0].url })
+            switchTo(candidates[ranked[0]])
             return
         }
         // 2) 27号包：sameChannelOnly=true 时绝不跳台（等待缓冲/用户手动换源）
