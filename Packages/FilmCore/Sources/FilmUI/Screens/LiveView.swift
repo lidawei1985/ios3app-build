@@ -804,6 +804,10 @@ struct LivePlayerScreen: View {
         return channels.indices.contains(index) ? channels[index] : nil
     }
 
+    /// 测播模式（从设置页「测播」按钮进入）：onClose 非空。
+    /// 测播时返回键必须常驻，不能学正常直播 3 秒后自动收起——否则黑屏时用户找不到退出。
+    private var isTestMode: Bool { onClose != nil }
+
     var body: some View {
         if closed {
             Color.clear.allowsHitTesting(false)
@@ -948,8 +952,10 @@ struct LivePlayerScreen: View {
     // MARK: - 控制层
 
     /// 控制层闪现调度（60包）：进直播先亮 3 秒，让用户看到返回键位置，之后自动收起。
+    /// 测播模式（isTestMode）返回键常驻，避免黑屏卡住退不出。
     private func schedulePeekHide() {
         peekTask?.cancel()
+        guard !isTestMode else { return }
         peekTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard !Task.isCancelled else { return }
