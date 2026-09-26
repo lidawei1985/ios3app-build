@@ -760,6 +760,10 @@ struct LivePlayerScreen: View {
     @State private var switchedAt = Date.distantPast
     @State private var recordedOK: URL?
     @State private var slideTries = 0
+    // v19 静帧检测（源方时段禁播占位卡=合法流但内容是死画面，旧判据全不触发）
+    @State private var videoOut: AVPlayerItemVideoOutput?
+    @State private var lastFrameHash: UInt64?
+    @State private var stillFrameTicks = 0
     @State private var watchdog: Task<Void, Never>?
     @State private var timeObs: Any?
     /// 原地重连计数（2026-09-22 用户：「直播一直卡着不动，一直缓冲中」）。
@@ -1117,6 +1121,14 @@ struct LivePlayerScreen: View {
         // 5s 级断供不再触发停摆。守护链保留作保险（真死链照常跳台）。
         item.preferredForwardBufferDuration = 20
         item.canUseNetworkResourcesForLiveStreamingWhilePaused = false
+        // v19 静帧检测：挂像素输出口（timeObs 每秒采样指纹，连续 6 帧全同=死画面→换线）
+        let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ])
+        item.add(out)
+        videoOut = out
+        lastFrameHash = nil
+        stillFrameTicks = 0
         let p = AVPlayer()
         // 28号包（用户反馈直播加载太慢）：直播流跳过"最小卡顿等待"，拿到流立即播
         p.automaticallyWaitsToMinimizeStalling = false
@@ -1169,6 +1181,31 @@ struct LivePlayerScreen: View {
                         self.autoHeal(sameChannelOnly: true)
                     }
                 }
+                // v19 静帧检测（2026-09-26 手机实测 CCTV-12：源方时段禁播时推「由于播出安排」
+                // 占位卡——流本身在"合法播放"，报错/缓冲/水位/幻灯片四个判据全不触发，
+                // 用户卡死在占位卡上没人管）。修法：每秒从像素输出口采样一帧做指纹哈希
+                // （跨行抽样 ~2K 采样点，CPU 开销趋近 0），连续 6 帧全同 = 死画面 →
+                // 记坏分 + 自动换备线（与幻灯片同路径）。起播 8s 内豁免（首帧可能重复出）。
+                if self.everPlayed, Date().timeIntervalSince(self.switchedAt) > 8,
+                   let out = self.videoOut, let item = p.currentItem {
+                    let t = p.currentTime()
+                    if let pb = out.copyPixelBuffer(for: t, itemTimeForDisplay: nil) {
+                        let h = Self.frameFingerprint(pb)
+                        if let last = self.lastFrameHash, h == last {
+                            self.stillFrameTicks += 1
+                        } else {
+                            self.stillFrameTicks = 0
+                            self.lastFrameHash = h
+                        }
+                        if self.stillFrameTicks >= 6, let u = self.current?.url {
+                            LiveSourceHealth.shared.record(u, ok: false)
+                            self.stillFrameTicks = 0
+                            self.lastFrameHash = nil
+                            self.lastProgressAt = Date()
+                            self.autoHeal(sameChannelOnly: true)
+                        }
+                    }
+                }
                 // 61包：**出画后不再抬高缓冲门槛**（60包以前抬到 8s + 打开 automaticallyWaitsToMinimizeStalling）。
                 // 免费源分片普遍 6~20s，抬高门槛 = 每次出画都要重攒一大段，
                 // 用户感受到的就是「卡一会儿才正常播放」。低延迟优先：维持 0 + 不等待。
@@ -1218,6 +1255,14 @@ struct LivePlayerScreen: View {
         guard let p = player else { startPlay(); return }
         let item = AVPlayerItem(url: ch.url)
         item.preferredForwardBufferDuration = 20   // v13：0→20s（同 startPlay，慢源断供扛得住）
+        // v19 静帧检测：重连的 item 同样挂像素输出口
+        let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ])
+        item.add(out)
+        videoOut = out
+        lastFrameHash = nil
+        stillFrameTicks = 0
         p.replaceCurrentItem(with: item)
         p.playImmediately(atRate: 1.0)
         lastProgressAt = Date()
@@ -1358,6 +1403,31 @@ struct LivePlayerScreen: View {
         var n = name
         if let dot = n.firstIndex(of: "·") { n = String(n[..<dot]) }
         return n.replacingOccurrences(of: " ", with: "")
+    }
+
+    /// v19 静帧指纹：对像素帧跨行抽样 ~2K 点做 FNV 哈希（CPU 开销趋近 0）。
+    /// 静态占位卡（时段禁播）各帧解码结果一致 → 哈希相同；真实直播画面必然变化。
+    private static func frameFingerprint(_ pb: CVPixelBuffer) -> UInt64 {
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pb) else { return 0 }
+        let bpr = CVPixelBufferGetBytesPerRow(pb)
+        let h = CVPixelBufferGetHeight(pb)
+        let total = bpr * h
+        guard total > 64 else { return 0 }
+        let buf = base.assumingMemoryBound(to: UInt8.self)
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        let step = max(64, total / 2048)
+        var off = 0
+        while off < total - 8 {
+            let v = UInt64(buf[off])
+                | UInt64(buf[off + 1]) << 8
+                | UInt64(buf[off + 4]) << 16
+                | UInt64(buf[off + 8]) << 24
+            hash = (hash ^ v) &* 1_099_511_628_211
+            off += step
+        }
+        return hash
     }
 
     /// v18 换线前探活：playlist 200 且含 #EXTM3U + 最新分片 3 秒内真的下得到数据。
