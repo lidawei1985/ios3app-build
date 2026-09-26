@@ -740,7 +740,7 @@ struct LivePlayerScreen: View {
     // v17 源健康度：switchedAt=换线时刻（幻灯片检测豁免窗口）；recordedOK=已记成功的 URL；
     // slideTries=幻灯片贴地秒数（连续 3 秒缓冲水位 <1.5s 即降级换线）
     @State private var switchedAt = Date.distantPast
-    @State private var recordedOK: String?
+    @State private var recordedOK: URL?
     @State private var slideTries = 0
     @State private var watchdog: Task<Void, Never>?
     @State private var timeObs: Any?

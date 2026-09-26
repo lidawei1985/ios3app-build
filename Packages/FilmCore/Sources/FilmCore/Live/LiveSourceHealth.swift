@@ -26,21 +26,22 @@ public final class LiveSourceHealth {
         }
     }
 
-    public func record(_ url: String, ok: Bool) {
+    public func record(_ url: URL, ok: Bool) {
+        let k = url.absoluteString
         queue.sync {
-            let s = (scores[url] ?? 0) + (ok ? 1 : -2)
-            scores[url] = min(max(s, -30), 30)
+            let s = (scores[k] ?? 0) + (ok ? 1 : -2)
+            scores[k] = min(max(s, -30), 30)
             save()
         }
     }
 
-    public func score(_ url: String) -> Int {
-        queue.sync { scores[url] ?? 0 }
+    public func score(_ url: URL) -> Int {
+        queue.sync { scores[url.absoluteString] ?? 0 }
     }
 
     /// 同台候选线路排序：健康度降序（稳定），同分保持原顺序（表内优先级不动）。
     /// 返回的是**原始下标序列**（调用方拿去挑下一条）。
-    public static func ranked(_ urls: [String]) -> [Int] {
+    public static func ranked(_ urls: [URL]) -> [Int] {
         let s = shared
         return Array(urls.indices).sorted { a, b in
             let sa = s.score(urls[a]), sb = s.score(urls[b])
