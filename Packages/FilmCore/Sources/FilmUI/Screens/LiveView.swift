@@ -1393,6 +1393,27 @@ struct LivePlayerScreen: View {
         guard let (d2, r2) = try? await URLSession.shared.data(for: req2),
               let h2 = r2 as? HTTPURLResponse, (200..<300).contains(h2.statusCode),
               !d2.isEmpty else { return false }
+        // ★ 2026-09-26 幻灯片终局判据（对齐 live_build_fast）：
+        // 轮播站会把录播伪装成直播（列表滚动/吞吐正常），但分片 URL 里带归档日期
+        // （如 bestv 的 /2025/0604/ = 479 天前素材）。超 2 天 = 录播轮播，探活直接判死。
+        let dateRe = try? NSRegularExpression(
+            pattern: "/(20\\d{2})/?(\\d{2})(\\d{2})/")
+        if let dateRe {
+            let hay = u2.absoluteString
+            let ns = hay as NSString
+            if let m = dateRe.firstMatch(in: hay, range: NSRange(location: 0, length: ns.length)) {
+                let y = ns.substring(with: m.range(at: 1))
+                let mo = ns.substring(with: m.range(at: 2))
+                let d = ns.substring(with: m.range(at: 3))
+                let f = DateFormatter()
+                f.dateFormat = "yyyyMMdd"
+                f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+                if let arch = f.date(from: y + mo + d) {
+                    let lagDays = Date().timeIntervalSince(arch) / 86400.0
+                    if lagDays > 2.0 { return false }   // 录播轮播站，杀
+                }
+            }
+        }
         return true
     }
 
