@@ -1140,7 +1140,7 @@ struct LivePlayerScreen: View {
                 if self.everPlayed, Date().timeIntervalSince(self.switchedAt) > 8,
                    let item = p.currentItem,
                    let r = item.loadedTimeRanges.last?.timeRangeValue {
-                    let ahead = (r.start + r.duration) - p.currentTime().seconds
+                    let ahead = (r.start + r.duration).seconds - p.currentTime().seconds
                     if p.rate > 0 && ahead < 1.5 { self.slideTries += 1 } else { self.slideTries = 0 }
                     if self.slideTries >= 3, let u = self.current?.url {
                         LiveSourceHealth.shared.record(u, ok: false)
