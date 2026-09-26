@@ -40,11 +40,13 @@ public struct LiveView: View {
         loader = LiveLoader(bases: FeedBases(profile: profile))   // 与本产品 feed 同仓库同基址链
     }
 
-    /// 上次看的频道优先，否则第一台。
+    /// 上次看的频道优先（v18：先精确名、再归一名——表重建后台名可能变化，别丢记忆），否则第一台。
     private var startIndex: Int {
-        if !lastChannelKey.isEmpty,
-           let idx = channels.firstIndex(where: { $0.name == lastChannelKey }) {
-            return idx
+        if !lastChannelKey.isEmpty {
+            if let idx = channels.firstIndex(where: { $0.name == lastChannelKey }) { return idx }
+            let strip = { (s: String) in String(s.prefix { $0 != "·" }).replacingOccurrences(of: " ", with: "") }
+            let k = strip(lastChannelKey)
+            if let idx = channels.firstIndex(where: { strip($0.name) == k }) { return idx }
         }
         return 0
     }
@@ -497,6 +499,9 @@ struct LiveChannelList: View {
     @ObservedObject private var bus = LiveSwitchBus.shared
     @Environment(\.filmTheme) private var theme
     @State private var selectedGroup: String? = nil   // nil = 全部频道
+    // v18（用户钦点 2026-09-26）：分组记忆——上次在哪个组，下次进直播还停在那个组，不回「全部」
+    @AppStorage("live.lastGroupName") private var lastGroupRaw = ""
+    @State private var appliedSavedGroup = false
     @State private var expandedBase = Set<String>()   // 已展开备线的台（归一名）
 
     // MARK: 分组归类（频道面板式标准分组；按 group 名 + 台名关键词归桶）
@@ -591,6 +596,15 @@ struct LiveChannelList: View {
             }
             .frame(width: 96)
             .background(Color.white.opacity(0.05))
+            .onAppear {
+                // v18：进面板恢复上次分组（不回「全部」）；组不存在（表换过）才落回全部
+                if !appliedSavedGroup {
+                    appliedSavedGroup = true
+                    if !lastGroupRaw.isEmpty, availableGroups.contains(lastGroupRaw) {
+                        selectedGroup = lastGroupRaw
+                    }
+                }
+            }
 
             // 右列：当前分类频道
             ScrollViewReader { proxy in
@@ -617,7 +631,10 @@ struct LiveChannelList: View {
     private func catRow(_ title: String, tag: String?) -> some View {
         let isSel = selectedGroup == tag
         return Button {
-            withAnimation(.easeOut(duration: 0.15)) { selectedGroup = tag }
+            withAnimation(.easeOut(duration: 0.15)) {
+                selectedGroup = tag
+                lastGroupRaw = tag ?? ""   // v18：分组记忆（小薇式「记住上次位置」）
+            }
         } label: {
             HStack {
                 Text(title)
@@ -675,7 +692,8 @@ struct LiveChannelList: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            // 61包：手动换源入口——同台有多条线路时，主源右侧给「⇄N」展开备线，点备线即换到那条。
+            // v18（用户钦点 2026-09-26）：主源旁的入口从「⇄刷新圈+数字」换成「·备」——
+            // 点开折叠的备线，逐条点选试播哪个能用。分组折叠结构保留不变。
             if bk > 0 && !isBackup {
                 Button {
                     withAnimation(.easeOut(duration: 0.15)) {
@@ -683,17 +701,14 @@ struct LiveChannelList: View {
                         else { expandedBase.insert(key) }
                     }
                 } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 11))
-                        Text("\(bk)").font(.caption2.monospacedDigit())
-                    }
-                    .foregroundStyle(theme.accent.opacity(0.9))
-                    .padding(.horizontal, 8).padding(.vertical, 6)
-                    .contentShape(Rectangle())
+                    Text("·备")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.accent.opacity(0.9))
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("换信号源")
+                .accessibilityLabel("展开备选信号源")
             } else if isBackup {
                 Text("备")
                     .font(.system(size: 9))
@@ -733,6 +748,9 @@ struct LivePlayerScreen: View {
     @State private var failed = false
     @State private var tuning = false        // 起播/换台加载中（时间推进即出画）
     @State private var stallBanner = false   // 缓冲横幅（27号包 用户钦定：卡了先等恢复，不立刻跳台）
+    // v18 探活换线：healing=探活进行中（防看门狗重复触发叠探）；allLinesDead=本台全部线路探活失败
+    @State private var healing = false
+    @State private var allLinesDead = false
     @State private var everPlayed = false    // 当前链是否播起来过（28b：没播起来=坏链快切，不傻等）
     @State private var failFastTries = 0     // 坏链快速换备线计数（同台最多3条，全死才跳台）
     @State private var closed = false
@@ -1051,6 +1069,8 @@ struct LivePlayerScreen: View {
         failed = false
         switchedAt = Date()      // v17：幻灯片检测豁免窗口从换线时刻起算
         slideTries = 0
+        healing = false          // v18：已切走，探活会话结束
+        allLinesDead = false
         if let ch = current { LiveLastChannel.save(ch.name) }
         // 61包（用户：「换台也是卡住…卡一会才能正常播放」）——换台动作要立刻在 UI 上成立：
         // ① 先把旧的播放器**彻底停掉**（pause + replaceCurrentItem(nil)），
@@ -1302,16 +1322,31 @@ struct LivePlayerScreen: View {
 
     private func autoHeal(sameChannelOnly: Bool = false) {
         guard let ch = current else { return }
+        guard !healing else { return }      // v18：探活进行中不叠探（看门狗每 2s 醒一次会重复叫）
         let base = normalized(ch.name)
         // v17：这条线被判死/降级 → 健康度 -2，坏源快速沉底
         LiveSourceHealth.shared.record(ch.url, ok: false)
-        // 1) 同名备用线路——按健康度降序挑**最好**的那条（用户钦点：好源在第一位）
+        // 1) 同名备用线路——按健康度降序 + **逐条探活通过才切**（v18 根治「盲切到烂线无限换源」）
         let candidates = channels.indices.filter {
             channels[$0].id != ch.id && normalized(channels[$0].name) == base
         }
         if !candidates.isEmpty {
+            healing = true
             let ranked = LiveSourceHealth.ranked(candidates.map { channels[$0].url })
-            switchTo(candidates[ranked[0]])
+            Task { @MainActor in
+                defer { healing = false }
+                for pos in ranked {
+                    let cand = channels[candidates[pos]]
+                    if await probeLine(cand.url) {
+                        switchTo(candidates[pos])
+                        return
+                    }
+                    LiveSourceHealth.shared.record(cand.url, ok: false)   // 探活不过=坏线，沉底
+                }
+                // 全部备线探活失败：不再盲跳台（跳过去大概率也是烂的），亮明真相留在本台等恢复
+                allLinesDead = true
+                stallBanner = true
+            }
             return
         }
         // 2) 27号包：sameChannelOnly=true 时绝不跳台（等待缓冲/用户手动换源）
@@ -1323,6 +1358,42 @@ struct LivePlayerScreen: View {
         var n = name
         if let dot = n.firstIndex(of: "·") { n = String(n[..<dot]) }
         return n.replacingOccurrences(of: " ", with: "")
+    }
+
+    /// v18 换线前探活：playlist 200 且含 #EXTM3U + 最新分片 3 秒内真的下得到数据。
+    /// 专抓 voc 那种「表活片死」（playlist 不停更新、分片 404/滴灌）——只看 playlist 200 会被骗。
+    private func probeLine(_ url: URL, timeout: TimeInterval = 3) async -> Bool {
+        var req = URLRequest(url: url)
+        req.setValue("okhttp/3.12", forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = timeout
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse, http.statusCode == 200,
+              let text = String(data: data.prefix(32768), encoding: .utf8)
+                  ?? String(data: data.prefix(32768), encoding: .isoLatin1),
+              text.contains("#EXTM3U") else { return false }
+        guard let seg = text.split(separator: "\n").last(where: {
+            let l = $0.trimmingCharacters(in: .whitespaces)
+            return !l.isEmpty && !l.hasPrefix("#")
+        }) else { return false }
+        var s = seg.trimmingCharacters(in: .whitespaces)
+        let segURL: URL?
+        if s.hasPrefix("http") {
+            segURL = URL(string: s)
+        } else if s.hasPrefix("/") {
+            segURL = URL(string: "\(url.scheme ?? "https")://\(url.host ?? "")\(s)")
+        } else {
+            s = url.deletingLastPathComponent().absoluteString + s
+            segURL = URL(string: s)
+        }
+        guard let u2 = segURL else { return false }
+        var req2 = URLRequest(url: u2)
+        req2.setValue("okhttp/3.12", forHTTPHeaderField: "User-Agent")
+        req2.setValue("bytes=0-65535", forHTTPHeaderField: "Range")
+        req2.timeoutInterval = timeout
+        guard let (d2, r2) = try? await URLSession.shared.data(for: req2),
+              let h2 = r2 as? HTTPURLResponse, (200..<300).contains(h2.statusCode),
+              !d2.isEmpty else { return false }
+        return true
     }
 
     // MARK: - 五重关闭保险（对齐点播播放器；封面模式专用）
