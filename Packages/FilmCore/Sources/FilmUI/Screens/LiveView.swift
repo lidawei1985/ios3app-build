@@ -1189,7 +1189,7 @@ struct LivePlayerScreen: View {
                 if self.everPlayed, Date().timeIntervalSince(self.switchedAt) > 8,
                    let out = self.videoOut, let item = p.currentItem {
                     let t = p.currentTime()
-                    if let pb = out.copyPixelBuffer(for: t, itemTimeForDisplay: nil) {
+                    if let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) {
                         let h = Self.frameFingerprint(pb)
                         if let last = self.lastFrameHash, h == last {
                             self.stillFrameTicks += 1
