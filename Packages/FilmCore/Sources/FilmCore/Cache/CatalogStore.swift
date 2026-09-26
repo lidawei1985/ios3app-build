@@ -93,7 +93,7 @@ public final class CatalogStore: ObservableObject {
     /// feed 分片全走 GitHub 系域名，手机网络间歇不通 → 全量同步失败 → 目录永远停在首屏40/分类。
     /// 快照随包（构建时从 feed 仓合并：adult=夜航2019部 / child=心屋3664部 / normal=星幕约3500部精选切片），
     /// 断网/同步失败也有可用目录；星幕全量 13 万条仍由后台同步补齐。
-    private static func embeddedSnapshotFile(mode: String) -> String? {
+    nonisolated private static func embeddedSnapshotFile(mode: String) -> String? {
         switch mode {
         case "adult": return "yehang_feed_snapshot"
         case "child": return "xinwu_feed_snapshot"
@@ -147,9 +147,10 @@ public final class CatalogStore: ObservableObject {
     /// 兼容入口（bootFromHome / syncAll 兜底路径沿用）：读盘 + 应用，一条龙。
     private func applyEmbeddedSnapshot() async -> Bool {
         let mode = profile.mode
-        guard let items = await Task.detached(priority: .userInitiated) {
+        let loaded = await Task.detached(priority: .userInitiated) {
             Self.loadEmbeddedSnapshot(mode: mode)
-        }.value, !items.isEmpty else { return false }
+        }.value
+        guard let items = loaded, !items.isEmpty else { return false }
         await applyEmbedded(items: items)
         return phase == .ready
     }
