@@ -103,7 +103,7 @@ public struct SettingsView: View {
                     .shadow(color: statusDotColor.opacity(0.7), radius: 4)
                 Text("当前生效")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.textPrimary)
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 6)
@@ -114,6 +114,10 @@ public struct SettingsView: View {
                 statusRow(title: "生效线路", value: activeLineName) { activePicker = .line }
                 statusDivider
                 statusRow(title: "解析源", value: activeParseName) { activePicker = .parse }
+                statusDivider
+                builtinLinesSection      // 用户钦定 2026-09-26：内置配置线路直接放首屏，不进二级页
+                statusDivider
+                sitesVizSection          // 用户钦定 2026-09-26：点播源可视化放「当前生效」里
                 statusDivider
                 continueRow
             }
@@ -128,6 +132,140 @@ public struct SettingsView: View {
 
     private var statusDotColor: Color {
         Color(red: 0.20, green: 0.78, blue: 0.35)
+    }
+
+    // MARK: 首屏·内置配置线路 chips（钦定 2026-09-26：不进二级页，这里直接点选生效）
+    // 色彩纪律（用户钦定「要透明不要红色」）：全程中性玻璃，选中=灰白高亮+✓，无红。
+
+    private var builtinLinesSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Text("内置线路")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary)
+                Spacer()
+                if tvbox.hasDeletedBuiltinRepos {
+                    Button {
+                        tvbox.restoreBuiltinRepos()
+                    } label: {
+                        Text("恢复 \(tvbox.deletedBuiltinRepoURLs.count)")
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button { subGroup = .sources } label: {
+                    HStack(spacing: 2) {
+                        Text("管理")
+                        Image(systemName: "chevron.right").font(.caption2)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary.opacity(0.75))
+                }
+                .buttonStyle(.plain)
+            }
+            if tvbox.builtinRepoOptions.isEmpty {
+                Text(tvbox.currentMode == "child" ? "儿童端不提供内置线路" : "暂无内置线路")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary.opacity(0.6))
+            } else {
+                FlowLayout(spacing: 6) {
+                    ForEach(tvbox.builtinRepoOptions) { repo in
+                        let active = repo.url == tvbox.activeBuiltinRepoURL
+                        Button {
+                            tvbox.activateBuiltinRepo(repo)
+                        } label: {
+                            HStack(spacing: 4) {
+                                if active {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 9, weight: .bold))
+                                }
+                                Text(repo.name)
+                                    .lineLimit(1)
+                            }
+                            .font(.caption.weight(active ? .semibold : .regular))
+                            .foregroundStyle(active ? theme.textPrimary : theme.textSecondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule().fill(active ? theme.textPrimary.opacity(0.14) : theme.textPrimary.opacity(0.06))
+                            )
+                            .overlay(
+                                Capsule().stroke(
+                                    active ? theme.textPrimary.opacity(0.28) : theme.textSecondary.opacity(0.14),
+                                    lineWidth: 0.5)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    // MARK: 首屏·点播源可视化（钦定 2026-09-26：放「当前生效」里，chips 一眼看清）
+
+    private var sitesVizSection: some View {
+        let sites = tvbox.displayResult.sites
+        let visible = sites.prefix(12)
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Text("点播源")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary)
+                Spacer()
+                if !sites.isEmpty {
+                    Text("\(sites.count) 个 · 点进即看")
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary.opacity(0.6))
+                }
+            }
+            if sites.isEmpty {
+                Text("暂无点播源——到「源与线路」添加配置或选一条内置线路即可解析出站点")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary.opacity(0.6))
+            } else {
+                FlowLayout(spacing: 6) {
+                    ForEach(visible) { s in
+                        NavigationLink {
+                            SiteBrowseView(site: s, sites: Array(sites))
+                        } label: {
+                            HStack(spacing: 4) {
+                                if s.key.hasPrefix("builtin:") {
+                                    Text("内")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(theme.textPrimary.opacity(0.85))
+                                        .padding(.horizontal, 3).padding(.vertical, 1)
+                                        .background(theme.textPrimary.opacity(0.12), in: Capsule())
+                                }
+                                Text(s.name)
+                                    .lineLimit(1)
+                            }
+                            .font(.caption)
+                            .foregroundStyle(theme.textPrimary.opacity(0.88))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(theme.textPrimary.opacity(0.06)))
+                            .overlay(Capsule().stroke(theme.textSecondary.opacity(0.14), lineWidth: 0.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if sites.count > 12 {
+                        Button { subGroup = .sources } label: {
+                            Text("…+\(sites.count - 12)")
+                                .font(.caption)
+                                .foregroundStyle(theme.textSecondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Capsule().fill(theme.textPrimary.opacity(0.10)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 10)
     }
 
     private var statusDivider: some View {
@@ -168,7 +306,7 @@ public struct SettingsView: View {
             } label: {
                 HStack(spacing: 10) {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accent.opacity(0.07))
+                        .fill(theme.textPrimary.opacity(0.06))
                         .frame(width: 34, height: 46)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
@@ -177,7 +315,7 @@ public struct SettingsView: View {
                         .overlay(
                             Image(systemName: "play.fill")
                                 .font(.subheadline)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.textSecondary)
                         )
                     Text("继续浏览 · \(last.name)")
                         .font(.subheadline.weight(.semibold))
@@ -212,12 +350,12 @@ public struct SettingsView: View {
         .padding(.top, 11)
     }
 
-    /// 原型 .gpill：accent 9% 底 + 32% 描边 + 图标/箭头等宽光学居中
+    /// 原型 .gpill：透明玻璃壳（用户钦定 2026-09-26「要透明不要红色」——不再用红色 accent 渲染胶囊）
     private func groupPill(_ g: SettingsGroup) -> some View {
         HStack(spacing: 10) {
             Image(systemName: g.icon)
                 .font(.subheadline)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.textSecondary)
                 .frame(width: 20)
             Text(g.rawValue)
                 .font(.subheadline.weight(.semibold))
@@ -230,8 +368,8 @@ public struct SettingsView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
-        .background(Capsule().fill(theme.accent.opacity(0.09)))
-        .overlay(Capsule().stroke(theme.accent.opacity(0.32), lineWidth: 1))
+        .background(Capsule().fill(theme.textPrimary.opacity(0.05)))
+        .overlay(Capsule().stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5))
         .contentShape(Capsule())
     }
 
@@ -262,7 +400,7 @@ public struct SettingsView: View {
         HStack(spacing: 10) {
             Image(systemName: hit.group.icon)
                 .font(.subheadline)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.textSecondary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(hit.title).font(.subheadline).foregroundStyle(theme.textPrimary)
@@ -387,7 +525,7 @@ private struct SubPageShell<Content: View>: View {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
                         .font(.title3.weight(.medium))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .contentShape(Rectangle())
@@ -456,7 +594,11 @@ private struct StatusPickerSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 13)
                 .padding(.bottom, 9)
-            options
+            // 2026-09-26 修复：线路多时弹层不能滚动（用户实测「只能看见屏幕已有的」）——包 ScrollView
+            ScrollView {
+                options
+            }
+            .frame(maxHeight: 420)
             Button {
                 dismiss()
             } label: {
@@ -538,7 +680,7 @@ private struct StatusPickerSheet: View {
                     Text(name)
                         .font(.subheadline)
                         .fontWeight(active ? .semibold : .regular)
-                        .foregroundStyle(active ? theme.accent : theme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
                     Text(detail)
                         .font(.caption2)
@@ -549,7 +691,7 @@ private struct StatusPickerSheet: View {
                 if active {
                     Image(systemName: "checkmark")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.textPrimary)
                 }
             }
             .padding(.horizontal, 18)
@@ -607,22 +749,21 @@ private struct SourceGroupView: View {
     @State private var addLiveOK = false
     @State private var probingLive = false
     @State private var goBrowseSite: TVBoxSite?
-    @State private var sitesExpanded = false   // A2改版(2026-09-21)：长列表默认收起，本页只留生效1条+入口
-    @State private var histExpanded = false    // 配置历史默认收起
-    @State private var builtinExpanded = false // 内置线路默认收起
 
     var body: some View {
-        List {
-            mySourcesSection
-            tvboxSection
-            builtinReposSection
-            let result = tvbox.displayResult
-            if !result.isEmpty { parsedSection(result) }
+        ScrollView {
+            VStack(spacing: 14) {
+                mySourcesCard
+                tvboxCard
+                builtinReposCard
+                let result = tvbox.displayResult
+                if !result.isEmpty { parsedCard(result) }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            .padding(.bottom, 40)
         }
-        .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())
-        .navigationTitle("源与线路")
-        .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $goBrowseSite) { s in
             SiteBrowseView(site: s, sites: Array(tvbox.displayResult.sites))
         }
@@ -636,138 +777,132 @@ private struct SourceGroupView: View {
         .sheet(isPresented: $showAddLive) { addLiveSheet }
     }
 
-    // MARK: 我的源（自定义点播/直播独立列表 · 35包）
-    // 用户钦定 2026-09-22：「自定义有自己的单独列表，像内置源那种，添加以后直接点击就能看，不用乱找」。
+    // MARK: 我的源（玻璃卡 · 用户钦定 2026-09-26 二级页改版：与首屏同风格，零红色）
 
-    private var mySourcesSection: some View {
-        Section {
+    private var mySourcesCard: some View {
+        card("我的源 · 自定义（\(tvbox.customSites.count + tvbox.customLives.count)）",
+             icon: "person.crop.square.stack.fill",
+             footer: "点播条 → 进片库看片；直播条 → 跳直播页。也会出现在浏览页「切换源」列表里。") {
             if tvbox.customSites.isEmpty && tvbox.customLives.isEmpty {
-                Text("还没有自定义源。点下面「添加」加一个，加完就出现在这里，点一下即可观看。")
-                    .font(.footnote).foregroundStyle(theme.textSecondary)
+                emptyHint("还没有自定义源，点下面「添加」加一个，加完点一下即可观看。")
+                hairline
             }
-
             ForEach(tvbox.customSites) { s in
-                NavigationLink {
-                    SiteBrowseView(site: s, sites: Array(tvbox.displayResult.sites))
-                } label: {
-                    sourceRow(icon: "play.square.stack.fill", tag: "点播", name: s.name, detail: s.api)
-                }
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) { tvbox.removeSite(s) } label: {
-                        Label("删除", systemImage: "trash")
+                HStack(spacing: 10) {
+                    Image(systemName: "play.square.stack.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 20)
+                    NavigationLink {
+                        SiteBrowseView(site: s, sites: Array(tvbox.displayResult.sites))
+                    } label: {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(s.name).font(.subheadline)
+                                    .foregroundStyle(theme.textPrimary).lineLimit(1)
+                                Text(s.api).font(.caption2)
+                                    .foregroundStyle(theme.textSecondary).lineLimit(1)
+                            }
+                            Spacer()
+                            tagCapsule("点播")
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(theme.textSecondary.opacity(0.55))
+                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    delBtn { tvbox.removeSite(s) }
                 }
+                .padding(.vertical, 10)
+                hairline
             }
-
             ForEach(tvbox.customLives) { g in
                 Button {
                     NotificationCenter.default.post(name: .openLiveTab, object: nil)
                 } label: {
-                    sourceRow(icon: "dot.radiowaves.left.and.right", tag: "直播",
-                              name: g.name, detail: g.m3uURLs.first ?? "")
+                    HStack(spacing: 10) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.subheadline)
+                            .foregroundStyle(theme.textSecondary)
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(g.name).font(.subheadline)
+                                .foregroundStyle(theme.textPrimary).lineLimit(1)
+                            Text(g.m3uURLs.first ?? "").font(.caption2)
+                                .foregroundStyle(theme.textSecondary).lineLimit(1)
+                        }
+                        Spacer()
+                        tagCapsule("直播")
+                    }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .swipeActions(edge: .trailing) {
+                .contextMenu {
                     Button(role: .destructive) { tvbox.removeLive(g) } label: {
-                        Label("删除", systemImage: "trash")
+                        Label("删除「\(g.name)」", systemImage: "trash")
                     }
                 }
+                hairline
             }
-
-            Button { showAddSite = true } label: {
-                Label("添加点播源（CMS 接口地址）", systemImage: "plus.circle.fill")
-            }
-            .foregroundStyle(theme.accent)
-
-            Button { showAddLive = true } label: {
-                Label("添加直播源（M3U / TXT / JSON / 直链）", systemImage: "plus.circle.fill")
-            }
-            .foregroundStyle(theme.accent)
-        } header: {
-            Text("我的源 · 自定义（\(tvbox.customSites.count + tvbox.customLives.count)）")
-        } footer: {
-            Text("加完直接在这点：点播条 → 进片库看片；直播条 → 跳直播页。也会出现在浏览页「切换源」列表里。左滑可删除。")
+            addBtn("添加点播源（CMS 接口地址）") { showAddSite = true }
+            hairline
+            addBtn("添加直播源（M3U / TXT / JSON / 直链）") { showAddLive = true }
         }
     }
 
-    /// 统一的源行样式（图标 + 名称 + 地址 + 类型标）。
-    private func sourceRow(icon: String, tag: String, name: String, detail: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).foregroundStyle(theme.accent).frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.subheadline)
-                if !detail.isEmpty {
-                    Text(detail).font(.caption2).foregroundStyle(theme.textSecondary).lineLimit(1)
-                }
+    // MARK: TVBox 配置 · 配置历史
+
+    private var tvboxCard: some View {
+        card("TVBox 配置 · 配置历史（\(tvbox.subscriptions.count) 条）",
+             icon: "clock.arrow.circlepath",
+             footer: "TVBox 原版语义：点选历史条目切换生效配置；多仓配置解析后在「解析结果」里点选仓库加载。github raw 自动走 jsDelivr 镜像。") {
+            if tvbox.subscriptions.isEmpty {
+                emptyHint("暂无配置历史，点下面「添加配置地址」加一个。")
             }
-            Spacer()
-            Text(tag)
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(theme.accent.opacity(0.16), in: Capsule())
-                .foregroundStyle(theme.accent)
-        }
-    }
-
-    // MARK: TVBox 配置地址 · 配置历史（TVBox 原版语义：点选哪条哪条生效）
-
-    private var tvboxSection: some View {
-        Section {
-            DisclosureGroup(isExpanded: $histExpanded) {
             ForEach(tvbox.subscriptions) { sub in
                 Button {
-                    tvbox.activate(sub)   // TVBox 行为：点选 = 切换生效配置
+                    tvbox.activate(sub)
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: sub.url == tvbox.activeURL ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(sub.url == tvbox.activeURL ? theme.accent : theme.textSecondary)
+                            .foregroundStyle(sub.url == tvbox.activeURL ? theme.textPrimary : theme.textSecondary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(sub.name).font(.subheadline.weight(.medium))
                                 .foregroundStyle(theme.textPrimary).lineLimit(1)
-                            Text(sub.url).font(.caption2).foregroundStyle(theme.textSecondary).lineLimit(1)
+                            Text(sub.url).font(.caption2)
+                                .foregroundStyle(theme.textSecondary).lineLimit(1)
                         }
                         Spacer()
-                        Button(role: .destructive) {
-                            tvbox.remove(sub)
-                        } label: {
-                            Image(systemName: "trash").font(.footnote)
-                        }
+                        if sub.url == tvbox.activeURL { tagCapsule("生效") }
+                        delBtn { tvbox.remove(sub) }
                     }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                hairline
             }
-            } label: {
-                HStack {
-                    Label("配置历史（\(tvbox.subscriptions.count) 条）", systemImage: "clock.arrow.circlepath")
-                        .font(.subheadline)
-                    Spacer()
-                    if let u = tvbox.activeURL, let s = tvbox.subscriptions.first(where: { $0.url == u }) {
-                        Text("生效：\(s.name)").font(.caption).foregroundStyle(theme.accent).lineLimit(1)
-                    }
-                }
-            }
-            Button {
-                showAdd = true
-            } label: {
-                Label("添加配置地址（TVBox JSON / 多仓 / M3U）", systemImage: "plus.circle.fill")
-            }
-            .foregroundStyle(theme.accent)
-
+            addBtn("添加配置地址（TVBox JSON / 多仓 / M3U）") { showAdd = true }
+            hairline
             Button {
                 Task { await tvbox.refreshAll() }
             } label: {
                 HStack {
                     Label(tvbox.refreshing ? "正在解析…" : "刷新当前配置",
                           systemImage: "arrow.triangle.2.circlepath")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.textPrimary)
                     Spacer()
-                    if tvbox.refreshing { ProgressView() }
+                    if tvbox.refreshing { ProgressView().tint(theme.textSecondary) }
                 }
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(theme.accent)
+            .buttonStyle(.plain)
             .disabled(tvbox.refreshing || (tvbox.activeURL == nil && tvbox.activeBuiltinRepoURL == nil))
-
             if !tvbox.refreshMessage.isEmpty {
-                // v16：拉取失败/兜底提示从灰小字升级为亮玻璃横幅（此前用户根本注意不到，
-                // 「选了内置线路没反应」的真相=拉取超时静默切回直连精选，必须让人看见）
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle.fill").font(.caption)
                     Text(tvbox.refreshMessage).font(.caption).lineLimit(2)
@@ -775,104 +910,110 @@ private struct SourceGroupView: View {
                 }
                 .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(Capsule().fill(.white.opacity(0.10)))
-                .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
+                .background(Capsule().fill(theme.textPrimary.opacity(0.08)))
+                .overlay(Capsule().stroke(theme.textSecondary.opacity(0.14), lineWidth: 0.5))
             }
-        } header: {
-            Text("TVBox 配置 · 配置历史")
-        } footer: {
-            Text("TVBox 原版语义：点选历史条目切换生效配置；多仓配置在下方解析结果里点选仓库加载。github raw 自动走 jsDelivr 镜像。")
         }
     }
 
-    // MARK: 内置线路（2026-09-20 盒子实测；按产品自动隔离：星幕=影视组 / 夜航=影视+成人组 / 心屋=无）
+    // MARK: 内置配置线路（chips + 长按删除 + 恢复）
 
-    private var builtinReposSection: some View {
-        Section {
+    private var builtinReposCard: some View {
+        card("内置配置线路 · 盒子实测（\(tvbox.builtinRepoOptions.count) 条）",
+             icon: "square.stack.3d.up.fill",
+             footer: "一条线路 = 一份配置包（内含几十~几百个站点源，「N站」就是站数）。点选即解析生效；长按线路可删除（可恢复）。浏览页左上「源」胶囊里也能直接换线路。") {
             if tvbox.builtinRepoOptions.isEmpty {
-                // 此前整段隐藏 → 心屋用户看到的是「内置源消失」（2026-09-22 用户反馈）。
-                // 现改为常显 + 说清原因：要么是儿童端设计如此，要么是被删光了（给出恢复入口）。
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "info.circle").font(.footnote).foregroundStyle(theme.textSecondary)
-                    Text(tvbox.currentMode == "child"
-                         ? "儿童端不提供内置线路（设计如此：避免成人/违禁线路误入孩子的 App），下方点播源照常可用。"
-                         : "内置线路已全部删除。若想用回来，点下面的「恢复内置线路」。")
-                        .font(.footnote).foregroundStyle(theme.textSecondary)
+                emptyHint(tvbox.currentMode == "child"
+                    ? "儿童端不提供内置线路（避免成人/违禁线路误入孩子的 App），下方点播源照常可用。"
+                    : "内置线路已全部删除。点「恢复内置线路」找回来。")
+                if tvbox.hasDeletedBuiltinRepos {
+                    restoreBuiltinBtn
+                    hairline
                 }
             } else {
-                DisclosureGroup(isExpanded: $builtinExpanded) {
+                FlowLayout(spacing: 6) {
                     ForEach(tvbox.builtinRepoOptions) { repo in
-                        HStack(spacing: 10) {
-                            // 激活区：只负责"点选生效"
-                            Button {
-                                tvbox.activateBuiltinRepo(repo)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: repo.url == tvbox.activeBuiltinRepoURL ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(repo.url == tvbox.activeBuiltinRepoURL ? theme.accent : theme.textSecondary)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(repo.name).font(.subheadline.weight(.medium))
-                                            .foregroundStyle(theme.textPrimary).lineLimit(1)
-                                        Text(repo.url).font(.caption2).foregroundStyle(theme.textSecondary).lineLimit(1)
-                                    }
-                                    Spacer(minLength: 0)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            // 删除键移出激活按钮（此前嵌套在按钮内部 = SwiftUI 未定义命中，
-                            // 点行有误删风险，是「内置源消失」的可疑来源之一，2026-09-22 拆开）
-                            Button(role: .destructive) {
-                                tvbox.removeBuiltinRepo(repo)
-                            } label: {
-                                Image(systemName: "trash").font(.footnote)
-                            }
-                            .buttonStyle(.borderless)
-                        }
+                        builtinChip(repo)
                     }
-                } label: {
-                    HStack {
-                        Label("内置配置线路（\(tvbox.builtinRepoOptions.count) 条实测）", systemImage: "square.stack.3d.up.fill")
-                            .font(.subheadline)
+                }
+                .padding(.vertical, 4)
+                if let u = tvbox.activeBuiltinRepoURL,
+                   let r = tvbox.builtinRepoOptions.first(where: { $0.url == u }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.seal.fill").font(.caption)
+                        Text("生效线路：\(r.name)").font(.caption).lineLimit(1)
                         Spacer()
-                        if let u = tvbox.activeBuiltinRepoURL,
-                           let r = tvbox.builtinRepoOptions.first(where: { $0.url == u }) {
-                            Text("生效：\(r.name)").font(.caption).foregroundStyle(theme.accent).lineLimit(1)
-                        }
                     }
+                    .foregroundStyle(theme.textPrimary.opacity(0.85))
+                    .padding(.vertical, 6)
+                }
+                if tvbox.hasDeletedBuiltinRepos {
+                    restoreBuiltinBtn
                 }
             }
-            // 恢复入口：只恢复被删的**线路**（与点播源墓碑分离，不再串台）
-            if tvbox.hasDeletedBuiltinRepos {
-                Button {
-                    tvbox.restoreBuiltinRepos()
-                } label: {
-                    Label("恢复内置线路（\(tvbox.deletedBuiltinRepoURLs.count) 条已删）",
-                          systemImage: "arrow.uturn.backward.circle")
-                        .font(.footnote)
-                }
-                .foregroundStyle(theme.accent)
-            }
-        } header: {
-            Text("内置配置线路 · 盒子实测")
-        } footer: {
-            Text("一条线路 = 一份配置包（内含几十~几百个站点源，名字里的「N站」就是站数）。点选即解析生效，解析出的站点源进下方「点播源」列表——两者不是一回事：线路是包，点播源是包里的站。浏览页左上「源」胶囊里也能直接换线路，不用回设置。")
         }
     }
 
-    // MARK: 解析结果（多仓选仓 / 点播源 / 直播组）
+    private func builtinChip(_ repo: TVBoxRepoOption) -> some View {
+        let active = repo.url == tvbox.activeBuiltinRepoURL
+        return Button {
+            tvbox.activateBuiltinRepo(repo)
+        } label: {
+            HStack(spacing: 4) {
+                if active {
+                    Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                }
+                Text(repo.name).lineLimit(1)
+            }
+            .font(.caption.weight(active ? .semibold : .regular))
+            .foregroundStyle(active ? theme.textPrimary : theme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(active ? theme.textPrimary.opacity(0.14) : theme.textPrimary.opacity(0.06)))
+            .overlay(Capsule().stroke(
+                active ? theme.textPrimary.opacity(0.28) : theme.textSecondary.opacity(0.14),
+                lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive) { tvbox.removeBuiltinRepo(repo) } label: {
+                Label("删除线路「\(repo.name)」", systemImage: "trash")
+            }
+        }
+    }
 
-    private func parsedSection(_ result: TVBoxParseResult) -> some View {
-        Section {
+    private var restoreBuiltinBtn: some View {
+        Button {
+            tvbox.restoreBuiltinRepos()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.uturn.backward.circle").font(.footnote)
+                Text("恢复内置线路（\(tvbox.deletedBuiltinRepoURLs.count) 条已删）").font(.footnote)
+                Spacer()
+            }
+            .foregroundStyle(theme.textPrimary.opacity(0.85))
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 解析结果（仓库 / 点播源可视化 / 直播组测播）
+
+    private func parsedCard(_ result: TVBoxParseResult) -> some View {
+        card("解析结果 · 当前生效配置", icon: "doc.text.magnifyingglass",
+             footer: "多仓配置先点选仓库；内置点播源长按可删除（可恢复）；自定义直播源会自动出现在「直播」页。") {
             if !result.repos.isEmpty {
-                // TVBox 原版行为：多仓列表点选加载，选中仓高亮
                 HStack {
                     Label("仓库（\(result.repos.count)）", systemImage: "square.stack.3d.up")
                         .font(.subheadline)
+                        .foregroundStyle(theme.textPrimary)
                     Spacer()
                     Button("全部收进配置历史") { tvbox.adoptRepos() }
-                        .font(.caption).foregroundStyle(theme.accent)
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary)
                 }
+                .padding(.vertical, 8)
                 ForEach(result.repos) { r in
                     Button {
                         tvbox.activateRepo(r)
@@ -880,107 +1021,234 @@ private struct SourceGroupView: View {
                         HStack(spacing: 8) {
                             Image(systemName: r.url == tvbox.activeRepoURL ? "checkmark.circle.fill" : "circle")
                                 .font(.footnote)
-                                .foregroundStyle(r.url == tvbox.activeRepoURL ? theme.accent : theme.textSecondary)
-                            Text(r.name).font(.caption).foregroundStyle(theme.textPrimary).lineLimit(1)
+                                .foregroundStyle(r.url == tvbox.activeRepoURL ? theme.textPrimary : theme.textSecondary)
+                            Text(r.name).font(.caption)
+                                .foregroundStyle(theme.textPrimary).lineLimit(1)
                             Spacer()
+                            if r.url == tvbox.activeRepoURL { tagCapsule("生效") }
                         }
-                    }
-                }
-            }
-            if !result.sites.isEmpty {
-                if let last = lastBrowsedSite {
-                    // TVBox「首页站源 / 下次进入」语义：一键回到上次浏览的源（A2 改版提为常显）
-                    NavigationLink {
-                        SiteBrowseView(site: last, sites: Array(result.sites))
-                    } label: {
-                        Label("上次浏览 · \(last.name)", systemImage: "clock.arrow.circlepath")
-                            .font(.subheadline.weight(.medium))
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
-                // TVBox「聚合搜索」：全部点播源一次搜
+                hairline
+            }
+            if let last = lastBrowsedSite {
                 NavigationLink {
-                    AggregateSearchView(sites: Array(result.sites.filter { $0.type != 3 }.prefix(30)))
+                    SiteBrowseView(site: last, sites: Array(result.sites))
                 } label: {
-                    Label("聚合搜索（前 30 个源）", systemImage: "magnifyingglass").font(.subheadline)
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath").font(.footnote)
+                            .foregroundStyle(theme.textSecondary)
+                        Text("上次浏览 · \(last.name)").font(.subheadline.weight(.medium))
+                            .foregroundStyle(theme.textPrimary).lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                            .foregroundStyle(theme.textSecondary.opacity(0.55))
+                    }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                DisclosureGroup("点播源（\(result.sites.count)\(builtinSiteCount > 0 ? " · 含内置 \(builtinSiteCount)" : "")）", isExpanded: $sitesExpanded) {
-                    // 恢复入口置顶常显：内置源被删过就一定有路可回，杜绝「内置源悄无声息消失」（2026-09-22）
-                    if tvbox.hasDeletedBuiltins {
-                        Button {
-                            tvbox.restoreBuiltins()
-                        } label: {
-                            Label("恢复被删除的内置源（\(tvbox.deletedBuiltinKeys.count) 个）", systemImage: "arrow.uturn.backward.circle")
-                                .font(.footnote.weight(.medium))
-                        }
-                        .foregroundStyle(theme.accent)
+                hairline
+            }
+            NavigationLink {
+                AggregateSearchView(sites: Array(result.sites.filter { $0.type != 3 }.prefix(30)))
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                    Text("聚合搜索（前 30 个源一次搜）").font(.subheadline)
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.textSecondary.opacity(0.55))
+                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            hairline
+            HStack(spacing: 8) {
+                Text("点播源（\(result.sites.count)\(builtinSiteCount > 0 ? " · 内置 \(builtinSiteCount)" : "")）")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                Spacer()
+                if tvbox.hasDeletedBuiltins {
+                    Button { tvbox.restoreBuiltins() } label: {
+                        Text("恢复被删 \(tvbox.deletedBuiltinKeys.count)")
+                            .font(.caption)
+                            .foregroundStyle(theme.textPrimary.opacity(0.8))
                     }
-                    ForEach(result.sites.prefix(80)) { s in
-                        // 原版 TVBox 思路：站点源可直接浏览（分类/列表/搜索/播放全走该源）
-                        NavigationLink {
-                            SiteBrowseView(site: s, sites: Array(result.sites))
-                        } label: {
-                            HStack(spacing: 6) {
-                                if s.key.hasPrefix("builtin:") {
-                                    Text("内置")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(theme.accent.opacity(0.16), in: Capsule())
-                                        .foregroundStyle(theme.accent)
-                                }
-                                Text(s.name).font(.footnote).lineLimit(1)
-                                Spacer()
-                                Text(typeName(s.type)).font(.caption2).foregroundStyle(theme.textSecondary)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(theme.textSecondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            if s.key.hasPrefix("builtin:") {
-                                Button(role: .destructive) {
-                                    tvbox.removeSite(s)
-                                } label: {
-                                    Label("删除内置源「\(s.name)」", systemImage: "trash")
-                                }
-                            }
-                        }
-                    }
-                    if result.sites.count > 80 {
-                        Text("…共 \(result.sites.count) 个").font(.caption2).foregroundStyle(.secondary)
-                    }
+                    .buttonStyle(.plain)
                 }
             }
+            .padding(.vertical, 8)
+            FlowLayout(spacing: 6) {
+                ForEach(result.sites.prefix(80)) { s in
+                    siteChip(s, sites: Array(result.sites))
+                }
+                if result.sites.count > 80 {
+                    Text("…共 \(result.sites.count) 个")
+                        .font(.caption2)
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .padding(.bottom, 6)
             ForEach(result.lives) { group in
-                DisclosureGroup("直播组：\(group.name)") {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("直播组：\(group.name)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(theme.textPrimary.opacity(0.85))
+                        .padding(.vertical, 6)
                     ForEach(Array(group.m3uURLs.enumerated()), id: \.offset) { _, u in
                         Button {
                             Task {
-                                if u.hasSuffix(".m3u") || u.lowercased().contains(".m3u") {
+                                if u.lowercased().contains(".m3u") {
                                     let channels = await tvbox.expandM3U(u)
-                                    testingChannel = channels.first   // 测播第一个频道
+                                    testingChannel = channels.first
                                 } else if let url = URL(string: u) {
                                     testingChannel = LiveChannel(id: u, name: group.name, url: url)
                                 }
                             }
                         } label: {
                             HStack {
-                                Text(u).font(.caption2).foregroundStyle(theme.textSecondary)
-                                    .lineLimit(1)
+                                Text(u).font(.caption2)
+                                    .foregroundStyle(theme.textSecondary).lineLimit(1)
                                 Spacer()
-                                Text("测播").font(.caption).foregroundStyle(theme.accent)
+                                Text("测播").font(.caption)
+                                    .foregroundStyle(theme.textPrimary.opacity(0.8))
                             }
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
-        } header: {
-            Text("解析结果（当前生效配置）")
-        } footer: {
-            Text("多仓配置请先点选仓库；内置源长按可删除（可恢复）；自定义直播源会自动出现在「直播」页。")
         }
+    }
+
+    private func siteChip(_ s: TVBoxSite, sites: [TVBoxSite]) -> some View {
+        NavigationLink {
+            SiteBrowseView(site: s, sites: sites)
+        } label: {
+            HStack(spacing: 4) {
+                if s.key.hasPrefix("builtin:") {
+                    Text("内")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(theme.textPrimary.opacity(0.85))
+                        .padding(.horizontal, 3).padding(.vertical, 1)
+                        .background(theme.textPrimary.opacity(0.12), in: Capsule())
+                }
+                Text(s.name).lineLimit(1)
+            }
+            .font(.caption)
+            .foregroundStyle(theme.textPrimary.opacity(0.88))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(theme.textPrimary.opacity(0.06)))
+            .overlay(Capsule().stroke(theme.textSecondary.opacity(0.14), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if s.key.hasPrefix("builtin:") {
+                Button(role: .destructive) { tvbox.removeSite(s) } label: {
+                    Label("删除内置源「\(s.name)」", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    // MARK: 新版卡壳与行组件（中性透明玻璃 · 零红色）
+
+    private func card<Content: View>(_ title: String, icon: String, footer: String? = nil,
+                                     @ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.footnote)
+                    .foregroundStyle(theme.textSecondary)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 13)
+            .padding(.bottom, 7)
+            VStack(spacing: 0) { content() }
+                .padding(.horizontal, 16)
+            if let footer {
+                Text(footer)
+                    .font(.caption2)
+                    .foregroundStyle(theme.textSecondary.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+            } else {
+                Spacer().frame(height: 12)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(theme.textPrimary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(theme.textSecondary.opacity(0.14), lineWidth: 0.5)
+        )
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(theme.textSecondary.opacity(0.14))
+            .frame(height: 0.5)
+    }
+
+    private func addBtn(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill").font(.subheadline)
+                Text(title).font(.subheadline)
+                Spacer()
+            }
+            .foregroundStyle(theme.textPrimary)
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func tagCapsule(_ t: String) -> some View {
+        Text(t)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(theme.textPrimary.opacity(0.12), in: Capsule())
+            .foregroundStyle(theme.textPrimary.opacity(0.85))
+    }
+
+    private func delBtn(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "trash")
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary.opacity(0.7))
+                .padding(6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func emptyHint(_ t: String) -> some View {
+        Text(t)
+            .font(.caption)
+            .foregroundStyle(theme.textSecondary.opacity(0.75))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
     }
 
     // MARK: 添加配置地址 sheet
@@ -1036,7 +1304,7 @@ private struct SourceGroupView: View {
                             Label(addSiteMsg,
                                   systemImage: addSiteOK ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                                 .font(.footnote)
-                                .foregroundStyle(addSiteOK ? theme.accent : Color.orange)
+                                .foregroundStyle(addSiteOK ? theme.textPrimary : theme.textSecondary)
                             if addSiteOK, let s = lastAddedSite {
                                 Button {
                                     showAddSite = false
@@ -1046,7 +1314,7 @@ private struct SourceGroupView: View {
                                     Label("立即去看 · \(s.name)", systemImage: "arrow.right.circle.fill")
                                         .font(.footnote.weight(.semibold))
                                 }
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.textPrimary)
                             }
                         }
                     }
@@ -1119,7 +1387,7 @@ private struct SourceGroupView: View {
                         Label(addLiveMsg,
                               systemImage: addLiveOK ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                             .font(.footnote)
-                            .foregroundStyle(addLiveOK ? theme.accent : Color.orange)
+                            .foregroundStyle(addLiveOK ? theme.textPrimary : theme.textSecondary)
                     }
                     if addLiveOK {
                         Button {
@@ -1131,7 +1399,7 @@ private struct SourceGroupView: View {
                             Label("去直播页看", systemImage: "arrow.right.circle.fill")
                                 .font(.footnote.weight(.semibold))
                         }
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.textPrimary)
                     }
                 }
             }
@@ -1293,7 +1561,7 @@ private struct PlaybackGroupView: View {
             Spacer()
             Toggle("", isOn: isOn)
                 .labelsHidden()
-                .tint(theme.accent)
+                .tint(theme.textPrimary)
                 .fixedSize()
         }
         .padding(.vertical, 12)
@@ -1349,7 +1617,7 @@ private struct AppearanceGroupView: View {
                         .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: 7)
-                                .fill(appearanceRaw == m.rawValue ? theme.accent.opacity(0.18) : Color.clear)
+                                .fill(appearanceRaw == m.rawValue ? theme.textPrimary.opacity(0.14) : Color.clear)
                         )
                 }
                 .buttonStyle(.plain)
@@ -1460,11 +1728,11 @@ private struct CacheGroupView: View {
                 HStack(spacing: 12) {
                     Image(systemName: "trash")
                         .font(.subheadline)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.textSecondary)
                         .frame(width: 22)
                     Text("清除片库与图片缓存")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.textPrimary)
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.subheadline)
