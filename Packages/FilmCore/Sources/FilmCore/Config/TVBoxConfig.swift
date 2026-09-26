@@ -454,7 +454,12 @@ public final class TVBoxConfigStore: ObservableObject {
             // 内置线路要开箱即用：多仓自动按顺序试仓，第一个能打开的直接出内容
             var loaded = false
             let preferred = activeRepoURL.flatMap { sel in parsed.repos.first(where: { $0.url == sel }) }
-            let ordered = preferred.map { [$0] + parsed.repos.filter { $0.url != sel } } ?? parsed.repos
+            let ordered: [TVBoxSubscription]
+            if let preferred {
+                ordered = [preferred] + parsed.repos.filter { $0.url != preferred.url }
+            } else {
+                ordered = parsed.repos
+            }
             for repo in ordered {
                 activeRepoURL = repo.url
                 await loadRepo(repo.url, parent: parsed)
