@@ -188,6 +188,12 @@ public struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(theme.textSecondary.opacity(0.75))
             }
+            // 无滚动条 → 得有一句说明，否则"还有 95 个没露出来"没人知道（用户明确「不要滚动条」）
+            if expanded && sites.count > Self.siteVisibleCount {
+                Text("面板内上下滑动看全部")
+                    .font(.caption2)
+                    .foregroundStyle(theme.textSecondary.opacity(0.55))
+            }
             Spacer()
             Image(systemName: expanded ? "chevron.down" : "chevron.right")
                 .font(.caption.weight(.semibold))
@@ -196,7 +202,9 @@ public struct SettingsView: View {
     }
 
     /// 一级页网格：**三列等宽** + 单元格等高 + 名字单行截断 → 左右严格对齐、整整齐齐。
-    /// 不套内层 ScrollView（会和外层设置页滚动打架），直接跟着页面滚动。
+    /// 面板内网格：**三列等宽** + 单元格等高 + 名字单行截断 → 左右严格对齐、整整齐齐。
+    /// 外层套一个**固定高度**的 `ScrollView`（封顶 36 个），所以它不再跟着设置页一路铺下去；
+    /// 在面板内拖动滚的是面板，在面板外拖动才滚设置页。
     ///
     /// 2026-10-01（用户真机验收 + 活原型选定「第一版·方案一」）两处改动：
     ///  ①「这两排按钮不能直接满屏铺开太难受了」→ 两列改**三列**，单格收窄、不再一个名字撑满半屏；
@@ -207,12 +215,35 @@ public struct SettingsView: View {
     ///     页面底 (28,33,26)（绿调 1:1.18:0.93）→ 面板 (48,50,46)（被压平 1:1.04:0.96）。
     ///     不用材质后底色（含色相）原样透出 → 背景什么色，面板就什么色。
     private func sitesGrid(sites: [TVBoxSite]) -> some View {
-        LazyVGrid(columns: Self.siteGridColumns, alignment: .leading, spacing: 6) {
-            ForEach(sites) { s in siteCell(s) }
+        ScrollView(.vertical) {
+            LazyVGrid(columns: Self.siteGridColumns, alignment: .leading, spacing: Self.siteGridSpacing) {
+                ForEach(sites) { s in siteCell(s) }
+            }
+            .padding(10)
         }
-        .padding(10)
+        .frame(height: Self.siteGridHeight(count: sites.count))
+        // 2026-10-01 用户：「可以下滚滑看所有 但是不要滚动条」→ 面板内可滚、指示器一律不显示。
+        .scrollIndicators(.hidden)
         .filmGlass(cornerRadius: 16, tint: 0.06, strokeOpacity: 0.10, weight: .clear)
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.1), lineWidth: 0.5))
+    }
+
+    /// 面板内**最多**露出的源数量：3 列 × 12 行 = **36**。
+    /// 2026-10-01 用户原话：「还有个问题就是铺满屏还没弄呢！显示 36 个然后可以下滚滑看所有 但是不要
+    /// 滚动条 一排 123 排」—— 展开后不许再把 131 个源一路铺到页面底部，面板封顶 36 个，其余在
+    /// **面板内部**上下滑动查看。改数量只动这一个常量（行数自动跟着算）。
+    static let siteVisibleCount = 36
+    /// 单元格高（必须与 `siteCell` 里的 `.frame(height:)` 一致，否则行数算出来的高度会偏差累积）。
+    static let siteCellHeight: CGFloat = 34
+    static let siteGridSpacing: CGFloat = 6
+
+    /// 网格区高度：**先按 36 封顶**再算行数 —— 源少于 36 时不留空（有几行算几行），
+    /// 多于 36 时固定 12 行的高度，多出来的靠面板内滚动看。
+    static func siteGridHeight(count: Int) -> CGFloat {
+        let shown = min(max(count, 0), siteVisibleCount)
+        guard shown > 0 else { return 0 }
+        let rows = (shown + siteGridColumns.count - 1) / siteGridColumns.count
+        return CGFloat(rows) * siteCellHeight + CGFloat(rows - 1) * siteGridSpacing
     }
 
     /// 双排里的单个源：整格可点进源浏览。
@@ -242,7 +273,7 @@ public struct SettingsView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 6)
-            .frame(height: 34)                       // 行高等高 → 两列严格对齐
+            .frame(height: Self.siteCellHeight)      // 行高等高 → 三列严格对齐
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }

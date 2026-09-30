@@ -37,14 +37,23 @@ enum FilmGlassWeight {
     case light
     /// 纯透明（**推荐用于"跟底变色"**）：**不挂任何材质**，只叠一层极淡均匀白提亮。
     /// 底色（含色相）原样透出 —— 页面底色变，面板跟着变，不产生中性灰块。
+    /// 适用：背后是**静态取色底**的页面（设置页点播源面板等）。
     case clear
+    /// 压暗（**播放器 / 视频上浮层专用**）：挂 ultraThinMaterial 把画面虚化，再**均匀压一层黑**。
+    ///
+    /// 为什么播放器**不能**照搬 `.clear`：面板背后是会动的视频、明暗不定 —— 完全不挂材质时，
+    /// 浅色画面（雪景/白墙）一上来白字就糊得读不清，这是当初加材质的唯一理由。
+    /// 为什么**不能**用 `.regular`：那档是「白提亮 + 顶部更亮渐变」，叠在深色材质上正好洗出一块灰
+    /// （用户 2026-09-30、2026-10-01 两次拍桌「倍速还是黑框 / 灰框」的同一个根因）。
+    /// 正解＝**中性压暗**（黑在最暗处，不会把画面洗灰）+ 亮发丝边 = 爱优腾浮层观感。
+    case dark
 
     /// nil = 不铺材质（`.clear` 档）。
     var material: Material? {
         switch self {
-        case .regular: return .thinMaterial
-        case .light:   return .ultraThinMaterial
-        case .clear:   return nil
+        case .regular:       return .thinMaterial
+        case .light, .dark:  return .ultraThinMaterial
+        case .clear:         return nil
         }
     }
 }
@@ -66,9 +75,10 @@ struct FilmGlassBackground: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         ZStack {
-            if let m = weight.material {
-                shape.fill(m)
-                // 受光面：顶部更亮的白渐变（玻璃的明暗语言）——只在有材质时叠。
+            switch weight {
+            case .regular, .light:
+                if let m = weight.material { shape.fill(m) }
+                // 受光面：顶部更亮的白渐变（玻璃的明暗语言）——只在「白提亮」两档叠。
                 // `.clear` 档不叠：顶部 +0.10 的白会在"纯透明"面板上糊出上半截发白，
                 // 那又变成另一种"灰"，与「跟着背景变色」目标相反。
                 shape.fill(
@@ -78,9 +88,13 @@ struct FilmGlassBackground: View {
                         .init(color: .white.opacity(max(tint - 0.06, 0)), location: 1),
                     ], startPoint: .top, endPoint: .bottom)
                 )
-            } else {
+            case .clear:
                 // 纯透明档：**均匀**一层极淡白，不加渐变、不去色 —— 底色原样透上来。
                 shape.fill(Color.white.opacity(tint))
+            case .dark:
+                if let m = weight.material { shape.fill(m) }
+                // 视频上浮层：均匀**压暗**（不是提亮）—— 中性、不洗灰，白字任何画面下都读得清。
+                shape.fill(Color.black.opacity(tint))
             }
         }
         .overlay(

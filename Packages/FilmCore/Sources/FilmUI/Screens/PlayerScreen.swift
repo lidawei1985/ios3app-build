@@ -969,7 +969,9 @@ public struct PlayerScreen: View {
         // 2026-09-30 用户：「选集面板也用了黑框」「我要的是毛玻璃」。
         // 面板自身没写黑底 —— 是播放器外层强制 `colorScheme: .dark`，sheet 就跟着吃系统深色底
         // （看起来就是一块死黑）。这里显式换成毛玻璃，后面的画面能透上来，与播放器其余浮层一致。
-        .glassSheet()
+        // 2026-10-01 用户「把选集那个也弄了」：与 `playerGlass`（倍速档位条）统一走 `.dark` 档 ——
+        // 虚化 + 中性压暗，不再靠「白提亮」跟深色材质打架洗出灰块。
+        .glassSheet(tint: 0.30, weight: .dark)
     }
 
     // 52包：原「播放倍速」面板整块删除 —— 用户「倍数也是进菜单的！！！！」
@@ -1015,7 +1017,8 @@ public struct PlayerScreen: View {
             lineList
         }
         .presentationDetents([.fraction(0.34), .large])
-        .glassSheet()
+        // 与选集面板同一档（`.dark`）：背后是会动的视频，虚化 + 中性压暗。
+        .glassSheet(tint: 0.30, weight: .dark)
     }
 
     private var lineList: some View {
@@ -1991,20 +1994,20 @@ private struct PlayerGlassBackground: ViewModifier {
     let tint: Double
 
     func body(content: Content) -> some View {
-        // 2026-09-30 用户钦定：所有菜单/面板与主页详情页**同一套透明玻璃**（透出背景跟着变色），
-        // 不再有偏黑的实感底。视觉与 FilmGlassBackground 完全一致（thinMaterial+渐变受光面+发丝边）。
+        // 2026-10-01 用户：「player 那也要用我们这种吗？看那个更合适一点 你觉得呢」
+        //   结论＝**播放器不能照搬设置页的 `.clear`（不挂材质）**：设置页面板背后是静态取色底，
+        //   不挂材质=完全跟底；而这里背后是**会动的视频、明暗不定** —— 不挂材质时浅画面白字直接糊掉。
+        //   但旧写法（.thinMaterial + 白提亮渐变）正是「倍速还是黑框 / 灰框」的根因：
+        //   深色 colorScheme 下 thinMaterial 解析成深灰，再叠白色渐变 → 洗成一块灰。
+        //   正解（爱优腾浮层观感）：**虚化 + 均匀压暗**。换成更透的 ultraThinMaterial（画面透得上来），
+        //   把"白提亮"换成"中性压暗"（黑在最暗处，不会洗灰），亮发丝边 + 投影保留"浮在画面上"的层次。
+        //   tint 语义随之从「白提亮量」变为「压暗量」；下限 0.30 保证任何画面（含雪景/白墙）下白字可读。
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return content
             .background {
                 ZStack {
-                    shape.fill(.thinMaterial)
-                    shape.fill(
-                        LinearGradient(stops: [
-                            .init(color: .white.opacity(tint + 0.10), location: 0),
-                            .init(color: .white.opacity(tint), location: 0.45),
-                            .init(color: .white.opacity(max(tint - 0.06, 0)), location: 1),
-                        ], startPoint: .top, endPoint: .bottom)
-                    )
+                    shape.fill(.ultraThinMaterial)
+                    shape.fill(Color.black.opacity(max(tint, 0.30)))
                 }
             }
             .overlay {
@@ -2022,13 +2025,24 @@ extension View {
 
     /// 弹层（sheet）专用毛玻璃。
     ///
-    /// 与 `playerGlass` 同因：sheet 的 `presentationBackground(.ultraThinMaterial)` 在深色下同样偏黑，
-    /// 所以统一叠一层白色提亮。全 App 弹层共用此一处，避免"改了 A 忘了 B"。
-    func glassSheet() -> some View {
+    /// 与 `playerGlass` 同因：sheet 自带的 `presentationBackground(.ultraThinMaterial)` 在深色下同样偏黑，
+    /// 所以统一换成 `FilmGlassBackground`。全 App 弹层共用此一处，避免"改了 A 忘了 B"。
+    ///
+    /// `weight`（2026-10-01 新增）——用户：「我确定去掉了这个能成 那就把选集那个也弄了 还有那个倍数
+    /// 播放那个都一起弄了」：
+    ///   · 默认 `.regular` ＝ 既有观感**不变**（LibraryView / LiveView / SettingsView / SiteBrowseView 的
+    ///     弹层背后是静态取色底，照旧）；
+    ///   · **播放器里的弹层传 `.dark`** —— 它们背后是**会动的视频**、明暗不定：
+    ///     既不能照搬设置页的 `.clear`（不挂材质时浅画面白字直接糊掉），
+    ///     也不能继续用 `.regular`（深色 colorScheme 下 thinMaterial 解析成深灰 + 上面那层白提亮
+    ///     渐变 → 洗成一块灰，这正是用户两次拍桌「选集也是黑框 / 灰框」的同一个根因）。
+    ///     `.dark` ＝ 虚化（ultraThinMaterial）+ **中性压暗**，见 `FilmGlassWeight`。
+    /// `tint` 语义随档位：`.regular` = 白提亮量；`.dark` = 压暗量。
+    func glassSheet(tint: Double = 0.10, weight: FilmGlassWeight = .regular) -> some View {
         // 2026-09-30 用户钦定：菜单底 = 主页详情页同款透明玻璃（FilmGlassBackground），
         // 透出背后内容跟着变色 —— 不再是深色模式材质的偏黑实底。
         presentationBackground {
-            FilmGlassBackground(cornerRadius: 0, tint: 0.10, strokeOpacity: 0)
+            FilmGlassBackground(cornerRadius: 0, tint: tint, strokeOpacity: 0, weight: weight)
                 .ignoresSafeArea()
         }
     }
