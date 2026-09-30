@@ -1,0 +1,238 @@
+# -*- coding: utf-8 -*-
+"""
+内置源可见性 / 墓碑分离 静态不变量检查（2026-09-22 新增）
+
+为什么要有这个脚本：
+  用户报「我发现内置源消失」，代码级取证出三处缺陷（墓碑集合串台 / 删除键嵌套 / 心屋整段隐藏）。
+  这些缺陷**都不会被 xcodebuild 拦住**（能编译、能构建、能上架），只能靠"读源码 + 断言不变量"发现。
+  CI 只跑 xcodebuild 不跑 swift test，故这里用纯 Python 解析 Swift 源码做真回归检查。
+
+判据纪律（用户钦定）：**必须做负向对照**。2026-09-27 起改为**变异式**（旧版从 git 取 `HEAD~1`
+  当"修复前代码"，修复一旦早于 HEAD~1 就失效——实测已腐烂）：每次对当前源码副本注入真实违规，
+  判据必须把它判 FAIL。基线 PASS + 注入违规全部被检出，才算判据有鉴别力。
+  负向对照命令：python scripts/check_builtin_sources_negctl.py
+  （CHK_SWIFT / CHK_CONFIG / CHK_SETTINGS 三个环境变量仍可用于指向任意副本。）
+
+用法：python scripts/check_builtin_sources.py     （退出码 0=PASS，1=FAIL）
+"""
+import io
+import os
+import re
+import sys
+
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# CHK_* 环境变量仅用于负向对照，默认空 → 永远检查工作区真实文件。
+SWIFT = os.environ.get("CHK_SWIFT") or os.path.join(
+    ROOT, "Packages/FilmCore/Sources/FilmCore/Config/DefaultSites.swift")
+CONFIG = os.environ.get("CHK_CONFIG") or os.path.join(
+    ROOT, "Packages/FilmCore/Sources/FilmCore/Config/TVBoxConfig.swift")
+SETTINGS = os.environ.get("CHK_SETTINGS") or os.path.join(
+    ROOT, "Packages/FilmCore/Sources/FilmUI/Screens/SettingsView.swift")
+
+fails = []
+
+
+def read(p):
+    with io.open(p, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def check(cond, msg):
+    print(("  [PASS] " if cond else "  [FAIL] ") + msg)
+    if not cond:
+        fails.append(msg)
+
+
+def block_keys(src, decl):
+    """取出 `static let <decl>... = [...]` 里所有 TVBoxSite(key: "...") 的 key。"""
+    m = re.search(re.escape(decl) + r"[^\[]*\[(.*?)\n    \]", src, re.S)
+    if not m:
+        return None
+    return re.findall(r'TVBoxSite\(key:\s*"([^"]+)"', m.group(1))
+
+
+def block_repo_urls(src, decl):
+    """取出 builtinRepos / builtinAdultRepos 里的 url 列表。"""
+    m = re.search(re.escape(decl) + r"[^\[]*\[(.*?)\n    \]", src, re.S)
+    if not m:
+        return None
+    return re.findall(r'TVBoxSubscription\(name:\s*"[^"]*",\s*url:\s*"([^"]+)"', m.group(1))
+
+
+def block_sites(src, decl):
+    """取出 `static let <decl>... = [...]` 里所有 TVBoxSite 的 (key, api) 元组。"""
+    m = re.search(re.escape(decl) + r"[^\[]*\[(.*?)\n    \]", src, re.S)
+    if not m:
+        return None
+    return re.findall(r'TVBoxSite\(key:\s*"([^"]+)",\s*name:\s*"[^"]*",\s*api:\s*"([^"]+)"', m.group(1))
+
+
+def api_domain(api):
+    m = re.search(r"https?://([^/]+)", api)
+    return m.group(1).lower() if m else api.lower()
+
+
+BANNED_ADULT_DOMAINS = {
+    "apilsbzy.com", "apilsbzy1.com", "apilsbzy2.com", "apilsbzy3.com", "apilsbzy4.com",
+    "beiyong.slapibf.com", "apiyutu.com", "api.xiaojizy.live", "xiaojizy.live",
+    "api.douapi.cc", "heiliaozyapi.com",
+}
+
+
+def func_body(src, header_re):
+    m = re.search(header_re + r".*?\n    \}", src, re.S)
+    return m.group(0) if m else ""
+
+
+def label_block_end(body, anchor):
+    """返回 anchor 之后第一个 `label: { ... }` 块**闭合花括号**的下标（用于判断谁能进这个块）。"""
+    i = body.find(anchor)
+    if i < 0:
+        return -1
+    j = body.find("label:", i)
+    if j < 0:
+        return -1
+    k = body.find("{", j)
+    if k < 0:
+        return -1
+    depth = 0
+    for p in range(k, len(body)):
+        if body[p] == "{":
+            depth += 1
+        elif body[p] == "}":
+            depth -= 1
+            if depth == 0:
+                return p
+    return -1
+
+
+def main():
+    sw = read(SWIFT)
+    cfg = read(CONFIG)
+    st = read(SETTINGS)
+
+    print("[1] 内置点播源（DefaultSites.swift）")
+    common_keys = block_keys(sw, "builtinVodSources:")
+    mixed_keys = block_keys(sw, "builtinMixedVodSources:")
+    adult_keys = block_keys(sw, "builtinAdultVodSources:")
+    check(bool(common_keys), "builtinVodSources 可解析且非空")
+    check(bool(mixed_keys), "builtinMixedVodSources 可解析且非空")
+    check(bool(adult_keys), "builtinAdultVodSources 可解析且非空")
+    if not (common_keys and mixed_keys and adult_keys):
+        return finish()
+
+    normal = list(common_keys) + list(mixed_keys)
+    adult = normal + list(adult_keys)
+
+    print("[2] 三端可见性（用户眼里「内置源不能整体消失」）")
+    check(len(normal) > 0, "星幕(normal) 内置点播源非空（%d 个）" % len(normal))
+    check(len(normal) > 0, "心屋(child) 内置点播源非空（%d 个）" % len(normal))
+    check(len(adult) > 0, "夜航(adult) 内置点播源非空（%d 个）" % len(adult))
+
+    print("[3] 索倪源三端共有（用户分类诉求全靠它）")
+    check("builtin:suoni" in mixed_keys, "索倪在 builtinMixedVodSources（三端共有）里")
+    check("builtin:suoni" not in adult_keys, "索倪没有在成人专用表里重复出现")
+    for mode, lst in [("星幕", normal), ("心屋", normal), ("夜航", adult)]:
+        check("builtin:suoni" in lst, "%s 能看到索倪" % mode)
+
+    print("[4] 内容隔离红线（成人专用源不得出现在星幕/心屋）")
+    overlap = set(normal) & set(adult_keys)
+    check(not overlap, "共有源与成人专用源 key 无重叠（重叠=%s）" % (sorted(overlap) or "无"))
+
+    print("[4b] ★ 域名级隔离红线（2026-09-26 心屋成人内容事故：11 条成人源换 harv: key 漏进共通列表，"
+          "上面的 key 级判据全部放行——判据无鉴别力的实证）")
+    common_sites = block_sites(sw, "builtinVodSources:") or []
+    mixed_sites = block_sites(sw, "builtinMixedVodSources:") or []
+    adult_sites = block_sites(sw, "builtinAdultVodSources:") or []
+    adult_domains = {api_domain(a) for _, a in adult_sites}
+    common_domains = [api_domain(a) for _, a in common_sites]
+    mixed_domains = [api_domain(a) for _, a in mixed_sites]
+    d_overlap = set(common_domains) & adult_domains
+    check(not d_overlap, "共通/成人列表域名无重叠（重叠=%s）" % (sorted(d_overlap) or "无"))
+    d_banned = set(common_domains + mixed_domains) & BANNED_ADULT_DOMAINS
+    check(not d_banned, "已机检判定的 11 个成人域名不在共通列表（命中=%s）" % (sorted(d_banned) or "无"))
+    check("vodZone" in sw and "enum VodZone" in sw, "分区助手 vodZone/VodZone 存在（列表分区判据）")
+
+    print("[5] 内置线路（DefaultSites.swift）")
+    repos_normal = block_repo_urls(sw, "builtinRepos:")
+    repos_adult = block_repo_urls(sw, "builtinAdultRepos:")
+    check(bool(repos_normal), "影视线路组可解析且非空")
+    check(bool(repos_adult), "成人线路组可解析且非空")
+    check(bool(repos_normal) and repos_normal[0].startswith("bundle:"),
+          "影视线路首条为随包直连 bundle:（零网络依赖兜底）")
+
+    print("[6] ★ 墓碑集合分离（本次「内置源消失」的核心根因）")
+    check('"tvbox.deletedBuiltinSiteKeys"' in cfg, "存在点播源墓碑键 tvbox.deletedBuiltinSiteKeys")
+    check('"tvbox.deletedBuiltinRepoURLs"' in cfg, "存在线路墓碑键 tvbox.deletedBuiltinRepoURLs")
+    check("legacyDeletedBuiltinKey" in cfg and '"tvbox.deletedBuiltinKeys"' in cfg,
+          "旧统一键保留为 legacy（用于一次性迁移读取）")
+
+    b = func_body(cfg, r"func removeBuiltinRepo\(")
+    check("deletedBuiltinRepoURLs.insert" in b, "removeBuiltinRepo 只写线路墓碑")
+    check("deletedBuiltinKeys.insert" not in b, "removeBuiltinRepo 不再写点播源墓碑（原串台点）")
+
+    b = func_body(cfg, r"func removeSite\(")
+    check("deletedBuiltinKeys.insert" in b, "removeSite 写点播源墓碑")
+
+    b = func_body(cfg, r"var builtinRepoOptions")
+    check("deletedBuiltinRepoURLs.contains" in b, "builtinRepoOptions 按线路墓碑过滤")
+
+    b = func_body(cfg, r"var displayResult")
+    check("deletedBuiltinKeys.contains" in b, "displayResult 按点播源墓碑过滤")
+
+    print("[7] 恢复入口互不串台")
+    b = func_body(cfg, r"func restoreBuiltins\(\)")
+    check(bool(b), "restoreBuiltins 可解析")
+    check("deletedBuiltinRepoURLs" not in b, "restoreBuiltins 不碰线路墓碑")
+    b2 = func_body(cfg, r"func restoreBuiltinRepos\(\)")
+    check("deletedBuiltinRepoURLs.removeAll()" in b2, "restoreBuiltinRepos 只清线路墓碑")
+
+    print("[8] 设置页（心屋空线路不得整段隐藏 + 删除键不得嵌套在激活按钮里）")
+    body = func_body(st, r"private var builtinReposCard")
+    check(bool(body), "builtinReposCard 可解析")
+    # 关键：不能再是 `if !tvbox.builtinRepoOptions.isEmpty {`（整段隐藏）。注意那写法本身含
+    # `builtinRepoOptions.isEmpty` 子串 —— 光查子串会恒真，故必须查"带感叹号的否定形式"。
+    check(not re.search(r"if\s+!\s*tvbox\.builtinRepoOptions\.isEmpty", body),
+          "内置线路区不再用 if !isEmpty 整段隐藏")
+    check("builtinRepoOptions.isEmpty" in body, "内置线路区显式处理了空集分支（出说明文案）")
+    # 2026-09-27 结构变更：卡片里的「恢复」与「线路胶囊」各自拆成独立子视图，判据随之落到子体上，
+    # 否则锚点找不到会恒 FAIL（判据失效，不是代码坏）。原意一条不减：
+    #   ① 恢复入口必须按「线路墓碑」计数，不得混用点播源计数；
+    #   ② 删除键不得被嵌进激活按钮的 label 块里。
+    rbtn = func_body(st, r"private var restoreBuiltinBtn")
+    check(bool(rbtn), "restoreBuiltinBtn 可解析")
+    check("deletedBuiltinRepoURLs.count" in rbtn, "恢复入口按线路墓碑计数（不再混用点播源计数）")
+    check("deletedBuiltinKeys" not in rbtn, "恢复入口不混入点播源墓碑计数")
+    chip = func_body(st, r"private func builtinChip\(")
+    check(bool(chip), "builtinChip 可解析")
+    check("removeBuiltinRepo" in chip, "内置线路胶囊内有删除入口")
+    # 旧判据是「remove 必须在 activate 的 label 块之外」。新结构下本卡片内**根本没有**激活调用
+    # （激活已移到上一页「生效线路」行），因此判据升级为更强的一条：胶囊内不得出现激活调用
+    # —— 没有激活按钮，就不存在「删除键被套进激活按钮里」的可能。
+    check("activateBuiltinRepo" not in chip,
+          "内置线路胶囊内无激活调用（删除键不可能被嵌套进激活按钮）")
+    if "activateBuiltinRepo" in body:
+        anchor = body.find("activateBuiltinRepo")
+        end = label_block_end(body, "activateBuiltinRepo")
+        rm = body.find("removeBuiltinRepo")
+        check(anchor >= 0 and rm >= 0 and end >= 0 and rm > end,
+              "若卡片内仍保留激活调用，删除键必须在其 label 块之外"
+              "（activate@%d / labelEnd@%d / remove@%d）" % (anchor, end, rm))
+
+    return finish()
+
+
+def finish():
+    print("")
+    if fails:
+        print("RESULT: FAIL —— %d 项不通过" % len(fails))
+        for f in fails:
+            print("   - " + f)
+        return 1
+    print("RESULT: PASS —— 内置源可见性 / 墓碑分离 全部不变量通过")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
