@@ -201,16 +201,17 @@ public struct SettingsView: View {
     /// 2026-10-01（用户真机验收 + 活原型选定「第一版·方案一」）两处改动：
     ///  ①「这两排按钮不能直接满屏铺开太难受了」→ 两列改**三列**，单格收窄、不再一个名字撑满半屏；
     ///     仍保持 09-30 钦定的「等宽 / 等高 / 单行截断 / 名字统一收敛」，只动列数不动对齐规则。
-    ///  ②「这面板是不是加了层灰的、整体变灰了」→ `filmGlass` 走 `.light`（ultraThin）+ 低白度，
-    ///     去掉那层把底色盖死的灰。根因见 `GlassStyle.swift` 的 `FilmGlassWeight` 注释：
-    ///     v21/v22b 把材质换成更实的 `.thinMaterial`，底层取色背景透不上来 → 平灰（真机实测
-    ///     面板 (97,85,79)→(63,62,63)，页面底是暖棕 (63,26,8)）。
+    ///  ②「这面板是不是加了层灰的、整体变灰了」→ `filmGlass` 走 `.clear`（**不挂材质**）+ 极淡白。
+    ///     根因见 `GlassStyle.swift` 的 `FilmGlassWeight` 注释：材质（无论 thin/ultraThin）都会
+    ///     把彩色底**去色**成中性灰 —— v27 用 `.light` 只是减轻，真机仍实测到
+    ///     页面底 (28,33,26)（绿调 1:1.18:0.93）→ 面板 (48,50,46)（被压平 1:1.04:0.96）。
+    ///     不用材质后底色（含色相）原样透出 → 背景什么色，面板就什么色。
     private func sitesGrid(sites: [TVBoxSite]) -> some View {
         LazyVGrid(columns: Self.siteGridColumns, alignment: .leading, spacing: 6) {
             ForEach(sites) { s in siteCell(s) }
         }
         .padding(10)
-        .filmGlass(cornerRadius: 16, tint: 0.04, strokeOpacity: 0.10, weight: .light)
+        .filmGlass(cornerRadius: 16, tint: 0.06, strokeOpacity: 0.10, weight: .clear)
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.1), lineWidth: 0.5))
     }
 

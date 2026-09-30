@@ -21,18 +21,30 @@ import SwiftUI
 /// 而 `.thinMaterial` 在深色下**比 ultraThin 更实**——底层取色背景几乎透不上来，
 /// 渲染出来就是一块平灰（真机实测面板色 (97,85,79)→(63,62,63)，而页面底是暖棕 (63,26,8)）。
 ///
+/// 2026-10-01 二次实测（v27 装上后用户仍报「灰色框还在」）——**换档不够，材质本身就是元凶**：
+///   `Material` 无论厚薄，都会把背景**去色**（把彩色底压向中性）。真机逐点取样：
+///     页面底 (28,33,26) 比值 1 : 1.18 : 0.93（绿调）
+///     面板内 (48,50,46) 比值 1 : 1.04 : 0.96（绿调被压平 → 看着就是"一块灰"）
+///   所以只要还留着材质，白度怎么调都还是灰的。**正解＝不用材质**：只叠一层极淡的
+///   白色提亮，底色（连同它的色相）原样透出 → 背景什么色、面板就什么色。
+///
 /// 材质字面量必须留在本文件内（机检 `scripts/check_glass_global.py`：白名单外不许出现裸材质），
-/// 所以对外只暴露语义档位，页面侧传 `.light` 即可，不接触 `.thinMaterial` 这类字面量。
+/// 所以对外只暴露语义档位，页面侧传 `.clear` 即可，不接触任何材质字面量。
 enum FilmGlassWeight {
     /// 常规：thinMaterial。观感更"实"，适合需要压住底下内容的浮层。
     case regular
-    /// 轻薄：ultraThinMaterial。更透，底层取色背景能透上来 —— 「透明跟底」用这档。
+    /// 轻薄：ultraThinMaterial。比 regular 透，但仍会被材质去色。
     case light
+    /// 纯透明（**推荐用于"跟底变色"**）：**不挂任何材质**，只叠一层极淡均匀白提亮。
+    /// 底色（含色相）原样透出 —— 页面底色变，面板跟着变，不产生中性灰块。
+    case clear
 
-    var material: Material {
+    /// nil = 不铺材质（`.clear` 档）。
+    var material: Material? {
         switch self {
         case .regular: return .thinMaterial
         case .light:   return .ultraThinMaterial
+        case .clear:   return nil
         }
     }
 }
@@ -54,15 +66,22 @@ struct FilmGlassBackground: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         ZStack {
-            shape.fill(weight.material)
-            // 受光面：顶部更亮的白渐变（玻璃的明暗语言）
-            shape.fill(
-                LinearGradient(stops: [
-                    .init(color: .white.opacity(tint + 0.10), location: 0),
-                    .init(color: .white.opacity(tint), location: 0.45),
-                    .init(color: .white.opacity(max(tint - 0.06, 0)), location: 1),
-                ], startPoint: .top, endPoint: .bottom)
-            )
+            if let m = weight.material {
+                shape.fill(m)
+                // 受光面：顶部更亮的白渐变（玻璃的明暗语言）——只在有材质时叠。
+                // `.clear` 档不叠：顶部 +0.10 的白会在"纯透明"面板上糊出上半截发白，
+                // 那又变成另一种"灰"，与「跟着背景变色」目标相反。
+                shape.fill(
+                    LinearGradient(stops: [
+                        .init(color: .white.opacity(tint + 0.10), location: 0),
+                        .init(color: .white.opacity(tint), location: 0.45),
+                        .init(color: .white.opacity(max(tint - 0.06, 0)), location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                )
+            } else {
+                // 纯透明档：**均匀**一层极淡白，不加渐变、不去色 —— 底色原样透上来。
+                shape.fill(Color.white.opacity(tint))
+            }
         }
         .overlay(
             // 玻璃厚度：上亮下暗双发丝边
@@ -85,7 +104,8 @@ struct FilmGlassBackground: View {
 extension View {
     /// 全局通用毛玻璃：thinMaterial + 渐变受光面 + 上亮发丝边（玻璃视觉语言）。
     /// cornerRadius 传 ≥ 短边一半（如 999）时自动退化为胶囊/圆（与 playerGlass 同技巧）。
-    /// weight 传 `.light` 走 ultraThinMaterial —— 更透、底层取色背景透得上来（「透明跟底」）。
+    /// weight 传 `.light` 走 ultraThinMaterial（更透）；传 `.clear` **完全不挂材质**，
+    /// 只有一层极淡均匀白 —— 底色连同色相原样透出，用于「面板跟着背景一起变色」。
     func filmGlass(cornerRadius: CGFloat = 12, tint: Double = 0.12, strokeOpacity: Double = 0.16,
                    weight: FilmGlassWeight = .regular) -> some View {
         background(FilmGlassBackground(cornerRadius: cornerRadius, tint: tint,
