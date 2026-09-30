@@ -14,21 +14,47 @@ import SwiftUI
 // 机检：`scripts/check_glass_global.py` —— FilmUI 内裸材质残留必须为 0
 //（只允许 PlayerScreen.swift 的 playerGlass/glassSheet 与本文件内部使用）。
 
+/// 玻璃厚度档位（2026-10-01 新增）。
+///
+/// 根因（用户 2026-10-01 真机提问「那块面板是不是加了层灰的、整体都变灰了」）：
+/// v22b 把材质从 `.ultraThinMaterial` 换成 **`.thinMaterial`**（+顶部白渐变），
+/// 而 `.thinMaterial` 在深色下**比 ultraThin 更实**——底层取色背景几乎透不上来，
+/// 渲染出来就是一块平灰（真机实测面板色 (97,85,79)→(63,62,63)，而页面底是暖棕 (63,26,8)）。
+///
+/// 材质字面量必须留在本文件内（机检 `scripts/check_glass_global.py`：白名单外不许出现裸材质），
+/// 所以对外只暴露语义档位，页面侧传 `.light` 即可，不接触 `.thinMaterial` 这类字面量。
+enum FilmGlassWeight {
+    /// 常规：thinMaterial。观感更"实"，适合需要压住底下内容的浮层。
+    case regular
+    /// 轻薄：ultraThinMaterial。更透，底层取色背景能透上来 —— 「透明跟底」用这档。
+    case light
+
+    var material: Material {
+        switch self {
+        case .regular: return .thinMaterial
+        case .light:   return .ultraThinMaterial
+        }
+    }
+}
+
 struct FilmGlassBackground: View {
     var cornerRadius: CGFloat
     var tint: Double
     var strokeOpacity: Double
+    var weight: FilmGlassWeight
 
-    init(cornerRadius: CGFloat = 12, tint: Double = 0.12, strokeOpacity: Double = 0.16) {
+    init(cornerRadius: CGFloat = 12, tint: Double = 0.12, strokeOpacity: Double = 0.16,
+         weight: FilmGlassWeight = .regular) {
         self.cornerRadius = cornerRadius
         self.tint = tint
         self.strokeOpacity = strokeOpacity
+        self.weight = weight
     }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         ZStack {
-            shape.fill(.thinMaterial)
+            shape.fill(weight.material)
             // 受光面：顶部更亮的白渐变（玻璃的明暗语言）
             shape.fill(
                 LinearGradient(stops: [
@@ -59,7 +85,10 @@ struct FilmGlassBackground: View {
 extension View {
     /// 全局通用毛玻璃：thinMaterial + 渐变受光面 + 上亮发丝边（玻璃视觉语言）。
     /// cornerRadius 传 ≥ 短边一半（如 999）时自动退化为胶囊/圆（与 playerGlass 同技巧）。
-    func filmGlass(cornerRadius: CGFloat = 12, tint: Double = 0.12, strokeOpacity: Double = 0.16) -> some View {
-        background(FilmGlassBackground(cornerRadius: cornerRadius, tint: tint, strokeOpacity: strokeOpacity))
+    /// weight 传 `.light` 走 ultraThinMaterial —— 更透、底层取色背景透得上来（「透明跟底」）。
+    func filmGlass(cornerRadius: CGFloat = 12, tint: Double = 0.12, strokeOpacity: Double = 0.16,
+                   weight: FilmGlassWeight = .regular) -> some View {
+        background(FilmGlassBackground(cornerRadius: cornerRadius, tint: tint,
+                                       strokeOpacity: strokeOpacity, weight: weight))
     }
 }

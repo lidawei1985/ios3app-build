@@ -195,14 +195,22 @@ public struct SettingsView: View {
         }
     }
 
-    /// 一级页双排网格：两列等宽 + 单元格等高 + 名字单行截断 → 左右严格对齐、整整齐齐。
+    /// 一级页网格：**三列等宽** + 单元格等高 + 名字单行截断 → 左右严格对齐、整整齐齐。
     /// 不套内层 ScrollView（会和外层设置页滚动打架），直接跟着页面滚动。
+    ///
+    /// 2026-10-01（用户真机验收 + 活原型选定「第一版·方案一」）两处改动：
+    ///  ①「这两排按钮不能直接满屏铺开太难受了」→ 两列改**三列**，单格收窄、不再一个名字撑满半屏；
+    ///     仍保持 09-30 钦定的「等宽 / 等高 / 单行截断 / 名字统一收敛」，只动列数不动对齐规则。
+    ///  ②「这面板是不是加了层灰的、整体变灰了」→ `filmGlass` 走 `.light`（ultraThin）+ 低白度，
+    ///     去掉那层把底色盖死的灰。根因见 `GlassStyle.swift` 的 `FilmGlassWeight` 注释：
+    ///     v21/v22b 把材质换成更实的 `.thinMaterial`，底层取色背景透不上来 → 平灰（真机实测
+    ///     面板 (97,85,79)→(63,62,63)，页面底是暖棕 (63,26,8)）。
     private func sitesGrid(sites: [TVBoxSite]) -> some View {
         LazyVGrid(columns: Self.siteGridColumns, alignment: .leading, spacing: 6) {
             ForEach(sites) { s in siteCell(s) }
         }
         .padding(10)
-        .filmGlass(cornerRadius: 16)
+        .filmGlass(cornerRadius: 16, tint: 0.04, strokeOpacity: 0.10, weight: .light)
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.white.opacity(0.1), lineWidth: 0.5))
     }
 
@@ -240,7 +248,11 @@ public struct SettingsView: View {
         .buttonStyle(.plain)
     }
 
+    /// 2026-10-01：两列 → **三列**（用户「两排按钮不能直接满屏铺开太难受了」）。
+    /// 单格宽度从 ~190pt 收到 ~125pt，名字不再孤零零撑满半屏；等高/等宽规则不变。
+    /// 想回两列：删掉第三个 GridItem 即可（就这一处）。
     static let siteGridColumns = [
+        GridItem(.flexible(), spacing: 8),
         GridItem(.flexible(), spacing: 8),
         GridItem(.flexible(), spacing: 8)
     ]
