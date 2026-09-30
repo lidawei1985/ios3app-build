@@ -77,6 +77,13 @@ public struct PlayerScreen: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model: PlayerViewModel
 
+    /// 2026-10-01 主人钦定：「跟着海报 还有那个倍数的也是跟着海报」。
+    ///
+    /// 面板色源 = **这部片的海报主色**，不是会动的视频画面（视频色明暗不定、不可控，浅画面还会洗白字）。
+    /// 取色走 `HeroTintStore`：首页/详情页早已算过同一张海报并缓存 → **零额外下载**，
+    /// 且与详情页 `heroTintBackground` 用的是**同一个 `HeroPalette`** → 进播放器颜色连成一片不跳色。
+    @State private var palette: HeroPalette = .fallback
+
     @State private var showControls = true
     @State private var locked = false
     @State private var showLinePanel = false
@@ -335,6 +342,11 @@ public struct PlayerScreen: View {
                     .onChange(of: g.size) { syncLandscape($0) }
             }
         )
+        // 2026-10-01 主人钦定「跟着海报」：取这部片的海报主色（与 DetailView L140 同写法）。
+        // HeroTintStore 内部有 cache —— 首页/详情页进来看过这张海报就已经算好，这里直接命中，不再下载。
+        .task {
+            palette = await HeroTintStore.shared.palette(for: item.poster?.url ?? item.backdrop?.url)
+        }
         .onAppear {
             model.start(resume: startAtResume)
             if savedRate != 1.0 { model.setRate(savedRate) }
@@ -799,7 +811,7 @@ public struct PlayerScreen: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .playerGlass(cornerRadius: 16)
+        .playerGlass(cornerRadius: 16, palette: palette)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .padding(.bottom, 78)
     }
@@ -828,7 +840,7 @@ public struct PlayerScreen: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .playerGlass(cornerRadius: 16)
+        .playerGlass(cornerRadius: 16, palette: palette)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .padding(.horizontal, 40)
         .padding(.bottom, 78)
@@ -969,9 +981,9 @@ public struct PlayerScreen: View {
         // 2026-09-30 用户：「选集面板也用了黑框」「我要的是毛玻璃」。
         // 面板自身没写黑底 —— 是播放器外层强制 `colorScheme: .dark`，sheet 就跟着吃系统深色底
         // （看起来就是一块死黑）。这里显式换成毛玻璃，后面的画面能透上来，与播放器其余浮层一致。
-        // 2026-10-01 用户「把选集那个也弄了」：与 `playerGlass`（倍速档位条）统一走 `.dark` 档 ——
-        // 虚化 + 中性压暗，不再靠「白提亮」跟深色材质打架洗出灰块。
-        .glassSheet(tint: 0.30, weight: .dark)
+        // 2026-10-01 用户「把选集那个也弄了」→ 主人再钦定「跟着海报」：
+        // 底色不再挂材质（材质会抽干颜色），改叠这部片的海报主色 `palette.deep`（跟详情页同色源）。
+        .glassSheet(palette: palette)
     }
 
     // 52包：原「播放倍速」面板整块删除 —— 用户「倍数也是进菜单的！！！！」
@@ -1017,8 +1029,8 @@ public struct PlayerScreen: View {
             lineList
         }
         .presentationDetents([.fraction(0.34), .large])
-        // 与选集面板同一档（`.dark`）：背后是会动的视频，虚化 + 中性压暗。
-        .glassSheet(tint: 0.30, weight: .dark)
+        // 与选集面板同一档：不挂材质 + 叠海报主色（2026-10-01 主人钦定「跟着海报」）。
+        .glassSheet(palette: palette)
     }
 
     private var lineList: some View {
@@ -1992,6 +2004,12 @@ public final class PlayerViewModel: NSObject, ObservableObject {
 private struct PlayerGlassBackground: ViewModifier {
     let cornerRadius: CGFloat
     let tint: Double
+    /// 2026-10-01 主人钦定「跟着海报」：**传了就完全不挂材质**，改叠海报主色（`palette.deep`）。
+    /// `nil` = 保持既有「材质 + 中性压暗」行为 —— 其余 5 个调用点（音量 HUD / 底栏小钮 / 中央大钮）
+    /// 一个都没动，只有倍速条、音量条、选集 sheet、线路 sheet 这 4 处走新档。
+    var palette: HeroPalette? = nil
+    /// 海报色占比（仅 `palette != nil` 时生效）。0.62 = 六成海报色、四成透出画面。
+    var alpha: Double = 0.62
 
     func body(content: Content) -> some View {
         // 2026-10-01 用户：「player 那也要用我们这种吗？看那个更合适一点 你觉得呢」
@@ -2003,24 +2021,42 @@ private struct PlayerGlassBackground: ViewModifier {
         //   把"白提亮"换成"中性压暗"（黑在最暗处，不会洗灰），亮发丝边 + 投影保留"浮在画面上"的层次。
         //   tint 语义随之从「白提亮量」变为「压暗量」；下限 0.30 保证任何画面（含雪景/白墙）下白字可读。
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        // ★ 2026-10-01 主人钦定「跟着海报」——**跟海报档与挂材质档互斥**，根因是：
+        //   `Material`（不论 .thin / .ultraThin）都会把**底下颜色的饱和度抽干**，
+        //   面板必然落成中性灰（真机实测：四张主色完全不同的海报，挂材质后全落在 #2B2C2D，
+        //   而“不挂材质 + 叠海报色”四张分别是 #0E1A3E / #431D18 / #0F2729 / #340C32）。
+        //   所以：要跟随海报变色，就**不能再挂任何材质**，颜色只能靠自己叠上去。
+        //   浅画面下白字可读性由调用点的字描边/投影兜（本文件各浮层已带 text-shadow）。
+        let followingPoster = palette != nil
         return content
             .background {
-                ZStack {
-                    shape.fill(.ultraThinMaterial)
-                    shape.fill(Color.black.opacity(max(tint, 0.30)))
+                if let p = palette {
+                    shape.fill(p.deep.alpha(alpha))
+                } else {
+                    ZStack {
+                        shape.fill(.ultraThinMaterial)
+                        shape.fill(Color.black.opacity(max(tint, 0.30)))
+                    }
                 }
             }
             .overlay {
-                shape.stroke(Color.white.opacity(0.30), lineWidth: 0.7)
+                shape.stroke(Color.white.opacity(followingPoster ? 0.22 : 0.30),
+                             lineWidth: followingPoster ? 0.6 : 0.7)
             }
-            .shadow(color: .black.opacity(0.30), radius: 12, y: 4)
+            .shadow(color: .black.opacity(followingPoster ? 0.32 : 0.30),
+                    radius: followingPoster ? 14 : 12, y: followingPoster ? 5 : 4)
     }
 }
 
 extension View {
     /// 深色播放器专用毛玻璃（原理见 `PlayerGlassBackground`）。
-    func playerGlass(cornerRadius: CGFloat = 16, tint: Double = 0.16) -> some View {
-        modifier(PlayerGlassBackground(cornerRadius: cornerRadius, tint: tint))
+    ///
+    /// `palette`（2026-10-01 主人钦定「跟着海报 还有那个倍数的也是跟着海报」）：
+    /// 非 nil 时**不挂材质**、改叠该海报的 `deep` 主色；nil = 旧观感不变。
+    func playerGlass(cornerRadius: CGFloat = 16, tint: Double = 0.16,
+                     palette: HeroPalette? = nil, alpha: Double = 0.62) -> some View {
+        modifier(PlayerGlassBackground(cornerRadius: cornerRadius, tint: tint,
+                                       palette: palette, alpha: alpha))
     }
 
     /// 弹层（sheet）专用毛玻璃。
@@ -2038,12 +2074,20 @@ extension View {
     ///     渐变 → 洗成一块灰，这正是用户两次拍桌「选集也是黑框 / 灰框」的同一个根因）。
     ///     `.dark` ＝ 虚化（ultraThinMaterial）+ **中性压暗**，见 `FilmGlassWeight`。
     /// `tint` 语义随档位：`.regular` = 白提亮量；`.dark` = 压暗量。
-    func glassSheet(tint: Double = 0.10, weight: FilmGlassWeight = .regular) -> some View {
+    /// `palette`（2026-10-01 主人钦定「跟着海报」）：非 nil 时同样**不挂材质**，
+    /// 整面铺海报 `deep` 主色（剩下的比例透出后面的视频）；nil = 旧观感不变。
+    func glassSheet(tint: Double = 0.10, weight: FilmGlassWeight = .regular,
+                    palette: HeroPalette? = nil, alpha: Double = 0.62) -> some View {
         // 2026-09-30 用户钦定：菜单底 = 主页详情页同款透明玻璃（FilmGlassBackground），
         // 透出背后内容跟着变色 —— 不再是深色模式材质的偏黑实底。
         presentationBackground {
-            FilmGlassBackground(cornerRadius: 0, tint: tint, strokeOpacity: 0, weight: weight)
-                .ignoresSafeArea()
+            if let p = palette {
+                // 跟海报档：同 `PlayerGlassBackground` —— 要跟海报就**不能挂材质**（材质会抽干颜色）。
+                p.deep.alpha(alpha).ignoresSafeArea()
+            } else {
+                FilmGlassBackground(cornerRadius: 0, tint: tint, strokeOpacity: 0, weight: weight)
+                    .ignoresSafeArea()
+            }
         }
     }
 }
