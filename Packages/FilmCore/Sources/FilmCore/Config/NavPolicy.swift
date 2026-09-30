@@ -163,7 +163,15 @@ public enum NavPolicy {
     public static func navTitleOrNewcomer(_ name: String, mode: String) -> (title: String, isNew: Bool)? {
         let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !n.isEmpty else { return nil }
-        if isAdultCategory(n) { return mode == "adult" ? ("其他", false) : nil }
+        // 2026-10-01 用户钦定「内置源放开成人」：与 allowsCategory（2026-09-30 口径）对齐 ——
+        // 成人分类夜航进「其他」、星幕（normal）**新立分类直接出现**；仅心屋（child）拦（儿童端红线）。
+        if isAdultCategory(n) {
+            switch mode {
+            case "adult": return ("其他", false)
+            case "child": return nil
+            default:      return (n, true)
+            }
+        }
         switch mode {
         case "adult":
             // 2026-09-25 放开：成人源里夹带的正常影视分类（剧集/综艺…）不再拦，只挡儿童向

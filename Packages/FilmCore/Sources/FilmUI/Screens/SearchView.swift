@@ -287,49 +287,20 @@ public struct SearchView: View {
     /// 并发搜 → 结果过 `NavPolicy.allowsItem` 端隔离 → 多源合并去重（成人源多，取前 14 个）。
     private func startTVSearch(_ raw: String) {
         let mode = store.profile.mode
-        let pool: [TVBoxSite]
-        switch mode {
-        case "adult":
-            // 索倪（混合源）在前：用户点名的成人分类全在它里面
-            pool = Array((DefaultSites.builtinMixedVodSources + DefaultSites.builtinAdultVodSources)
-                .prefix(14))
-        case "child":
-            pool = Array(DefaultSites.builtinVodSources(forMode: "child").prefix(8))
-        default:
-            // 星幕：剧集源 + 共通源（含索倪 4 万+ 电影）——搜电影也要能穿透
-            pool = Array((DefaultSites.tvDramaSources
-                          + DefaultSites.builtinVodSources(forMode: "normal")).prefix(12))
-        }
         let q = raw.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { tvResults = []; return }
         tvSearchTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled, q == self.query else { return }
-            let hits: [FeedItem] = await withTaskGroup(of: [FeedItem]?.self) { group in
-                for site in pool {
-                    group.addTask {
-                        let c = TVBoxSiteClient(site: site)
-                        let r = await c.search(q).filter {
-                            NavPolicy.allowsItem(title: $0.title,
-                                                 sourceCategory: $0.aggregateCategoryName,
-                                                 mode: mode)
-                        }
-                        return r.isEmpty ? nil : r
-                    }
+            // 2026-10-01 用户钦定「全部带搜索都搜全部源内容」：不再 prefix(14) 截流，
+            // 全量内置源分批并发（健康源优先、先到先上屏）。
+            self.tvResults = []
+            let hits = await GlobalSiteSearch.search(q, mode: mode, onBatch: { all in
+                Task { @MainActor in
+                    guard q == self.query else { return }
+                    self.tvResults = Array(all.prefix(36))
                 }
-                // 多源合并去重（先到先得，凑够 36 条即取消其余源）
-                var acc: [FeedItem] = []
-                var seen = Set<String>()
-                for await r in group {
-                    guard let r else { continue }
-                    for it in r where acc.count < 36 {
-                        let k = it.title + "|" + (it.year ?? "")
-                        if seen.insert(k).inserted { acc.append(it) }
-                    }
-                    if acc.count >= 36 { group.cancelAll(); break }
-                }
-                return acc
-            }
+            })
             await MainActor.run {
                 guard q == self.query else { return }   // 用户已继续输入：过期结果丢弃
                 self.tvResults = Array(hits.prefix(36))

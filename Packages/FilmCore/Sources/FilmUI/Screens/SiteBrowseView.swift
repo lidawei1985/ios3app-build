@@ -160,7 +160,7 @@ public struct SiteBrowseView: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.footnote).foregroundStyle(theme.textSecondary)
-            TextField("在「\(site.name)」里搜片名", text: $searchText)
+            TextField("搜全部源", text: $searchText)
                 .font(.subheadline)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -190,14 +190,12 @@ public struct SiteBrowseView: View {
     private func runSearch() async {
         let kw = searchText.trimmingCharacters(in: .whitespaces)
         guard !kw.isEmpty else { return }
-        if site.type == 3 {
-            searchResults = []
-            loadError = nil
-            return
-        }
+        // 2026-10-01 用户钦定「全部带搜索都搜全部源内容」：源内搜索 → **全局跨源搜索**
+        // （健康源优先、全量内置源分批并发；Spider 引擎源引擎内已跳过，无需按本站类型分支）。
         loading = true
         loadError = nil
-        let r = await client.search(kw)
+        let mode = TVBoxConfigStore.currentProductMode()
+        let r = await GlobalSiteSearch.search(kw, mode: mode)
         searchResults = scopedItems(r)
         loading = false
         enrichResults(r)
@@ -335,8 +333,10 @@ public struct SiteBrowseView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
-        // 2026-09-30 全 App 弹层统一毛玻璃（用户：「全局都是毛玻璃为什么要用黑框」）
-        .glassSheet()
+        // 2026-09-30 全 App 弹层统一毛玻璃（用户：「全局都是毛玻璃为什么要用黑框」）；
+        // 2026-10-01 用户钦定「切换源的面板跟随海报变色」：.clear 档不挂材质 ——
+        // 材质会把底下海报取色底抽干成死灰，摘掉后浏览页的颜色直接透上来。
+        .glassSheet(tint: 0.07, weight: .clear)
     }
 
     /// 内置源双排网格（用户钦定 2026-09-28：一行一个太散，50 条要点半天）。
@@ -361,7 +361,8 @@ public struct SiteBrowseView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .filmGlass(cornerRadius: 12)
+        // 2026-10-01 用户钦定：格子也去材质（.clear）——跟面板一起透出海报色，不再是灰方块
+        .filmGlass(cornerRadius: 12, tint: 0.06, strokeOpacity: 0.10, weight: .clear)
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(selected ? theme.accent.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1)

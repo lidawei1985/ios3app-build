@@ -294,18 +294,18 @@ final class FilmCoreTests: XCTestCase {
         XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "制服诱惑", mode: "adult"), "其他")
         XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "写真热舞", mode: "adult"), "写真热舞")
         XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "港台三级", mode: "adult"), "三级")
-        // 同一批题材类目在星幕/心屋必须被挡掉（红线）
-        XCTAssertNil(NavPolicy.navTitle(forSourceCategory: "制服诱惑", mode: "normal"))
-        XCTAssertNil(NavPolicy.navTitle(forSourceCategory: "丝袜美腿", mode: "normal"))
-        XCTAssertNil(NavPolicy.navTitle(forSourceCategory: "探花系列", mode: "normal"))
-        XCTAssertFalse(NavPolicy.allowsItem(title: "制服诱惑精选", sourceCategory: "剧情", mode: "normal"))
+        // 同一批题材类目：2026-09-30/10-01 用户钦定放开 —— 星幕可以有成人（新立分类），仅心屋拦（儿童端红线）
+        XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "制服诱惑", mode: "normal"), "制服诱惑")
+        XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "丝袜美腿", mode: "normal"), "丝袜美腿")
+        XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "探花系列", mode: "normal"), "探花系列")
+        XCTAssertTrue(NavPolicy.allowsItem(title: "制服诱惑精选", sourceCategory: "剧情", mode: "normal"))
         // 心屋：只留儿童向；成人已拦；恐怖惊悚等儿童不宜也拦
         XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "儿童儿歌", mode: "child"), "儿童")
         XCTAssertEqual(NavPolicy.navTitle(forSourceCategory: "动画片", mode: "child"), "动画片")
         XCTAssertNil(NavPolicy.navTitle(forSourceCategory: "恐怖片", mode: "child"))
         XCTAssertNil(NavPolicy.navTitle(forSourceCategory: "港台三级", mode: "child"))
-        // 条目级兜底（源分类缺失时靠片名/关键词）
-        XCTAssertFalse(NavPolicy.allowsItem(title: "写真热舞精选", sourceCategory: "剧情", mode: "normal"))
+        // 条目级兜底（源分类缺失时靠片名/关键词；星幕 2026-09-30 起不再按片名挡成人词）
+        XCTAssertTrue(NavPolicy.allowsItem(title: "写真热舞精选", sourceCategory: "剧情", mode: "normal"))
         XCTAssertFalse(NavPolicy.allowsItem(title: "小猪佩奇", sourceCategory: "儿童儿歌", mode: "adult"))
         XCTAssertTrue(NavPolicy.allowsItem(title: "小猪佩奇", sourceCategory: "儿童儿歌", mode: "child"))
     }

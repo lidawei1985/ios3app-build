@@ -346,7 +346,17 @@ public struct TVSeriesView: View {
     private func commitSearch() {
         let q = searchText.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
+        // 本地先出（无网络，瞬时）
         searchResults = FeedAdapter.search(pool, query: q)
+        // 2026-10-01 用户钦定「全部带搜索都搜全部源内容」：后台跨全源补充（先本地、网络到货合并）。
+        let mode = TVBoxConfigStore.currentProductMode()
+        Task { @MainActor in
+            let more = await GlobalSiteSearch.search(q, mode: mode)
+            guard searchText.trimmingCharacters(in: .whitespaces) == q else { return }
+            var known = Set((searchResults ?? []).map(\.title))
+            searchResults = (searchResults ?? [])
+                + more.filter { known.insert($0.title).inserted }
+        }
     }
 }
 
@@ -618,10 +628,16 @@ private struct PublicTVSeriesView: View {
         let q = searchText.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
         searchTask = Task {
-            let found = filtered(await client.search(q))
+            // 2026-10-01 用户钦定「全部带搜索都搜全部源内容」：本片源 → 全局跨源。
+            // 本站结果仍按剧集模块词表过滤；全局补充只过 NavPolicy 端闸门（引擎内已做）。
+            let mine = filtered(await client.search(q))
+            let mode = TVBoxConfigStore.currentProductMode()
+            let all = await GlobalSiteSearch.search(q, mode: mode)
+            var known = Set(mine.map(\.title))
+            let merged = mine + all.filter { known.insert($0.title).inserted }
             await MainActor.run {
                 guard !Task.isCancelled else { return }
-                searchResults = found
+                searchResults = merged
             }
         }
     }
