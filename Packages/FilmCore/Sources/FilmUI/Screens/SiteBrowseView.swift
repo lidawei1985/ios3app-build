@@ -333,10 +333,18 @@ public struct SiteBrowseView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
-        // 2026-09-30 全 App 弹层统一毛玻璃（用户：「全局都是毛玻璃为什么要用黑框」）；
-        // 2026-10-01 用户钦定「切换源的面板跟随海报变色」：.clear 档不挂材质 ——
-        // 材质会把底下海报取色底抽干成死灰，摘掉后浏览页的颜色直接透上来。
-        .glassSheet(tint: 0.07, weight: .clear)
+        // 2026-09-30 全 App 弹层统一毛玻璃（用户：「全局都是毛玻璃为什么要用黑框」）。
+        // 2026-10-01 二修（用户真机截图「变成纯透明的了」）：.clear 档只提亮不模糊，
+        // 底下浏览页的海报墙**直接穿透**，两层内容叠成一锅粥。
+        // 正解＝presentationBackground 直接垫「海报取色渐变」（TintBackgroundView 与浏览页
+        // 同一色源 HeroTintStore → 面板天然跟海报变色），且它自带不透明底 → 穿透被盖住。
+        .presentationBackground {
+            ZStack {
+                TintBackgroundView()
+                Color.white.opacity(0.05)   // 微提亮助读
+            }
+            .ignoresSafeArea()
+        }
     }
 
     /// 内置源双排网格（用户钦定 2026-09-28：一行一个太散，50 条要点半天）。
