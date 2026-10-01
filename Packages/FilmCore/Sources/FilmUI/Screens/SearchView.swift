@@ -18,6 +18,12 @@ public struct SearchView: View {
     @State private var showSuggestions = true
     @State private var searchTask: Task<Void, Never>?
     @State private var tvSearchTask: Task<Void, Never>?
+    /// 热搜榜缓存（10-01 卡顿根修）：`hotWords` 原是**计算属性**——每次 body 求值都对 13 万条
+    /// 做一次全量 `sorted`（比较器里还连调 votes/effectiveYear/rating），而 body 里它被读了
+    /// **两次**（`!hotWords.isEmpty` + `enumerated()`）→ 每进一次搜索页、每敲一个字都跑两遍
+    /// 全量排序＝几秒级主线程阻塞（用户报「搜索栏点了半天没反应」的直接根因）。
+    /// 改为：进页面后台算一次存这里，body 只读缓存。
+    @State private var hotWordsCache: [String] = []
     @AppStorage("film.recent.searches") private var recentRaw: String = ""
 
     public init() {}
@@ -55,7 +61,7 @@ public struct SearchView: View {
         .background(TintBackgroundView())
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
-        .task { loadRecent() }
+        .task { loadRecent(); await loadHotWords() }
         .onChange(of: query) { _ in
             showSuggestions = true
             debounceSearch()
@@ -177,25 +183,35 @@ public struct SearchView: View {
     /// 根因＝**写死的静态片名表**（2023 年的片子，永远不会变）。
     /// 正解＝改成本机片库的**真实数据**：按真实热度（评分人数）取当红片名，热度齐平时按新片年份、
     /// 再按评分；片库一变热搜当轮就变。片库还没加载出来时**不显示**这一块（宁缺毋滥，不再糊弄老片名）。
-    private var hotWords: [String] {
-        let items = store.catalog.items
-        guard !items.isEmpty else { return [] }
-        var seen = Set<String>()
-        var out: [String] = []
-        for it in items.sorted(by: { a, b in
-            HomePolicy.votes(a) != HomePolicy.votes(b)
-                ? HomePolicy.votes(a) > HomePolicy.votes(b)
-                : (HomePolicy.effectiveYear(a) != HomePolicy.effectiveYear(b)
-                   ? HomePolicy.effectiveYear(a) > HomePolicy.effectiveYear(b)
-                   : HomePolicy.rating(a) > HomePolicy.rating(b))
-        }) {
-            let t = it.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty, !seen.contains(t) else { continue }
-            seen.insert(t)
-            out.append(t)
-            if out.count >= 10 { break }
-        }
-        return out
+    /// 只被 body 读取的**缓存**（不再现场全量排序，见 `hotWordsCache` 声明处注释）。
+    private var hotWords: [String] { hotWordsCache }
+
+    /// 后台算一次热搜榜（36包卡顿根修）。全量排序 13 万条只在这里发生，且**不在主线程**。
+    /// 用 `.utility` 而不是 `.userInitiated`：这是锦上添花的榜单，绝不能跟首屏/交互抢核。
+    private func loadHotWords() async {
+        guard hotWordsCache.isEmpty else { return }
+        let snapshot = store.catalog.items
+        guard !snapshot.isEmpty else { return }
+        // 只把「纯数据」带进后台线程（不捕获 self，避免跨线程碰 View 状态）
+        let words = await Task.detached(priority: .utility) { () -> [String] in
+            var seen = Set<String>()
+            var out: [String] = []
+            for it in snapshot.sorted(by: { a, b in
+                HomePolicy.votes(a) != HomePolicy.votes(b)
+                    ? HomePolicy.votes(a) > HomePolicy.votes(b)
+                    : (HomePolicy.effectiveYear(a) != HomePolicy.effectiveYear(b)
+                       ? HomePolicy.effectiveYear(a) > HomePolicy.effectiveYear(b)
+                       : HomePolicy.rating(a) > HomePolicy.rating(b))
+            }) {
+                let t = it.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty, !seen.contains(t) else { continue }
+                seen.insert(t)
+                out.append(t)
+                if out.count >= 10 { break }
+            }
+            return out
+        }.value
+        hotWordsCache = words
     }
 
     private var hotSection: some View {

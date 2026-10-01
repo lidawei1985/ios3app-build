@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO      // 10-01：CGImageSource 降采样（ImageIO 不由 SwiftUI/UIKit 透传，必须显式导入）
 
 /// 海报图片加载器：内存缓存（NSCache）→ 磁盘缓存 → 网络下载（一次重试）→ 占位图。
 /// 铁律（§十）：失败 = 占位图，绝不因图片失败让内容消失。
@@ -15,7 +16,11 @@ public final class PosterLoader {
     private let bundled: [String: String] = PosterLoader.loadBundledManifest()
 
     init() {
-        memory.countLimit = 600
+        // 10-01 卡顿根修：原来只限「张数 600」——600 张**原尺寸**海报（常见 800×1200，解码后
+        // 每张约 3.8MB）常驻内存 ≈ 2GB，内存压力下系统反复回收/重解码，滑动与点击都被拖住。
+        // 改成「张数 + 总字节」双重上限，并按**显示所需尺寸**降采样入库（见 `thumb`）。
+        memory.countLimit = 400
+        memory.totalCostLimit = 96 << 20          // 96MB：够铺满十几屏，超了自动淘汰最久未用
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("posters", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -94,11 +99,11 @@ public final class PosterLoader {
         if let hit = memory.object(forKey: key as NSString) { return hit }
         // 35包：包内 hero 清单命中即秒出（先于磁盘/网络）
         if let b = bundledImage(key) {
-            memory.setObject(b, forKey: key as NSString)
+            remember(b, key)
             return b
         }
         if let disk = loadDisk(key) {
-            memory.setObject(disk, forKey: key as NSString)
+            remember(disk, key)
             return disk
         }
         // 去重并发请求
@@ -116,7 +121,7 @@ public final class PosterLoader {
                 img = await self.download(urlString)
             }
             if let img {
-                self.memory.setObject(img, forKey: key as NSString)
+                self.remember(img, key)
                 self.saveDisk(key, img)
             }
             return img
@@ -131,11 +136,42 @@ public final class PosterLoader {
         for _ in 0..<2 {
             if let (data, resp) = try? await session.data(from: url),
                (resp as? HTTPURLResponse)?.statusCode == 200,
-               let img = UIImage(data: data) {
+               let img = PosterLoader.thumb(from: data) {
                 return img
             }
         }
         return nil
+    }
+
+    /// 入库（带字节成本，交给 NSCache 按内存量淘汰）。
+    private func remember(_ img: UIImage, _ key: String) {
+        let cost = Int(img.size.width * img.size.height * 4)
+        memory.setObject(img, forKey: key as NSString, cost: max(1, cost))
+    }
+
+    /// 降采样成显示所需尺寸（10-01 卡顿根修）。
+    ///
+    /// 原实现直接 `UIImage(data:)`：拿到的**原图**往往是 800~1200px 宽，而海报格实际只画
+    /// 120×180pt（2x 也才 240×360）。多出来的像素有两个坏处：
+    ///  ① 内存成倍膨胀（见 `init` 的 `totalCostLimit` 注释）；
+    ///  ② `UIImage` 是**懒解码**——真正解码发生在 SwiftUI 渲染它的那一刻，也就是**主线程**，
+    ///     一张大图解几十毫秒，海报墙一屏几十张就是几百毫秒的卡顿（用户报「海报点完半天才出现」）。
+    /// 这里用 ImageIO 直接出缩略图并 `ShouldCacheImmediately`，解码在**后台线程**一次做完，
+    /// 落到 SwiftUI 手里时已是「可直接画的小图」。
+    static func thumb(from data: Data, maxSide: CGFloat = 600) -> UIImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return UIImage(data: data)
+        }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSide,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        return UIImage(cgImage: cg)
     }
 
     /// 首屏预热（34包）：catalog 就绪后后台把主视觉/首屏货架海报先拉进缓存，
@@ -156,7 +192,10 @@ public final class PosterLoader {
         return diskDir.appendingPathComponent(PosterLoader.stableDigest(key))
     }
     private func loadDisk(_ key: String) -> UIImage? {
-        UIImage(contentsOfFile: diskURL(key).path)
+        // 同 `thumb`：磁盘里的图也是原尺寸，这里一并降采样 + 后台解码，
+        // 不让「解大图」这件事留到主线程渲染时才发生。
+        guard let data = try? Data(contentsOf: diskURL(key)) else { return nil }
+        return PosterLoader.thumb(from: data)
     }
     private func saveDisk(_ key: String, _ img: UIImage) {
         guard let data = img.jpegData(compressionQuality: 0.82) else { return }

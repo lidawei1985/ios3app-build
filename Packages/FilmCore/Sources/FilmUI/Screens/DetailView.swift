@@ -29,6 +29,15 @@ public struct DetailView: View {
     /// 详情页取色（2026-09-23 用户钦定原型 `home_v2.html` 详情浮层一比一搬真机）：
     /// 头图放大铺满 + 整页取色底色 + 浮动海报；取色与首页同源（`HeroTintStore` 缓存，不重复下载）。
     @State private var palette: HeroPalette = .fallback
+    /// 相关推荐缓存（10-01 卡顿根修）：`related` 原是**计算属性**——每次 body 求值都对 13 万条
+    /// 做 2~3 轮全量 `filter`（其中 `byTags` 那轮每条目还要 `Set(...)` + `pool.contains`），
+    /// 而 body 里它被读了两次（`!related.isEmpty` + `ForEach(related)`）→ 详情页**每帧重绘**
+    /// 都跑好几遍 13 万条扫描＝秒级主线程阻塞。
+    /// 这就是用户报「详情页关闭按钮点了半天没反应」的直接根因：点关闭时 SwiftUI 还要
+    /// 先把当前帧的 body 算完（含这堆扫描）才处理点击。
+    /// 改为：进页面后台算一次存这里，body 只读缓存。
+    @State private var relatedCache: [FeedItem] = []
+    @State private var relatedKey: String = ""
 
     public init(item: FeedItem) {
         self.incoming = item
@@ -134,6 +143,7 @@ public struct DetailView: View {
                 .environment(\.colorScheme, .dark)   // 播放=视频层，恒深色
         }
         .task { await store.loadPersonAvatarsIfNeeded() }   // 演员小头像（2026-09-25）
+        .task { await loadRelated() }
         .task { await aggregateSources() }
         .task {
             // 详情页取色：与首页同一张海报只算一次（HeroTintStore 缓存）
@@ -269,7 +279,9 @@ public struct DetailView: View {
         case "adult":
             pool = DefaultSites.builtinMixedVodSources + Array(DefaultSites.builtinAdultVodSources.prefix(6))
         case "child":
-            pool = DefaultSites.builtinMixedVodSources
+            // 2026-10-01 用户钦定「心屋不内置任何带成人内容的源」：聚合池不再只用索倪
+            // （61 分类里 55+ 类是成人），改走纯影视池 + 剧集源（与源池同源口径）。
+            pool = Array(DefaultSites.builtinVodSources.prefix(4)) + DefaultSites.tvDramaSources
         default:
             pool = DefaultSites.tvDramaSources
         }
@@ -759,19 +771,31 @@ public struct DetailView: View {
     }
 
     /// 相关推荐：同聚合分类优先，其次分类标签交集；排除自身，最多 12 部。
-    private var related: [FeedItem] {
-        let others = store.catalog.items.filter { $0.dedupId != item.dedupId && $0.bestPosterURL != nil }
-        let sameAggregate = others.filter { $0.aggregateCategoryId != nil && $0.aggregateCategoryId == item.aggregateCategoryId }
-        var pool = Array(sameAggregate.prefix(12))
-        if pool.count < 12 {
-            let myTags = Set(item.categories?.tags ?? [])
-            let byTags = others.filter { other in
-                !pool.contains(where: { $0.dedupId == other.dedupId }) &&
-                !Set(other.categories?.tags ?? []).isDisjoint(with: myTags)
+    /// 只被 body 读取的**缓存**（不再现场全量扫描，见 `relatedCache` 声明处注释）。
+    private var related: [FeedItem] { relatedCache }
+
+    private func loadRelated() async {
+        let key = "\(item.dedupId)|\(store.catalog.items.count)"
+        guard relatedKey != key else { return }        // 同一部片 + 同一份目录 → 不重算
+        relatedKey = key
+        let snapshot = store.catalog.items
+        let myDedup = item.dedupId
+        let myAgg = item.aggregateCategoryId
+        let myTags = Set(item.categories?.tags ?? [])
+        let found = await Task.detached(priority: .utility) { () -> [FeedItem] in
+            let others = snapshot.filter { $0.dedupId != myDedup && $0.bestPosterURL != nil }
+            let sameAggregate = others.filter { $0.aggregateCategoryId != nil && $0.aggregateCategoryId == myAgg }
+            var pool = Array(sameAggregate.prefix(12))
+            if pool.count < 12 {
+                let byTags = others.filter { other in
+                    !pool.contains(where: { $0.dedupId == other.dedupId }) &&
+                    !Set(other.categories?.tags ?? []).isDisjoint(with: myTags)
+                }
+                pool += byTags.prefix(12 - pool.count).map { $0 }
             }
-            pool += byTags.prefix(12 - pool.count).map { $0 }
-        }
-        return pool
+            return pool
+        }.value
+        relatedCache = found
     }
 
     private func tag(_ text: String) -> some View {

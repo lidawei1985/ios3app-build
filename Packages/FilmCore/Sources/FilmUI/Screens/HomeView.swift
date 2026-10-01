@@ -1,6 +1,21 @@
 import SwiftUI
 import FilmCore
 
+/// 首页是否在**当前显示的 tab** 上（10-01 卡顿根修）。
+///
+/// 主视觉轮播的 5 秒定时器一旦开着，即使人已经切到「分类/搜索/我的」，
+/// 首页这棵视图树仍活着：每 5 秒换一帧 → 触发一次取色广播 + 0.9 秒的整页渐变动画，
+/// 动画期间 SwiftUI 每帧都要重算整页（含海报墙）→ 用户在别的页面点东西时被这段动画拖住。
+/// 由 `MainTabView` 按当前 tab 写入，轮播据此停走。
+private struct HomeTabActiveKey: EnvironmentKey { static let defaultValue: Bool = true }
+
+extension EnvironmentValues {
+    var homeTabActive: Bool {
+        get { self[HomeTabActiveKey.self] }
+        set { self[HomeTabActiveKey.self] = newValue }
+    }
+}
+
 /// App 主框架：首页 / 分类 / 搜索 / 直播（可选）/ 我的。
 /// 触控适配：大 Tab 图标 + 安全区域；直播 Tab 按产品档案显隐（心屋无直播）。
 public struct MainTabView: View {
@@ -24,6 +39,8 @@ public struct MainTabView: View {
             }
             .tabItem { Label("首页", systemImage: "house.fill") }
             .tag(0)
+            // 轮播只在首页可见时走（见 `homeTabActive` 注释）：切走即停，不再后台空转重绘
+            .environment(\.homeTabActive, selection == 0)
 
             NavigationStack {
                 CategoryBrowseView()
@@ -250,8 +267,16 @@ public struct HomeView: View {
         }
         .refreshable { await store.syncAll(force: true) }   // 用户下拉=明确要最新，强制全量
         // 货架缓存重建：catalog 赋值（boot/sync/快照兜底，低频）才触发；主线程零全量计算（34包）
-        .onReceive(store.$catalog) { _ in rebuildShelves() }
-        .onAppear { if shelvesCache.hero.isEmpty, !store.catalog.items.isEmpty { rebuildShelves() } }
+        .onReceive(store.$catalog) { _ in
+            rebuildNavGroups()
+            Task { await rebuildShelves() }
+        }
+        .onAppear {
+            rebuildNavGroups()
+            if shelvesCache.hero.isEmpty, !store.catalog.items.isEmpty {
+                Task { await rebuildShelves() }
+            }
+        }
     }
 
     // MARK: - 区块
@@ -294,8 +319,14 @@ public struct HomeView: View {
         }
     }
 
+    /// 导航大类缓存（10-01 卡顿根修）：原为计算属性，body 每次求值都要
+    /// `NavCatalog.groups(...)` + filter + sort，并顺带读一次产品档位；改缓存后只在目录变化时算。
+    @State private var navGroupsCache: [NavCatalog.Group] = []
+
     /// 导航用大类：归并后按条目数降序（热门在前），全量不截断。
-    private var navGroups: [NavCatalog.Group] {
+    private var navGroups: [NavCatalog.Group] { navGroupsCache }
+
+    private func rebuildNavGroups() {
         let g = NavCatalog.groups(categories: store.catalog.categories,
                                   mode: TVBoxConfigStore.currentProductMode())
             .filter { $0.count > 0 }
@@ -303,7 +334,7 @@ public struct HomeView: View {
         // （TVSeriesView，自家片库优先），归并大类里若再列一次就是同屏两个同名入口 → normal 端剔除。
         // 其他端（心屋/夜航）没有独立通道，保持原样。
         let deduped = profile.mode == "normal" ? g.filter { $0.title != "电视剧" } : g
-        return deduped.sorted { $0.count > $1.count }
+        navGroupsCache = deduped.sorted { $0.count > $1.count }
     }
 
     @ViewBuilder
@@ -349,19 +380,33 @@ public struct HomeView: View {
     /// 货架缓存（34包）：原 shelves 是计算属性——每次 body 求值都对 13 万条全量 filter+sort，
     /// 且 syncing 进度每次刷新都重算 → 启动后持续卡。改为 catalog 变化时后台算一次缓存。
     @State private var shelvesCache = HomeShelves()
+    /// 货架计算任务（10-01 卡顿根修）。
+    ///
+    /// 旧实现的**三个叠加错误**（用户报「主页出现慢 + 点东西半天没反应」的头号根因）：
+    ///  ① `store.$catalog` 在启动期要变 4 次（主件上屏 / 续件合并 / 磁盘快照升级 / 全量同步完成），
+    ///     每次都**新起一个**计算任务，旧任务**不取消** → 4 个数秒级的 13 万条扫描**并发**跑；
+    ///  ② 优先级用 `.userInitiated`（高）→ 直接跟主线程抢核，主线程被饿死，点击排队几百毫秒到几秒；
+    ///  ③ 无去抖：中间态目录（只有几千条）也算一遍，白烧 CPU。
+    /// 新实现：**取消旧的 + 0.35s 去抖（只认最后一次目录）+ 降到 .utility（不抢交互的核）**。
+    @State private var shelfTask: Task<HomeShelves, Never>?
 
-    private func rebuildShelves() {
+    private func rebuildShelves() async {
         let items = store.catalog.items
         let cats = store.catalog.categories
         let mode = TVBoxConfigStore.currentProductMode()
-        Task.detached(priority: .userInitiated) {
-            let s = Self.computeShelves(items: items, categories: cats, mode: mode)
-            await MainActor.run {
-                shelvesCache = s
-                // 首屏海报预热：主视觉 15 张先进缓存，滑到即显（34包）
-                PosterLoader.shared.prefetch(s.hero.compactMap { $0.bestPosterURL?.absoluteString })
-            }
+        shelfTask?.cancel()
+        let task = Task.detached(priority: .utility) { () -> HomeShelves in
+            // 去抖：启动/同步期目录会连续变好几次，只认最后一次
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return HomeShelves() }
+            return Self.computeShelves(items: items, categories: cats, mode: mode)
         }
+        shelfTask = task
+        let s = await task.value
+        guard !Task.isCancelled, !s.hero.isEmpty || !s.rails.isEmpty else { return }
+        shelvesCache = s
+        // 首屏海报预热：主视觉 15 张先进缓存，滑到即显（34包）
+        PosterLoader.shared.prefetch(s.hero.compactMap { $0.bestPosterURL?.absoluteString })
     }
 
     private static func computeShelves(items allItems: [FeedItem],
@@ -384,6 +429,7 @@ public struct HomeView: View {
         let heroBase = allItems.filter {
             HomePolicy.allowsOnHome($0, mode: mode) && ($0.contentType == "movie" || $0.contentType == "tv")
         }
+        guard !Task.isCancelled else { return out }     // 已被更新的目录取代 → 立即让路
         let heroRecent = heroBase.filter {
             HomePolicy.effectiveYear($0) >= cur - 2 && HomePolicy.votes($0) >= 500
         }
@@ -395,6 +441,9 @@ public struct HomeView: View {
 
         // 主题货架：名字与口径由 HomePolicy 定义；不足最小条数不成排（避免空排）
         for spec in HomePolicy.shelves(forMode: mode) {
+            // 每个货架之间留一个取消检查点：13 万条排序一轮就是几百毫秒，
+            // 目录已被更新的话没必要继续烧 CPU（用户点东西要等这些活让出核）
+            if Task.isCancelled { return out }
             let picked = take(HomePolicy.rank(spec.rule, pool: allItems, mode: mode), HomePolicy.shelfSize)
             if picked.count >= HomePolicy.minShelfItems {
                 out.rails.append((title: spec.title, items: picked))
@@ -615,6 +664,8 @@ struct HeroCarousel: View {
     @State private var index = 0
     @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
+    /// 切到别的 tab 就停轮播（见 `homeTabActive` 声明处注释）。
+    @Environment(\.homeTabActive) private var tabActive
 
     var body: some View {
         TabView(selection: $index) {
@@ -634,7 +685,7 @@ struct HeroCarousel: View {
         .task { await loadPalette() }
         .onChange(of: index) { _, _ in Task { await loadPalette() } }
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
-            guard items.count > 1 else { return }
+            guard tabActive, items.count > 1 else { return }
             withAnimation(.easeInOut(duration: 0.45)) {
                 index = (index + 1) % items.count
             }
