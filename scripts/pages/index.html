@@ -30,12 +30,26 @@
   .alt a{color:#ffd479}
   .danger{background:rgba(224,53,63,.12);border:1px solid #5a1a20;border-radius:10px;padding:10px 12px;
        font-size:12.5px;color:#ffb3b9;margin-bottom:12px;line-height:1.7}
+  .wxgate{position:fixed;inset:0;z-index:99;background:rgba(6,9,14,.96);display:none;
+          padding:calc(env(safe-area-inset-top) + 40px) 22px 22px;text-align:center}
+  .wxgate p{font-size:15px;line-height:1.9;color:#e6edf3}
+  .wxgate .cp{display:block;margin:16px auto 0;padding:12px;border-radius:12px;background:#2b6cd4;
+              color:#fff;font-weight:700;font-size:16px;text-decoration:none;max-width:320px}
   details{background:var(--card);border:1px solid #232e3f;border-radius:12px;padding:12px;margin-top:10px}
   summary{font-size:14px;font-weight:600;cursor:pointer}
   details p{font-size:12.5px;color:var(--tx2);line-height:1.75;margin:8px 0 0}
 </style>
 </head>
 <body>
+<!-- 2026-10-01：微信 / QQ 内置浏览器不认 itms-services 安装链接（点开就是一屏乱码），
+     也不让跳 Safari。这里拦一下，让用户手动点右上角「··· → 在 Safari 中打开」。 -->
+<div class="wxgate" id="wxgate">
+  <p style="font-size:26px;margin:0 0 14px">🧭</p>
+  <p><b>请用 Safari 打开本页</b><br>
+     微信 / QQ 里打不开安装链接（点了会显示乱码）。<br>
+     点右上角 <b>···</b> → 选 <b>在 Safari 中打开</b>。</p>
+  <a class="cp" id="wxcopy" href="javascript:void(0)">复制本页地址（再去 Safari 粘贴）</a>
+</div>
 <div class="wrap">
 
   <h1>星幕 · 心屋</h1>
@@ -60,15 +74,18 @@
         <div class="t">装「Scarlet」签名器<span class="tag">只装这一次</span></div>
         <div class="d">苹果规定：非商店 App 必须由证书签名。签名器就是替你完成这一步的工具，装完它，才能装星幕 / 心屋。</div>
 
-        <a class="btn b" href="itms-services://?action=download-manifest&amp;url=https://resources.usescarlet.com/Plist/ScarletAlpha.plist">一键安装 Scarlet（直达）</a>
-        <div class="note">
-          上面按钮点了会<b>直接弹 iOS 的安装确认框</b>——不打开任何网页、没有广告。<br>
-          如果点了没反应，说明这个安装包临时失效（苹果会随时吊销这类证书），用下面的备用入口：
-        </div>
-        <a class="btn g sm" href="https://usescarlet.com/" target="_blank" rel="noopener">备用：打开 Scarlet 官网安装</a>
+        <!-- 2026-10-01 实修：之前把「一键直达」放主位，主人真机点了显示乱码（微信内置浏览器不认
+             itms-services:// 这种安装链接，直接把链接当文本渲染 → 一屏乱码）。现改为官网入口主位、
+             直装降为备用并标明「必须用 Safari 打开」，另外加微信/QQ 内置浏览器拦截提示（见页尾脚本）。 -->
+        <a class="btn b" href="https://usescarlet.com/" target="_blank" rel="noopener">打开 Scarlet 官网安装</a>
         <div class="note" style="color:#e8cf9a">
-          ⚠️ 备用入口的官网里广告很多：只认 <b>Install → Direct Install</b> 按钮，等 10 秒后点继续安装。<br>
-          页面里出现的其他任何东西（滑块、短信、杀毒软件、游戏广告）都是陷阱，不要碰。
+          ⚠️ 官网里广告很多：只认 <b>Install → Direct Install</b> 按钮，等 10 秒后点继续安装。<br>
+          页面里出现的其他任何东西（滑块验证、发短信、下载杀毒软件、游戏广告）全是陷阱，别碰。
+        </div>
+        <a class="btn g sm" href="itms-services://?action=download-manifest&amp;url=https://resources.usescarlet.com/Plist/ScarletAlpha.plist">备用：一键直装（须用 Safari 打开本页）</a>
+        <div class="note">
+          这个按钮在<b>微信 / QQ 里点会显示乱码</b>（它们不认安装链接）——请用 Safari 打开本页再点。<br>
+          点了会直接弹 iOS 的安装确认框；没反应 = 对方换了防护，改用上面的官网入口。
         </div>
         <div class="note">
           装好后若提示「未受信任的企业级开发者」：设置 → 通用 → VPN与设备管理 → 点对应企业级 App → <b>信任</b>。
@@ -143,6 +160,23 @@
 </div>
 
 <script>
+/* 微信 / QQ 内置浏览器拦截：这类 App 内浏览器不认 itms-services 安装链接 */
+(function () {
+  var ua = navigator.userAgent || "";
+  var inApp = /MicroMessenger/i.test(ua) || /QQ\//i.test(ua) || /QQBrowser/i.test(ua);
+  if (!inApp) return;
+  document.getElementById("wxgate").style.display = "block";
+  var btn = document.getElementById("wxcopy");
+  btn.onclick = function () {
+    var ta = document.createElement("textarea");
+    ta.value = "https://lidawei1985.github.io/ios3app-build/index.html";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+    btn.textContent = "已复制 ✓ 去 Safari 粘贴打开";
+    setTimeout(function () { btn.textContent = "复制本页地址（再去 Safari 粘贴）"; }, 3000);
+  };
+})();
 var REL = "https://github.com/lidawei1985/ios3app-build/releases/download/latest/";
 var SRC = "https://lidawei1985.github.io/ios3app-build/apps.json";
 var cbtn = document.getElementById("copy-src");
