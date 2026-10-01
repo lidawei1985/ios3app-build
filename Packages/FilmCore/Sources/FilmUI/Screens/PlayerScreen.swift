@@ -86,6 +86,11 @@ public struct PlayerScreen: View {
 
     @State private var showControls = true
     @State private var locked = false
+    /// 2026-10-01 主人钦定：手势**第一次用要给提示**（「要不都不知道怎么用是什么」）。
+    /// 只弹一次（AppStorage 记住），点任意处或 9 秒后自动消失。
+    @AppStorage("filmui.gestureHintShown.v1") private var gestureHintShown = false
+    @State private var showGestureHint = false
+    @State private var gestureHintTask: Task<Void, Never>?
     @State private var showLinePanel = false
     @State private var showEpisodePanel = false
     // 51包：原画面比例面板已删（比例改为底栏点一下循环切换 cycleAspect）
@@ -182,6 +187,14 @@ public struct PlayerScreen: View {
             Color.black.ignoresSafeArea()
             PlayerContainerView(model: model, onTap: { loc, tapCount in
                 // v24：这是**唯一**的触摸通道（SwiftUI 手势层已删，见上）。
+                // 2026-10-01 手势提示：提示层允许触摸穿透（allowsHitTesting(false)），
+                // 所以「点任意处关提示」也走这条通道 —— 关闭后本次点击**不再**顺带 toggle 控制层。
+                if showGestureHint {
+                    dismissGestureHint()
+                    showControls = true
+                    scheduleHide()
+                    return
+                }
                 guard !locked else { return }   // 锁定时只认解锁按钮
                 if tapCount == 2 {
                     doubleTapSeek(centerX: loc.x)
@@ -270,12 +283,12 @@ public struct PlayerScreen: View {
             // 锁定/解锁**同一个键原地切换**；锁定态下该键**不受控制层显隐影响**
             // —— 否则锁上以后控制层一隐藏就再也解不开（"锁死了"）。
             if locked {
-                // 锁定态：横屏左中解锁键；竖屏右上解锁键（爱优腾位）。
-                if isLandscape { lockControl } else { lockControl(topRight: true) }
+                // 锁定态：解锁键**原地**（右侧垂直居中）切换，不换位置不乱跳
+                lockControl
             } else if showControls {
-                // 2026-09-30：锁屏键分方向 —— 竖屏在顶栏右上（爱优腾同款），
-                // 横屏保持左侧垂直居中；竖屏不再额外渲染左中锁键（找不到+易误触）。
-                if isLandscape { lockControl }
+                // 2026-10-01 主人「横竖屏锁还不一样 / 应该都放右侧」：
+                // 锁屏键不再按方向分两套（横屏左中、竖屏右上），统一**右侧垂直居中**。
+                lockControl
                 topBar
                 bottomBar
                 // 48包（用户：「暂停快进怎么没了 要隐藏也没说不要暂停快进」）：
@@ -311,6 +324,9 @@ public struct PlayerScreen: View {
             }
 
             if model.failed, !model.isPlaying { failureOverlay }   // 46包硬门禁：画面还在走就不许弹失败
+
+            // 首次使用手势提示（放最上层；触摸穿透到底层 UIKit 识别器，见 overlay 内注释）
+            if showGestureHint { gestureHintOverlay }
             if model.switchingLine {
                 // 2026-09-23（用户：「暂停以后超大个黑框基本满屏了」+「那个框的闪动不正常一闪一闪的」）：
                 // 原写法 = LoadingView 本身撑满全屏 + 再叠一层满屏黑 0.6 →
@@ -351,8 +367,26 @@ public struct PlayerScreen: View {
             model.start(resume: startAtResume)
             if savedRate != 1.0 { model.setRate(savedRate) }
             sliderVolume = Double(PlayerVolumeController.current())
-            setLandscape(true)
+            // 2026-10-01 主人钦定（「锁屏时正常不是应该不在切换横竖屏吗」）：
+            // 进播放**不再无条件强转横屏** —— 以前 onAppear 一律 setLandscape(true)，
+            // requestGeometryUpdate 会连系统方向锁定一起顶掉（用户锁了屏照样被转成横屏）。
+            // 现在：进来保持当前方向；想横屏 = 自己点底栏「全屏」（主动行为，与锁定无关）。
             scheduleHide()
+            // 首次进入播放 → 弹一次手势说明（9 秒自动收，点任意处立刻收）
+            if !gestureHintShown {
+                showGestureHint = true
+                hideTask?.cancel()
+                gestureHintTask?.cancel()
+                gestureHintTask = Task {
+                    try? await Task.sleep(nanoseconds: 9_000_000_000)
+                    if !Task.isCancelled {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            showGestureHint = false
+                            gestureHintShown = true
+                        }
+                    }
+                }
+            }
             activateAudioSessionIfNeeded()
             // v13 音量提示条：KVO 监听系统音量（物理音量键）——MPVolumeView 锚点抑制了系统 HUD
             volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { _, _ in
@@ -454,23 +488,8 @@ public struct PlayerScreen: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
                 Spacer()
-                // 2026-09-30 用户「锁屏呢？横屏正常竖屏不行」：竖屏锁屏 = 爱优腾同款放**右上角**
-                //（横屏保持左侧垂直居中，见 playerBody 分支；竖屏不再渲染左中锁键）。
-                if !isLandscape {
-                    Button {
-                        locked.toggle()
-                        showControls = true
-                        scheduleHide()
-                    } label: {
-                        Image(systemName: locked ? "lock.fill" : "lock.open.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-                            .frame(width: 40, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel(locked ? "解锁" : "锁定")
-                }
+                // 2026-10-01：顶栏的锁屏键**删除** —— 锁键已统一到右侧边缘垂直居中
+                //（横竖屏同一个位置，见 `lockControl`），顶栏再留一个就是「同一功能两处」。
                 // 2026-09-30 用户「你好好看看爱优腾怎么做的」：
                 // 投屏 / 分享 放**右上角**（爱优腾同款），底栏只留与播放直接相关的键。
                 RoutePickerView().frame(width: 30, height: 32)
@@ -1063,27 +1082,19 @@ public struct PlayerScreen: View {
         }
     }
 
-    /// 锁屏键（2026-09-30 用户「还有那个锁屏应该在哪大小」）。
+    /// 锁屏键（2026-09-30 用户「还有那个锁屏应该在哪大小」；2026-10-01 主人「应该都放右侧」）。
     ///
-    /// **位置**：屏幕**左侧边缘、垂直居中** —— 爱优腾同款。理由：横屏时这是左手拇指的
-    /// 自然落点，比顶栏右上角好按得多；而且锁定前后是**同一个键**（用户 2026-09-30 早先
-    /// 也提过「点完锁屏怎么还跑左面去了保持原地」——原地切换才不"跳"）。
+    /// **位置**：屏幕**右侧边缘、垂直居中** —— 横屏竖屏**同一种排法**（不再按方向分两套）。
+    /// 锁定前后是**同一个键原地切换**（用户早先也提过「点完锁屏怎么还跑别处去了」——原地才不"跳"）。
+    /// 左边缘保持干净（那是亮度拖动的落点区，见 handleDragChanged）。
     ///
     /// **大小**：38pt 玻璃圆 + 16pt 图标（约等于底栏图标量级）。再大就抢画面、
-    /// 再小在横屏远看按不准；点击区用 `contentShape` 补到 38×38 实心。
-    @ViewBuilder private var lockControl: some View { lockControl(topRight: false) }
-
-    /// 锁屏键浮层：默认**左侧垂直居中**（横屏爱优腾位）；topRight=true = **右上角**（竖屏爱优腾位）。
-    private func lockControl(topRight: Bool) -> some View {
+    /// 再小横屏远看按不准；点击区用 `contentShape` 补到 38×38 实心。
+    private var lockControl: some View {
         VStack {
-            if topRight {
-                HStack { Spacer(); lockButton.padding(.trailing, 14) }
-                Spacer()
-            } else {
-                Spacer()
-                HStack { lockButton.padding(.leading, 14); Spacer() }
-                Spacer()
-            }
+            Spacer()
+            HStack { Spacer(); lockButton.padding(.trailing, 14) }
+            Spacer()
         }
     }
 
@@ -1101,6 +1112,62 @@ public struct PlayerScreen: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel(locked ? "解锁" : "锁定")
+    }
+
+    /// 首次使用手势提示（2026-10-01 主人钦定「这些手势是不是该有个第一次使用提示」）。
+    ///
+    /// 只弹一次（AppStorage 记账）：点任意处关（走 UIKit 单击通道，见 playerBody 的 onTap），
+    /// 或 9 秒自动收。整层 `allowsHitTesting(false)` —— 触摸**必须**穿透到底层
+    /// `AVPlayerViewController.view` 的 UIKit 识别器（v24：LiveContainer 里 SwiftUI 手势会被吞），
+    /// 由 onTap 统一处理关闭，所以这里绝不能自己吃点击。
+    private var gestureHintOverlay: some View {
+        VStack(spacing: 10) {
+            Text("手势说明")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 7) {
+                gestureHintRow("hand.tap.fill", "单击屏幕", "显示 / 隐藏控制栏")
+                gestureHintRow("gobackward.10", "双击左半屏", "快退 10 秒")
+                gestureHintRow("goforward.10", "双击右半屏", "快进 10 秒")
+                gestureHintRow("forward.fill", "长按屏幕", "2 倍速（松手恢复）")
+                gestureHintRow("sun.max.fill", "左半屏上下滑", "调亮度")
+                gestureHintRow("speaker.wave.3.fill", "右半屏上下滑", "调音量")
+                gestureHintRow("arrow.left.and.right", "左右滑", "拖动进度")
+                gestureHintRow("arrow.up.arrow.down", "右边缘上下滑", "上一集 / 下一集")
+                gestureHintRow("xmark.circle", "屏幕最上方下滑", "退出播放")
+            }
+            Text("点任意处关闭 · 只显示这一次")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(.top, 2)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .playerGlass(cornerRadius: 16, tint: 0.22)
+        .frame(maxWidth: 330)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func gestureHintRow(_ icon: String, _ title: String, _ desc: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 20)
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+            Spacer(minLength: 8)
+            Text(desc).font(.caption).foregroundStyle(.white.opacity(0.8))
+        }
+    }
+
+    private func dismissGestureHint() {
+        gestureHintTask?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) {
+            showGestureHint = false
+            gestureHintShown = true
+        }
     }
 
     private var failureOverlay: some View {
@@ -1139,34 +1206,24 @@ public struct PlayerScreen: View {
     private func tapScreen() {
         // 长按加速松手后 0.35s 内的"单击"是长按的尾巴，忽略
         if Date().timeIntervalSince(lastBoostEnd) < 0.35 { return }
+
+        // 2026-10-01 主人钦定「爱优腾不都是这样的吗」：**点一下出、再点一下收**，
+        // 无条件 toggle —— 不再有"1.2 秒内连点被吞"这类宽限（上一版把人的连点节奏
+        // 当成误触挡掉了，用户感知就是"点了没反应 / 时灵时不灵"）。
+        // 双击由 Coordinator 在 0.28s 时间窗里自行判定（不是两次单击），
+        // 所以这里纯 toggle 不会和「双击快进」打架。
+        withAnimation(.easeOut(duration: 0.18)) { showControls.toggle() }
+        showRateSelector = false
+        showVolumeSlider = false
         if showControls {
-            // 2026-10-01 真机实测取证（pymobiledevice3 注入触摸 + 时间戳连拍，非猜测）：
-            //   单击**确实能**唤出控制层 —— 点完 +2.5s 的帧里底栏白像素占比 0.0378（可见），
-            //   +4.9s 的帧回到 0.0000（已被 3.4s 自动隐藏收走）。所以「唤不出」不是触摸不通。
-            //   真凶＝「点一下开 / 再点一下关」的 toggle 撞上人连点的节奏：
-            //   实测间隔 1.0s 连点两下 → 结束后控制层消失（奇数下可见、偶数下归零）。
-            //   上一轮 0.35s 宽限太窄，人的连点间隔典型在 0.4~1.5s，正好全落在 toggle 上。
-            // 束法（保留钦定的"再点一下收起"）：宽限放宽到 1.2s，且宽限内**也刷新计时**，
-            //   连点必然保持可见；想真收起 = 单点后 ≥1.2s 再点，或等 3.4s 自动隐藏。
-            if Date().timeIntervalSince(lastShowAt) < 1.2 {
-                lastShowAt = Date()
-                if model.isPlaying { scheduleHide() }
-                return
-            }
-            showControls = false      // 已显示且稳定 ≥1.2s → 视为"再点一下收起"
-            showRateSelector = false
-            showVolumeSlider = false
-            hideTask?.cancel()
-        } else {
-            showControls = true
             lastShowAt = Date()
-            showRateSelector = false
-            showVolumeSlider = false
             if model.isPlaying {
-                scheduleHide()
+                scheduleHide()        // 播放中：3.4s 后自动收起（大牌同款）
             } else {
-                hideTask?.cancel()    // 暂停态保持常显
+                hideTask?.cancel()    // 暂停态保持常显（能看清继续按钮）
             }
+        } else {
+            hideTask?.cancel()
         }
     }
 
@@ -1443,6 +1500,19 @@ public struct PlayerScreen: View {
         if let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).first {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+        }
+        // 2026-10-01：这条旋转请求**可能被拒**（系统方向锁定 / LiveContainer 限制）。
+        // 旧写法乐观置位后不再收口 →「状态=横屏 / 屏幕=竖屏」→ 横屏排版塞进竖屏窗口
+        // （顶栏分享被挤出屏、锁屏键被裁、进度条压成 0 宽只留一颗白球）。
+        // 转不转得动都按**真实窗口宽高**收口一次。
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            let size = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first(where: { $0.isKeyWindow })?.bounds.size
+                ?? UIScreen.main.bounds.size
+            syncLandscape(size)
         }
     }
 
