@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>星幕 · 心屋 安装</title>
+<style>
+  :root{--bg:#0e1116;--card:#1a2230;--line:#2a3140;--tx:#e6edf3;--tx2:#9aa7b8;--acc:#4c8dff;--ok:#3fb950}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:linear-gradient(165deg,#141d2c,#0b0f16 75%);color:var(--tx);
+       font:15px/1.6 -apple-system,"PingFang SC",sans-serif;min-height:100vh;padding:0 0 40px}
+  .hd{text-align:center;padding:26px 16px 6px}
+  .hd h1{margin:0;font-size:20px}
+  .hd p{margin:5px 0 0;font-size:12.5px;color:var(--tx2)}
+  .card{max-width:430px;margin:14px auto;padding:18px;border-radius:16px;
+        background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.12)}
+  .nm{display:flex;align-items:center;gap:12px;font-size:18px;font-weight:700}
+  .ic{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;font-size:22px;flex:none}
+  .ic.x{background:linear-gradient(135deg,#e0353f,#8b1a24)}
+  .ic.h{background:linear-gradient(135deg,#f0a02a,#c96a10)}
+  .meta{font-size:12px;color:var(--tx2);margin:9px 0 13px;line-height:1.8}
+  .meta code{background:rgba(255,255,255,.1);padding:1px 6px;border-radius:4px;font-size:11px}
+  .btn{display:block;width:100%;padding:12px;border-radius:12px;border:0;cursor:pointer;
+       background:var(--acc);color:#fff;font-weight:700;font-size:15px;transition:.15s}
+  .btn:active{transform:scale(.98)}
+  .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.3);color:var(--tx);
+             font-weight:500;margin-top:9px;font-size:13.5px}
+  .how{max-width:430px;margin:20px auto 0;padding:0 16px;font-size:12.5px;color:var(--tx2);line-height:2}
+  .how b{color:var(--tx)}
+  .how details{margin:8px 0;background:rgba(255,255,255,.05);border-radius:10px;padding:10px 13px}
+  .how summary{color:var(--tx);font-weight:600;cursor:pointer}
+  .qrbox{text-align:center;margin:24px 0 0}
+  #qr{display:inline-block;background:#fff;padding:9px;border-radius:12px}
+  .cap{font-size:11.5px;color:var(--tx3);margin-top:8px}
+  .st{font-size:11px;color:var(--ok)}
+</style>
+</head>
+<body>
+<div class="hd">
+  <h1>星幕 · 心屋 安装</h1>
+  <p>公开构建 · 每次代码更新自动发布 · 更新由 LiveContainer 自动完成</p>
+</div>
+
+<div class="card">
+  <div class="nm"><span class="ic x">🎬</span>星幕<span class="st" id="st-x"></span></div>
+  <div class="meta">构建 <code id="stamp-x">加载中…</code> · 海量影视 · 每日更新 · iOS 15+</div>
+  <button class="btn" onclick="inst('XingmuISO.ipa')">一键安装到 LiveContainer</button>
+  <button class="btn ghost" onclick="dl('XingmuISO.ipa')">下载 IPA（AltStore / SideStore / TrollStore 自签）</button>
+</div>
+
+<div class="card">
+  <div class="nm"><span class="ic h">🧸</span>心屋<span class="st" id="st-h"></span></div>
+  <div class="meta">构建 <code id="stamp-h">加载中…</code> · 孩子的专属小影院 · 零成人内容</div>
+  <button class="btn" onclick="inst('XinwuISO.ipa')">一键安装到 LiveContainer</button>
+  <button class="btn ghost" onclick="dl('XinwuISO.ipa')">下载 IPA（AltStore / SideStore / TrollStore 自签）</button>
+</div>
+
+<div class="how">
+  <details open>
+    <summary>怎么装（三步，之后全免电脑）</summary>
+    ① 手机装 <b>LiveContainer</b>（免费 Apple ID 用 SideStore 签一次）<br>
+    ② 回到本页点上面的「一键安装」→ 自动跳进 LC 完成下载导入<br>
+    ③ 装 <b>SideStore</b> 并导入配对文件一次 → 之后签名<b>自动续期</b>，永不插电脑
+  </details>
+  <details>
+    <summary>更新怎么来的</summary>
+    App 启动时自动检查新构建，弹窗点「立即更新」就回到 LiveContainer 装新版，
+    <b>不用卸载、观看数据保留</b>。
+  </details>
+  <details>
+    <summary>签名与 7 天说明</summary>
+    免费 Apple ID 签名 7 天有效是苹果的硬规定。SideStore 会在手机上<b>自动续签</b>
+    （负担只有 LC 一个 App，LC 里装的 App 跟着活）。想 7 天变 1 年需要付费开发者账号。
+  </details>
+</div>
+
+<div class="qrbox">
+  <div id="qr"></div>
+  <div class="cap">用手机相机扫码 → 直接打开本页</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+const REPO = "lidawei1985/ios3app-build";
+const BASE = "https://github.com/" + REPO + "/releases/download/latest/";
+
+function inst(a){
+  const url = BASE + a;
+  const s = "livecontainer://install?url=" + encodeURIComponent(url);
+  window.location.href = s;
+  setTimeout(function(){
+    if (!document.hidden) alert("没有跳转？说明这台手机还没装 LiveContainer。\n请先按下方「怎么装」第①步安装 LC。");
+  }, 1200);
+}
+function dl(a){ window.location.href = BASE + a; }
+
+fetch("update.json", {cache:"no-store"}).then(r=>r.json()).then(j=>{
+  const s = j.stamp || "?";
+  document.getElementById("stamp-x").textContent = s;
+  document.getElementById("stamp-h").textContent = s;
+}).catch(()=>{ ["stamp-x","stamp-h"].forEach(id=>document.getElementById(id).textContent="—"); });
+
+new QRCode(document.getElementById("qr"), {
+  text: window.location.href, width: 150, height: 150,
+  colorDark: "#111", colorLight: "#fff", correctLevel: QRCode.CorrectLevel.M
+});
+</script>
+</body>
+</html>

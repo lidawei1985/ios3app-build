@@ -120,6 +120,15 @@ jobs:
           done
           ls -la artifact
 
+      # 2026-10-01 主人钦定「随时下载使用 · 谁都可以下载有下载地址 能安装」：
+      # 明文 IPA 直接进公开 Release（主人已拍板选 A，知悉 feed 解密密钥随包公开的代价）。
+      # 加密 artifact 保留给内部推机链（chain_build_relay）。
+      - name: Keep plain IPAs for Release
+        run: |
+          mkdir -p release
+          cp artifact/*.ipa release/
+          ls -la release
+
       # 公开仓 artifact 人人可下 → 必须先加密；ART_PASS 只在 Secret 与用户本机凭据册
       - name: Encrypt IPAs (公开仓禁止明文产物)
         env:
@@ -134,3 +143,50 @@ jobs:
             artifact/*.ipa.enc
             artifact/art.key.json
           retention-days: 7
+
+      # 滚动 Release：固定 tag `latest`，覆盖式更新资产。App 内 UpdateChecker 与 Pages 一键安装都走它。
+      - name: Publish rolling Release (公开下载)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          STAMP=$(cat /tmp/build_stamp.txt)
+          MSG=$(git log -1 --pretty=%s)
+          printf '构建指纹: %s\n\n%s\n\n> 安装说明见 https://lidawei1985.github.io/ios3app-build/\n' "$STAMP" "$MSG" > /tmp/notes.md
+          if gh release view latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload latest -R "$GITHUB_REPOSITORY" release/*.ipa --clobber
+            gh release edit latest -R "$GITHUB_REPOSITORY" --title "最新构建" --notes-file /tmp/notes.md
+          else
+            gh release create latest -R "$GITHUB_REPOSITORY" release/*.ipa \
+              --title "最新构建" --notes-file /tmp/notes.md
+          fi
+          echo "release published: stamp=$STAMP"
+
+      # gh-pages：安装页 + update.json（App 自动更新的数据源，静态文件无 API 限流）
+      - name: Deploy Pages (安装页 + update.json)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          STAMP=$(cat /tmp/build_stamp.txt)
+          MSG=$(git log -1 --pretty=%s)
+          mkdir -p gp
+          cp scripts/pages/index.html gp/
+          cat > gp/update.json <<JSON
+          {
+            "stamp": "$STAMP",
+            "note": "$MSG",
+            "builtAt": "$(date -u +%FT%TZ)",
+            "apps": {
+              "xingmu": {"asset": "XingmuISO.ipa"},
+              "xinwu":  {"asset": "XinwuISO.ipa"}
+            }
+          }
+          JSON
+          cd gp
+          git init -q -b gh-pages
+          git config user.name "ci-bot" && git config user.email "ci@noreply"
+          git add -A
+          git commit -q -m "pages: $STAMP"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/$GITHUB_REPOSITORY.git" gh-pages:gh-pages
+          echo "pages deployed: stamp=$STAMP"

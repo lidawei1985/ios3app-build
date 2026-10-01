@@ -1740,12 +1740,25 @@ private struct CacheGroupView: View {
 private struct AboutGroupView: View {
     @EnvironmentObject private var store: CatalogStore
     @Environment(\.filmTheme) private var theme
+    @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         VStack(spacing: 0) {
             aboutRow(k: "产品", v: store.profile.appName)
             hairline
             aboutRow(k: "版本 / 构建", v: AppBuildInfo.displayMark)
+            hairline
+            // 2026-10-01 主人钦定「自动更新」：手动检查入口；有新版时整行变成"点此更新"
+            Button {
+                if case .available = updater.state {
+                    updater.installLatest()
+                } else {
+                    Task { await updater.check(silent: false) }
+                }
+            } label: {
+                aboutRow(k: "检查更新", v: updateStatusText)
+            }
+            .buttonStyle(.plain)
             hairline
             aboutRow(k: "内容定位", v: store.profile.tagline)
             hairline
@@ -1759,6 +1772,21 @@ private struct AboutGroupView: View {
             RoundedRectangle(cornerRadius: 30)
                 .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
         )
+        .alert("发现新版本", isPresented: $updater.showUpdate) {
+            Button("立即更新") { updater.installLatest() }
+            Button("稍后", role: .cancel) {}
+        } message: {
+            Text(updater.releaseNote)
+        }
+    }
+
+    private var updateStatusText: String {
+        switch updater.state {
+        case .checking:                    return "检查中…"
+        case .upToDate:                    return "已是最新 ✓"
+        case .available(let s):            return "新构建 \(s) · 点此更新"
+        case .idle:                        return updater.releaseNote.isEmpty ? "点按检查" : updater.releaseNote
+        }
     }
 
     private var hairline: some View {
