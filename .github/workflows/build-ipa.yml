@@ -10,6 +10,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 2026-10-01：滚动 Release（发布 IPA）与 gh-pages 推送都需要 contents 写权限
+# （GITHUB_TOKEN 默认只读 → 上一次跑在 Publish 步骤 403 Resource not accessible by integration）
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
