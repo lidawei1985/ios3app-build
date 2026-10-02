@@ -121,6 +121,8 @@ public struct PosterRail: View {
                                 .frame(width: 104)
                         }
                         .buttonStyle(.plain)
+                        // 2026-10-03 与 PosterGrid 同根因：横向货架最左侧卡片也可能被屏幕左缘手势区吞 tap。
+                        .contentShape(Rectangle())
                     }
                 }
                 .padding(.horizontal, 16)
@@ -158,8 +160,14 @@ public struct PosterGrid: View {
                     PosterCard(item: item, badge: badges[item.dedupId])
                 }
                 .buttonStyle(.plain)
+                // 2026-10-03 主人：电视剧页第一列卡片经常点不动 / 像没点到。
+                // 真机 taptrace 证实 Button action 根本没触发，推测是 iOS 屏幕左缘系统返回手势区
+                // 把落在第一列的轻触当拖拽吞掉。contentShape 保证整卡都是命中区，配合 leading
+                // 内边距增大让第一列中心离开手势区。
+                .contentShape(Rectangle())
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 24)
+        .padding(.trailing, 16)
     }
 }
