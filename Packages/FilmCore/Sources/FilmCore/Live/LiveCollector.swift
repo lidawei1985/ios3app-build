@@ -24,12 +24,24 @@ public actor LiveCollector {
         public var segMs: Int       // 首分片耗时
         public var at: Date         // 体检时间
         public var score: Int { ok ? max(1, 1000 - min(listMs + segMs, 900)) : 0 }
+        /// 列表 + 首片总耗时（毫秒）——「秒播」排序就认它，越小越快。
+        public var totalMs: Int { listMs + segMs }
     }
 
     private var results: [String: Result] = [:]
     private var loaded = false
     private let store: URL
     private let queue = DispatchQueue(label: "live.collector")
+
+    /// 同步读：某 URL 最近一次的体检结果（**跨会话有效**，落盘恢复后也会填进来）。
+    public nonisolated static func cached(_ url: URL) -> Result? {
+        LiveProbeMirror.shared.get(url.absoluteString)
+    }
+    /// 同步读：某 URL 是否在有效期内体检通过（给同步排序用）。
+    public nonisolated static func cachedAlive(_ url: URL, maxAge: TimeInterval = 6 * 3600) -> Bool {
+        guard let r = LiveProbeMirror.shared.get(url.absoluteString), r.ok else { return false }
+        return Date().timeIntervalSince(r.at) <= maxAge
+    }
 
     private init() {
         let fm = FileManager.default
@@ -47,6 +59,7 @@ public actor LiveCollector {
         guard let d = try? Data(contentsOf: store),
               let o = try? JSONDecoder().decode([String: Result].self, from: d) else { return }
         results = o
+        LiveProbeMirror.shared.set(o)          // 落盘恢复 → 立刻灌进同步镜像（冷启也能按体检成绩选线）
     }
 
     private func save() {
@@ -155,6 +168,41 @@ public actor LiveCollector {
             }
         }
         save()
+        LiveProbeMirror.shared.set(results)    // 体检完 → 刷新同步镜像（下次起播直接按最快活线选）
         return results
+    }
+}
+
+/// 体检结果的**同步只读镜像**（2026-10-03 立 · 为「秒播」服务）。
+///
+/// 为什么不能直接从 `LiveCollector`（actor）读：
+///   `LiveView.rankedLines` 是**同步**函数 —— 起播那一刻就要给出线路顺序，没法 await。
+///   若不镜像：第一次进某台时排序看不到任何体检成绩 → 只能按表内原序 → 第一条常是死线
+///   → 用户看到的就是「一直在起播」。有了镜像：**上次探过的最快活线**下次进页直接排第一 ⇒ 秒播。
+///
+/// 为什么是一个独立的类而不是 actor 里的静态变量：
+///   本仓 `swift-tools-version: 5.9`，`nonisolated(unsafe)` 要 Swift 5.10 才认 —— 不赌编译器版本。
+///   这里只做「整表替换」的粗粒度快照（读到旧或新都行，不会读到半个对象），
+///   加一把 `NSLock` 就够了。排序场景对一致性要求本来就不高。
+public final class LiveProbeMirror: @unchecked Sendable {
+    public static let shared = LiveProbeMirror()
+    private let lock = NSLock()
+    private var map: [String: LiveCollector.Result] = [:]
+    private init() {}
+
+    func get(_ key: String) -> LiveCollector.Result? {
+        lock.lock(); defer { lock.unlock() }
+        return map[key]
+    }
+
+    func set(_ m: [String: LiveCollector.Result]) {
+        lock.lock(); defer { lock.unlock() }
+        map = m
+    }
+
+    /// 同步排序用：该 URL 的实测「列表+首片」耗时（<=0 或 nil = 没测过）。
+    func ms(_ url: URL) -> Int? {
+        guard let r = get(url.absoluteString), r.ok else { return nil }
+        return r.totalMs
     }
 }

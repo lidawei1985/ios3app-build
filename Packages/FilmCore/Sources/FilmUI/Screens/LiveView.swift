@@ -79,6 +79,12 @@ public struct LiveView: View {
     /// （v44.2 实测：自体检回来时读 `stations[myIndex].name`，打到日志里成了「黄花城水长城03」，
     /// 因为那时 stations 已被远端表替换）。异步任务回来必须同时核对「世代 + 表代号 + 下标」。
     @State private var tableGen = 0
+    /// 画面比例（2026-10-03 主人「直播里没有屏幕比例和锁屏等按钮」）。
+    /// 与点播播放器同一个 `AspectMode`（自适应 / 铺满 / 拉伸），点一下换一个、不弹面板。
+    @State private var aspect: AspectMode = .fit
+    /// 锁屏 = 钉住屏幕方向 + 屏蔽「上滑换台 / 点屏换面板」手势（与点播播放器的锁屏键同口径）。
+    /// 顶栏按钮**不锁**（否则锁了没法解锁，就是「进去出不来」）。
+    @State private var locked = false
 
     @AppStorage("settings.startupMode") private var startupMode = "low"
     @AppStorage("live.lastChannelName") private var lastChannelName = ""
@@ -93,7 +99,14 @@ public struct LiveView: View {
         }
     }
     /// 从未出画时给足的宽限（要能容下「建连 + 首片 2MB」）。
-    private let firstFrameGrace: TimeInterval = 15
+    ///
+    /// 2026-10-03 主人「直播必须是秒播不能一直在这加载」→ 从 15s 收到 7s。
+    /// 依据：本表主流是「6 秒一片 / 首片 2MB」的 H.264 HLS，手机上一片 3~6 秒；
+    /// 一条线 7 秒还出不了画基本就是死线，再等只是让用户体验更糟。
+    private let firstFrameGrace: TimeInterval = 7
+    /// **零进展**提前判死：这么多秒内连一个字节都没缓冲到（`loadedTimeRanges` 仍为空）
+    /// = 这条线根本没在回数据（死链 / 被墙 / 重定向失效），不必等满宽限。
+    private let noDataGrace: TimeInterval = 3.5
     /// 出过画之后再卡的容忍时间（AVPlayer 自己会续拉，过早动手只会越弄越糟）。
     private let stallGrace: TimeInterval = 12
 
@@ -107,12 +120,15 @@ public struct LiveView: View {
     public var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            LiveVideoLayer(player: player)
+            LiveVideoLayer(player: player, gravity: aspect.gravity)
                 .ignoresSafeArea()
-                .onTapGesture { toggleList() }
+                // 锁屏后屏蔽「点屏换面板 / 上滑换台」（锁屏的意义就是防误触）；
+                // 顶栏**不锁** —— 否则锁了没入口解锁，又成「进去出不来」。
+                .onTapGesture { if !locked { toggleList() } }
                 .gesture(
                     DragGesture(minimumDistance: 24)
                         .onEnded { v in
+                            guard !locked else { return }
                             let dx = v.translation.width, dy = v.translation.height
                             if abs(dy) > abs(dx) {
                                 step(dy < 0 ? 1 : -1)                 // 上滑=下一台，下滑=上一台
@@ -181,18 +197,43 @@ public struct LiveView: View {
                 .allowsHitTesting(false)
             }
             Spacer(minLength: 4)
-            Button { toggleList() } label: {
-                Image(systemName: "list.bullet").font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(.black.opacity(0.42)))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("频道列表")
+            // 2026-10-03 主人「直播里没有屏幕比例和锁屏等按钮」→ 与点播播放器同口径补齐：
+            // 画面比例（点一下循环 自适应→铺满→拉伸）+ 锁屏（钉方向 + 防误触）。
+            circleButton("aspectratio", label: "画面比例：\(aspect.shortTitle)") { cycleAspect() }
+            circleButton(locked ? "lock.fill" : "lock.open.fill",
+                         label: locked ? "解锁屏幕" : "锁定屏幕") { toggleLock() }
+            circleButton("list.bullet", label: "频道列表") { toggleList() }
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
+    }
+
+    /// 顶栏圆形玻璃按钮（统一 40×40 / 黑半透明底 / 白图标）——顶栏三钮共用一套，避免三处手抄走形。
+    private func circleButton(_ symbol: String, label: String,
+                              action: @escaping () -> Void) -> some View {
+        liveCircleButton(symbol, label: label, action: action)
+    }
+
+    /// 画面比例循环：自适应 → 铺满 → 拉伸 → 自适应（与点播播放器 `cycleAspect` 同口径：
+    /// 点一下换一个模式，不弹面板 —— 用户钦定「正常不就是点一下换一个模式吗」）。
+    private func cycleAspect() {
+        let all = AspectMode.allCases
+        let next = all[(all.firstIndex(of: aspect).map { $0 + 1 } ?? 0) % all.count]
+        aspect = next
+        LiveDiag.write("直播画面比例 → \(next.rawValue)/\(next.shortTitle)")
+    }
+
+    /// 锁屏：钉住屏幕方向（直播以横屏全屏观看为主 → 锁横屏）+ 屏蔽换台手势；解锁交还系统。
+    /// 用的是与点播播放器锁屏键**同一个** `OrientationLock`（AppDelegate 读它，是唯一被保证生效的口子）。
+    private func toggleLock() {
+        locked.toggle()
+        if locked {
+            OrientationLock.shared.set(.landscape)
+            withAnimation(.easeOut(duration: 0.18)) { showList = false }
+        } else {
+            OrientationLock.shared.set(nil)
+        }
+        LiveDiag.write("直播锁屏 \(locked ? "开(锁横屏)" : "关(交还系统)")")
     }
 
     // MARK: - 启动 / 收尾
@@ -267,6 +308,9 @@ public struct LiveView: View {
         statusText = "正在起播…"
         buffering = false
         showList = false
+        // 方向锁必须归位：锁屏键钉了横屏，离开直播页若不还，首页也会被钉在横屏（老病，不许复发）。
+        locked = false
+        OrientationLock.shared.set(nil)
     }
 
     private func exitLive() {
@@ -282,13 +326,24 @@ public struct LiveView: View {
     /// 这是「谁播谁知道」的落地：PC 上体检通过 ≠ 手机上带得动。
     private func rankedLines(_ st: LiveStation) -> [Int] {
         let h = LiveSourceHealth.shared
+        // 「秒播」的第一性原理：**第一条线就该是活线**。
+        // ① 本次会话实测耗时（最新最准）→ ② **跨会话**体检镜像（上次真探到能出流，
+        // 6 小时内有效）→ ③ 端上健康分（播得顺的 +1、判死的 -2）→ ④ 表内原序。
+        // 少了 ②，第一次进某台时排序看不到任何体检成绩，只能按表内原序 → 第一条常是死线
+        // → 用户看到的就是「一直在起播」（2026-10-03 主人反馈的正是这个）。
+        func ms(_ u: URL) -> Int? {
+            if let v = probeMs[u.absoluteString] { return v }
+            if let r = LiveCollector.cached(u), r.ok,
+               Date().timeIntervalSince(r.at) <= 6 * 3600 { return r.totalMs }
+            return nil
+        }
         return Array(st.lines.indices).sorted { a, b in
             let ua = st.lines[a], ub = st.lines[b]
-            let ma = probeMs[ua.absoluteString], mb = probeMs[ub.absoluteString]
+            let ma = ms(ua), mb = ms(ub)
             switch (ma, mb) {
             case let (x?, y?):
                 if x != y { return x < y }
-            case (nil, .some): return false        // 已实测的线优先于没测的
+            case (nil, .some): return false        // 已实测过的线优先于没测过的
             case (.some, nil): return true
             default: break
             }
@@ -351,10 +406,18 @@ public struct LiveView: View {
         let st = stations[index]
         if let u = currentURL { LiveSourceHealth.shared.record(u, ok: false) }
         lineTries += 1
-        let cap = max(st.lines.count * 2, 2)
-        if lineTries < cap {
-            LiveDiag.write("换线(\(reason)) \(st.name) 第 \(lineTries + 1) 次")
-            tune(to: index, pos: linePos + 1)
+        let order = rankedLines(st)
+        // ── 「秒播」关键修复（2026-10-03 主人「不能一直在这加载」）───────────────
+        // 旧写法 `cap = max(st.lines.count * 2, 2)`：线多的台（20 条线 → cap 40）
+        // 每条等宽限一次 ⇒ **十几分钟**都停在「正在起播」；更糟的是 `pos: linePos + 1`
+        // 会被 `min(pos, order.count - 1)` 夹在**最后一条**上 —— 到末尾后剩下的次数
+        // 全在同一条死线上白等，用户看到的就是「十几分钟不播」。
+        // 现在：① 最多试 min(max(3, 线数), 6) 条；② 已到末尾就**立刻**转补源 / 跨台兜底。
+        let cap = min(max(3, order.count), 6)
+        let nextPos = linePos + 1
+        if lineTries < cap, nextPos < order.count {
+            LiveDiag.write("换线(\(reason)) \(st.name) 第 \(lineTries) 次 → \(nextPos + 1)/\(order.count)")
+            tune(to: index, pos: nextPos)
             return
         }
         // ★ 端上自愈补源（v45）：本台表内线路都试完了 → **当场**从候选池给这台找一条能播的补进来。
@@ -536,6 +599,10 @@ public struct LiveView: View {
                 linePlayed = true
                 reconnectTries = 0
                 hopTries = 0
+                // 出画 = 这条线在本机真能播 → 给好源加分（下次排序它就在前面 ⇒ 秒播）。
+                // 2026-10-03 补：旧代码只在判死时 record(ok:false)，好源**从来没被加过分**，
+                // 于是「越播越顺的源」在排序里体现不出来，每次进页还是可能先撞死线。
+                if let u = currentURL { LiveSourceHealth.shared.record(u, ok: true) }
                 LiveDiag.write("出画 \(currentName) 线#\(rawIndex + 1) t=\(String(format: "%.1f", t))s " +
                                "缓冲=\(String(format: "%.1f", item.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? -1))s")
             }
@@ -560,13 +627,16 @@ public struct LiveView: View {
         if !linePlayed {
             // 从未出画：给足宽限再动手（首片 2MB 在手机上要好几秒）。
             let since = Date().timeIntervalSince(tuneAt)
-            if since > firstFrameGrace {
+            let buffered = item.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? -1
+            // 「零进展」提前判死：这么多秒连一个字节都没缓冲到（buffered <= 0）
+            // = 这条线根本没在回数据（死链 / 被墙 / 重定向失效），不必等满宽限 —— 这是「秒播」的另一半。
+            let noData = since > noDataGrace && buffered <= 0
+            if since > firstFrameGrace || noData {
                 if let u = currentURL { LiveSourceHealth.shared.record(u, ok: false) }
-                LiveDiag.write("\(Int(since))s 未出画 \(currentName) 线#\(rawIndex + 1) " +
-                               "itemStatus=\(item.status.rawValue) " +
-                               "loaded=\(String(format: "%.1f", item.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? -1))s")
-                advanceLine(reason: "未出画", hopChannel: true)
-            } else if since > 4 {
+                LiveDiag.write("\(String(format: "%.1f", since))s 未出画 \(currentName) 线#\(rawIndex + 1) " +
+                               "itemStatus=\(item.status.rawValue) buffered=\(String(format: "%.1f", buffered))s")
+                advanceLine(reason: noData ? "无数据" : "未出画", hopChannel: true)
+            } else if since > 2.5 {
                 statusText = "正在起播…  \(currentName)"
             }
             return
@@ -853,16 +923,18 @@ struct LiveStation: Identifiable {
 
 struct LiveVideoLayer: UIViewRepresentable {
     let player: AVPlayer
+    /// 画面比例（2026-10-03 主人「直播里没有屏幕比例按钮」→ 补上，与点播播放器同口径）。
+    var gravity: AVLayerVideoGravity = .resizeAspect
 
     func makeUIView(context: Context) -> PlayerHostView {
         let v = PlayerHostView()
         v.backgroundColor = .black
-        v.attach(player)
+        v.attach(player, gravity: gravity)
         return v
     }
 
     func updateUIView(_ uiView: PlayerHostView, context: Context) {
-        uiView.attach(player)
+        uiView.attach(player, gravity: gravity)
     }
 
     static func dismantleUIView(_ uiView: PlayerHostView, coordinator: ()) {
@@ -873,11 +945,15 @@ struct LiveVideoLayer: UIViewRepresentable {
 final class PlayerHostView: UIView {
     private var layer_: AVPlayerLayer?
 
-    func attach(_ player: AVPlayer) {
-        if let l = layer_, l.player === player { return }
+    func attach(_ player: AVPlayer, gravity: AVLayerVideoGravity = .resizeAspect) {
+        // 同一 player 已挂上：只更新画面比例（**不许重建 layer**，否则切比例会黑一下）。
+        if let l = layer_, l.player === player {
+            if l.videoGravity != gravity { l.videoGravity = gravity }
+            return
+        }
         layer_?.removeFromSuperlayer()
         let l = AVPlayerLayer(player: player)
-        l.videoGravity = .resizeAspect
+        l.videoGravity = gravity
         l.frame = bounds
         // 2026-10-03 修：原写 `layer = l` —— UIView.layer 是**只读**属性（编译不过），
         // 且即便能过也挂不上画面。正解是把自建 AVPlayerLayer 作为子层挂到视图的 backing layer 上。
@@ -977,6 +1053,9 @@ public struct LivePlayerScreen: View {
     @State private var reconnectTries = 0
     @State private var lineTries = 0
     @AppStorage("settings.startupMode") private var startupMode = "low"
+    /// 画面比例 / 锁屏（2026-10-03 主人「直播里没有屏幕比例和锁屏等按钮」→ 试播页同口径补齐）。
+    @State private var aspect: AspectMode = .fit
+    @State private var locked = false
 
     public init(channels: [LiveChannel], showList: Binding<Bool>, onClose: @escaping () -> Void) {
         self.channels = channels
@@ -995,7 +1074,7 @@ public struct LivePlayerScreen: View {
     public var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            LiveVideoLayer(player: player).ignoresSafeArea()
+            LiveVideoLayer(player: player, gravity: aspect.gravity).ignoresSafeArea()
 
             if let status, !everPlayed || buffering {
                 VStack(spacing: 10) {
@@ -1030,6 +1109,9 @@ public struct LivePlayerScreen: View {
                             .font(.caption2).foregroundStyle(.white.opacity(0.7))
                     }
                     Spacer()
+                    liveCircleButton("aspectratio", label: "画面比例：\(aspect.shortTitle)") { cycleAspect() }
+                    liveCircleButton(locked ? "lock.fill" : "lock.open.fill",
+                                     label: locked ? "解锁屏幕" : "锁定屏幕") { toggleLock() }
                 }
                 .padding(.horizontal, 12).padding(.top, 6)
                 Spacer()
@@ -1039,6 +1121,21 @@ public struct LivePlayerScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { boot() }
         .onDisappear { shutdown() }
+    }
+
+    /// 画面比例循环（与 LiveView / 点播播放器同口径：点一下换一个模式，不弹面板）。
+    private func cycleAspect() {
+        let all = AspectMode.allCases
+        let next = all[(all.firstIndex(of: aspect).map { $0 + 1 } ?? 0) % all.count]
+        aspect = next
+        LiveDiag.write("试播画面比例 → \(next.rawValue)/\(next.shortTitle)")
+    }
+
+    /// 锁屏（钉横屏 + 防误触）；离开时必须解锁，否则首页也被钉在横屏。
+    private func toggleLock() {
+        locked.toggle()
+        OrientationLock.shared.set(locked ? .landscape : nil)
+        LiveDiag.write("试播锁屏 \(locked ? "开(锁横屏)" : "关(交还系统)")")
     }
 
     private func boot() {
@@ -1053,6 +1150,8 @@ public struct LivePlayerScreen: View {
     private func shutdown() {
         watchdog?.cancel(); watchdog = nil
         player.pause(); player.replaceCurrentItem(with: nil)
+        locked = false
+        OrientationLock.shared.set(nil)
     }
 
     private func tune(_ i: Int, pos: Int) {
@@ -1092,8 +1191,12 @@ public struct LivePlayerScreen: View {
         guard stations.indices.contains(index) else { return }
         let st = stations[index]
         lineTries += 1
-        if lineTries >= max(st.lines.count * 2, 2) {
-            LiveDiag.write("试播本台放弃 \(st.name) 原因=\(reason)")
+        // 与 LiveView 同口径（2026-10-03）：最多试 min(max(3, 线数), 6) 条；
+        // 已到末尾就**立刻**放弃 —— 旧写法 `max(lines.count * 2, 2)` 会磨到 cap，
+        // 而 `pos: linePos + 1` 被夹在最后一条上 ⇒ 剩下全在同一条死线上白等（每轮 15 秒）。
+        let cap = min(max(3, st.lines.count), 6)
+        if lineTries >= cap || linePos + 1 >= st.lines.count {
+            LiveDiag.write("试播本台放弃 \(st.name) 原因=\(reason) 已试 \(lineTries) 条")
             buffering = false
             status = "本台线路暂时都不可用"
             return
@@ -1128,7 +1231,12 @@ public struct LivePlayerScreen: View {
                 }
                 let stalled = Date().timeIntervalSince(lastProgressAt)
                 if !linePlayed {
-                    if Date().timeIntervalSince(tuneAt) > 15 { nextLine(reason: "未出画") }
+                    // 与 LiveView 同口径（2026-10-03）：7 秒宽限；零进展（一个字节都没缓冲到）3.5 秒提前判死。
+                    let since = Date().timeIntervalSince(tuneAt)
+                    let buffered = player.currentItem?.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? -1
+                    if since > 7 || (since > 3.5 && buffered <= 0) {
+                        nextLine(reason: buffered <= 0 ? "无数据" : "未出画")
+                    }
                     return
                 }
                 if stalled > 12 {
@@ -1146,4 +1254,19 @@ public struct LivePlayerScreen: View {
             }
         }
     }
+}
+
+/// 直播类页面顶栏的圆形玻璃按钮（LiveView 与设置页试播**共用一套**，避免两处手抄走形）。
+@ViewBuilder
+private func liveCircleButton(_ symbol: String, label: String,
+                              action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        Image(systemName: symbol).font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 40, height: 40)
+            .background(Circle().fill(.black.opacity(0.42)))
+            .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(label)
 }
