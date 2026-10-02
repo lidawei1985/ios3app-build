@@ -707,7 +707,11 @@ struct HeroCarousel: View {
         .clipped()
         .animation(.easeInOut(duration: 0.45), value: index)
         .contentShape(Rectangle())
-        .onTapGesture { open(from: "hero#\(index)") }
+        // 2026-10-03（主人）：「主视觉海报不要按钮，要点海报出详情页播放」。
+        // 上一版在海报上挂了「播放 / 详情」两颗按钮（主人不要）；能力不删，**全部并到点击上**：
+        // 点海报 = 弹详情页 + 立刻起播（详情卡托底，退出播放器即回到详情页）。
+        // 痕迹仍记 `hero.play`，端上 `taptrace` 可回读核验入口确实吃到点击。
+        .onTapGesture { open(from: "hero.play", autoplay: true) }
         // 横滑换页（原分页 TabView 的能力，自己实现）：simultaneous 不抢纵向滚动手势。
         .simultaneousGesture(
             DragGesture(minimumDistance: 20).onEnded { v in
@@ -718,13 +722,6 @@ struct HeroCarousel: View {
         )
         .overlay(alignment: .leading) { arrow("chevron.left") { step(-1) } }
         .overlay(alignment: .trailing) { arrow("chevron.right") { step(1) } }
-        // 可视入口（2026-10-02 主人「主视觉……点不进去播放不了」）：
-        // 只有"整帧可点"不够 —— 屏幕上必须有**看得见**的按钮，用户才知道这里能点。
-        .overlay(alignment: .bottomLeading) {
-            actionRow
-                .padding(.horizontal, 22)
-                .padding(.bottom, 58)
-        }
         .task { await loadPalette() }
         .onChange(of: index) { _, _ in Task { await loadPalette() } }
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
@@ -738,41 +735,6 @@ struct HeroCarousel: View {
         .onChange(of: items.count) { _, n in
             if n == 0 { index = 0 } else if index >= n { index = n - 1 }
         }
-    }
-
-    /// 主视觉可视按钮行（2026-10-02 新增）。
-    ///
-    /// 主人原话：「主视觉海报没有详情页、点不进去、播放不了」。
-    /// 病根是命中层（见 `body` 顶部注释，端上落痕实证 hero 0 次），但**同时**也缺一个
-    /// 看得见的入口 —— 整块海报是个不可见热区，用户根本不知道该点哪。
-    /// 两个都补上：整帧仍可点（进详情），这里再给「播放 / 详情」两颗明确按钮。
-    /// 「播放」带 autoplay：落地详情卡的同时直接起播（详情卡托底，退出播放器即回到详情页）。
-    private var actionRow: some View {
-        HStack(spacing: 10) {
-            Button { open(from: "hero.play", autoplay: true) } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "play.fill").font(.system(size: 12, weight: .bold))
-                    Text("播放").font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundStyle(.black)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 9)
-                .background(Capsule().fill(.white))
-            }
-            .buttonStyle(.plain)
-
-            Button { open(from: "hero.detail") } label: {
-                Text("详情")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 9)
-                    .background(Capsule().fill(.white.opacity(0.18)))
-                    .overlay(Capsule().stroke(.white.opacity(0.28), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-        }
-        .shadow(color: .black.opacity(0.35), radius: 8, y: 2)
     }
 
     private func arrow(_ name: String, action: @escaping () -> Void) -> some View {

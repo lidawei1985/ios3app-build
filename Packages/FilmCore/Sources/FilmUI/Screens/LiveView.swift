@@ -1,1834 +1,1080 @@
 import SwiftUI
 import UIKit
-import AVKit
+import AVFoundation
 import FilmCore
 
-/// 直播页（大牌直连式，2026-09-20 重做）：
-/// 进 Tab 直接全屏播放（上次频道/第一台），点屏幕出控制层，频道列表为叠加层；
-/// 频道源 = feed 真源 M3U（live_engine 探活产物）+ 内置保底 + TVBox 自定义订阅，按分组合并去重。
-/// 心屋（无直播）不会进入此页（MainTabView 按 profile.liveM3UPath 显隐）。
+// MARK: - 直播页（v44 · 2026-10-03）
+//
+// 主人原话（逐条对齐，不许走回头路）：
+//   ①「就是一个台放不出来」——起播必须真出画，且**长时间稳定出画**；
+//   ②「有第一帧然后就一直切」——这就是 v43 起播链的**自杀式换线**：4 秒没前进就判死换线，
+//      而本表主流是「6 秒一片、每片 2MB（≈2.7Mbps）」的 H.264 HLS：手机上首片下载动辄 3~6 秒，
+//      4 秒宽限**必然**在首片还没落地时把它判死 → 换线重启 → 又只出一帧 → 无限循环。
+//      → v44 换线判据重写（见 `check()`）：先给足 15 秒出画宽限；出过画再卡就「原地重连 ×2」，
+//        两次不行才换本台下一条线；本台两轮都死就**停下明确告知**，绝不无限跳台刷屏。
+//   ③「返回按钮也没了」「菜单跟以前不一样」——v42 的形态是用户钦定过的：
+//      **左上常驻返回键 + 台名**，点屏一次同时给出「右侧频道列表」（左列分类 + 右列频道）。
+//      v43 把返回键整个丢了（`onExit` 只声明没渲染），面板还从左滑出 → 全部还原。
+//   ④「好源常在、坏了自换、缺了能知道」——端上黑匣子（LiveDiag）+ 本机自体检（LiveCollector）。
+//
+// 起播链（唯一数据源 = 包内已体检快表，进页零网络）：
+//   tune → 彻底断旧流 → 按「本机实测耗时 → 端上健康分 → 表内原序」选线 → 起播 → 看门狗兜底。
+
 public struct LiveView: View {
     let livePath: String
-    @EnvironmentObject private var store: CatalogStore
-    @EnvironmentObject private var tvbox: TVBoxConfigStore
-    @Environment(\.filmTheme) private var theme
+    private let profileMode: String
+    private let feedBases: FeedBases
+    /// 退出直播（回首页）。本页 statusBarHidden + 隐藏导航栏与 tab 栏，
+    /// 不给返回入口就是「进去出不来」——v22 用户报过的原病，不许复发。
+    private let onExit: () -> Void
 
-    @State private var channels: [LiveChannel] = []
-    @State private var loading = true
-    @State private var loadFailed = false
-    @State private var remoteLoaded = true   // 远端 feed 是否拿到真频道（false = 正在看离线保底）
+    @State private var stations: [LiveStation] = []
+    @State private var index = 0
+    /// 当前线路在 `station.lines` 里的**原始下标**（不是排序位次，排位次随时会被实测结果改）。
+    @State private var rawIndex = 0
+    @State private var linePos = 0
+    @State private var statusText: String? = "正在起播…"
+    @State private var buffering = false
     @State private var showList = false
-    @State private var liveClosed = false     // 用户退出直播：停播+可反悔重开
-    @State private var showSourcePicker = false
-    @State private var bannerVisible = false   // 「订阅源失败」横幅：显示 6 秒自动消失（能播就不烦人）
-    @State private var bannerHideTask: Task<Void, Never>?
-    // 首次使用引导（只出一次）：点屏呼列表 / 上下滑换台 / 面板换源，一次教全
-    @AppStorage("live.gestureHintShown") private var gestureHintShown = false
-    @State private var showGestureHint = false
-    @State private var hintHideTask: Task<Void, Never>?
-    // TVBox 原版语义：一个直播源一套频道，随时点选切换（默认订阅/内置实测源/自定义源）
-    @AppStorage("live.activeSource") private var activeSourceKey = "remote"
-    // 三 App 各自独立 UserDefaults，单键即可；上次看的频道跨启动记忆
-    @AppStorage("live.lastChannelName") private var lastChannelKey = ""
+    @State private var pickGroup: String? = nil
+    @State private var player = AVPlayer()
 
-    private var loader: LiveLoader
-    private var profileMode: String   // 产品模式（直播源隔离：夜航仅官方成人直播 2026-09-21）
+    @State private var watchdog: Task<Void, Never>?
+    @State private var probeTask: Task<Void, Never>?
+    @State private var everPlayed = false       // 本页是否出过画（控制「正在起播」提示）
+    @State private var linePlayed = false       // **当前这条线**是否真出过画
+    /// 上一次读到的播放位置；**-1 = 还没建立基准**。
+    /// 为什么必须是 -1 而不是 0：AVPlayer 起播时会先把 `currentTime` 置到**直播边缘**
+    /// （实测 CCTV 系分片序列号能到 43188s），若基准是 0，看门狗第一次扫描就把这个
+    /// 「初始跳变」误判成出画 —— 于是「出一帧就卡死」的线也被当成好线，白白反复重连。
+    @State private var lastTime: Double = -1
+    @State private var progressTicks = 0        // 连续「小步前进」次数（≥2 才算真出画）
+    @State private var bigJumps = 0             // 「大跳」次数（DVR 录播窗口的签名）
+    @State private var lastProgressAt = Date()
+    @State private var tuneAt = Date()
+    @State private var currentURL: URL?
+    @State private var reconnectTries = 0       // 原地重连次数（同 URL 重拉）
+    @State private var lineTries = 0            // 本台累计试线次数（有上限，防无限换）
+    @State private var hopTries = 0             // 跨台兜底次数（仅「从未出画」时用，上限 3）
+    /// 本机自体检实测耗时（url → 列表+首片 ms，越小越快）。空 = 还没测出来。
+    @State private var probeMs: [String: Int] = [:]
+    /// 自体检的「世代号」：每次切台/换线 +1。体检是异步的，回来时**必须**核对世代号，
+    /// 否则它拿着旧 index 反过来把画面抢回上一台（v44.1 实测：一秒内连起 6 次台）。
+    @State private var probeGen = 0
+    /// 本页已经「补过源」的台名（归一）：同一台在一页里只补一轮，防抖。
+    @State private var refilledStations: Set<String> = []
+    /// 正在补源的台名（UI 提示用，避免重复发起）。
+    @State private var refillingStation: String?
+    /// 表代号：远端保鲜**整体换表**时 +1。
+    /// 为什么需要它：`index` 只是数组下标，换表后同一个 int 指向**另一个台**
+    /// （v44.2 实测：自体检回来时读 `stations[myIndex].name`，打到日志里成了「黄花城水长城03」，
+    /// 因为那时 stations 已被远端表替换）。异步任务回来必须同时核对「世代 + 表代号 + 下标」。
+    @State private var tableGen = 0
 
-    public init(profile: ProductProfile, livePath: String) {
+    @AppStorage("settings.startupMode") private var startupMode = "low"
+    @AppStorage("live.lastChannelName") private var lastChannelName = ""
+
+    /// 起播缓冲（设置页可改）。**不抬到 1 秒那种极端值**：对 2MB/6s 的片子，
+    /// 零缓冲 = 刚开始就卡死的直接原因（见 WindowBackButton 文档里 44/61 两轮的教训）。
+    private var bufferSeconds: Double {
+        switch startupMode {
+        case "stable": return 8
+        case "standard": return 4
+        default: return 2
+        }
+    }
+    /// 从未出画时给足的宽限（要能容下「建连 + 首片 2MB」）。
+    private let firstFrameGrace: TimeInterval = 15
+    /// 出过画之后再卡的容忍时间（AVPlayer 自己会续拉，过早动手只会越弄越糟）。
+    private let stallGrace: TimeInterval = 12
+
+    public init(profile: ProductProfile, livePath: String, onExit: @escaping () -> Void = {}) {
         self.livePath = livePath
         profileMode = profile.mode
-        loader = LiveLoader(bases: FeedBases(profile: profile))   // 与本产品 feed 同仓库同基址链
+        feedBases = FeedBases(profile: profile)
+        self.onExit = onExit
     }
 
-    /// 上次看的频道优先（v18：先精确名、再归一名——表重建后台名可能变化，别丢记忆），否则第一台。
-    private var startIndex: Int {
-        if !lastChannelKey.isEmpty {
-            if let idx = channels.firstIndex(where: { $0.name == lastChannelKey }) { return idx }
-            let strip = { (s: String) in String(s.prefix { $0 != "·" }).replacingOccurrences(of: " ", with: "") }
-            let k = strip(lastChannelKey)
-            if let idx = channels.firstIndex(where: { strip($0.name) == k }) { return idx }
+    public var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            LiveVideoLayer(player: player)
+                .ignoresSafeArea()
+                .onTapGesture { toggleList() }
+                .gesture(
+                    DragGesture(minimumDistance: 24)
+                        .onEnded { v in
+                            let dx = v.translation.width, dy = v.translation.height
+                            if abs(dy) > abs(dx) {
+                                step(dy < 0 ? 1 : -1)                 // 上滑=下一台，下滑=上一台
+                            } else if dx > 80, v.startLocation.x < 80 {
+                                exitLive()                            // 左边缘右滑 = 退出（iOS 习惯）
+                            }
+                        }
+                )
+
+            // 提示的显隐只看**当前这条线**有没有出过画（v44.2 修）：
+            // 旧写法用「本页是否出过画」，于是一旦任何一台出过画，换台后即便黑屏也**没有任何提示**，
+            // 用户看到的就是「点开是个黑洞，也不知道在加载还是死了」。
+            if let statusText, !linePlayed || buffering {
+                VStack(spacing: 10) {
+                    ProgressView().tint(.white)
+                    Text(statusText).font(.footnote).foregroundStyle(.white.opacity(0.9))
+                }
+                .padding(.horizontal, 18).padding(.vertical, 14)
+                .background(RoundedRectangle(cornerRadius: 14).fill(.black.opacity(0.55)))
+                .allowsHitTesting(false)
+            }
+
+            VStack(spacing: 0) { topBar; Spacer() }
+
+            if showList { channelPanel }
+        }
+        .statusBarHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
+        .onAppear { boot() }
+        .onDisappear { shutdown() }
+    }
+
+    // MARK: - 顶栏（左上返回键常驻 —— v42 钦定形态，v43 丢过一次）
+
+    private var topBar: some View {
+        HStack(spacing: 8) {
+            Button { exitLive() } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold))
+                    Text("返回").font(.subheadline.weight(.medium))
+                }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.75), radius: 3, y: 1)
+                .frame(height: 40)
+                .padding(.horizontal, 12)
+                .background(Capsule().fill(.black.opacity(0.42)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("返回首页")
+
+            if stations.indices.contains(index) {
+                let st = stations[index]
+                HStack(spacing: 6) {
+                    LiveLogoBadge(url: st.logo, name: st.name, size: 24)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(st.name).font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white).lineLimit(1)
+                        Text("\(st.group) · 线路 \(linePos + 1)/\(st.lines.count)")
+                            .font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(Capsule().fill(.black.opacity(0.36)))
+                .allowsHitTesting(false)
+            }
+            Spacer(minLength: 4)
+            Button { toggleList() } label: {
+                Image(systemName: "list.bullet").font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(.black.opacity(0.42)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("频道列表")
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+    }
+
+    // MARK: - 启动 / 收尾
+
+    private func boot() {
+        guard stations.isEmpty else { return }
+        stations = withRefilled(LiveStation.build(from: LiveDefaults.embeddedChannels(forMode: profileMode)))
+        guard !stations.isEmpty else { statusText = "包内没有直播表"; return }
+        LiveDiag.write("进入直播 v44 线路表=\(stations.reduce(0) { $0 + $1.lines.count }) 条 " +
+                       "台=\(stations.count) 起播模式=\(startupMode)/\(Int(bufferSeconds))s")
+        let start = startIndex()
+        tune(to: start)
+        startWatchdog()
+        startSelfProbe()
+        Task { await refreshFromRemote() }
+    }
+
+    /// 把历次「端上自愈补源」补进来的线并回对应台（v45）。
+    /// 为什么必须落盘再并回：补进来的线是**本机实测过能播的**，可信度高于表里没测过的线；
+    /// 每次进页都丢掉它们 = 白补，用户看到的就是「昨天还能看的台今天又找不到源了」。
+    private func withRefilled(_ list: [LiveStation]) -> [LiveStation] {
+        var out = list
+        var merged = 0
+        for i in out.indices {
+            let extra = LiveRefill.urls(for: out[i].name)
+                .filter { LivePool.playableOnDevice($0) && !out[i].lines.contains($0) }
+            if !extra.isEmpty {
+                out[i].lines.append(contentsOf: extra)
+                merged += extra.count
+            }
+        }
+        if merged > 0 {
+            LiveDiag.write("并回自愈补源 \(merged) 条（候选池 \(LivePool.stationCount) 台 / \(LivePool.lineCount) 条可用）")
+        } else {
+            LiveDiag.write("候选池 \(LivePool.stationCount) 台 / \(LivePool.lineCount) 条可用")
+        }
+        return out
+    }
+
+    /// 起播台怎么选（v44.1）：**不许默认第 0 台**。
+    /// 表是按体检分重排过的，第 0 台可能是冷门国际台（实测撞上过 DVR 录播窗口，进页就是死画面）。
+    ///   ① 上次看的台（名字模糊匹配，兼容旧表「CCTV-1 综合」这种带后缀的写法）；
+    ///   ② 一批确定性高的热门台（CCTV-1 → CCTV-3 → CCTV-5 → 四大卫视）；
+    ///   ③ 兜底第 0 台。
+    private func startIndex() -> Int {
+        func norm(_ s: String) -> String {
+            var x = s.trimmingCharacters(in: .whitespaces)
+            for suf in [" 综合", " 财经", " 综艺", " 体育", " 电影", " 新闻", "高清", "综合"] {
+                if x.hasSuffix(suf) { x = String(x.dropLast(suf.count)) }
+            }
+            return x.trimmingCharacters(in: .whitespaces)
+        }
+        if !lastChannelName.isEmpty,
+           let i = stations.firstIndex(where: { norm($0.name) == norm(lastChannelName) }) {
+            return i
+        }
+        for want in ["CCTV-1", "CCTV-3", "CCTV-5", "湖南卫视", "东方卫视", "浙江卫视", "江苏卫视"] {
+            if let i = stations.firstIndex(where: { norm($0.name) == want }) { return i }
         }
         return 0
     }
 
-    public var body: some View {
-        Group {
-            if loading {
-                LoadingView(text: "加载频道…")
-            } else if liveClosed {
-                closedScreen
-            } else if channels.isEmpty {
-                emptyOrError
+    private func shutdown() {
+        watchdog?.cancel(); watchdog = nil
+        probeTask?.cancel(); probeTask = nil
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        // 清空台表：离开再回来要重新 boot（否则回来是一片死屏——播放器已断、看门狗已停）。
+        stations = []
+        everPlayed = false
+        linePlayed = false
+        statusText = "正在起播…"
+        buffering = false
+        showList = false
+    }
+
+    private func exitLive() {
+        LiveDiag.write("退出直播")
+        shutdown()
+        NotificationCenter.default.post(name: .liveExitToHome, object: nil)
+        onExit()
+    }
+
+    // MARK: - 选线（本机实测优先）
+
+    /// 本台线路排序：**本机实测耗时**优先（越小越快）→ 端上健康分 → 表内原序。
+    /// 这是「谁播谁知道」的落地：PC 上体检通过 ≠ 手机上带得动。
+    private func rankedLines(_ st: LiveStation) -> [Int] {
+        let h = LiveSourceHealth.shared
+        return Array(st.lines.indices).sorted { a, b in
+            let ua = st.lines[a], ub = st.lines[b]
+            let ma = probeMs[ua.absoluteString], mb = probeMs[ub.absoluteString]
+            switch (ma, mb) {
+            case let (x?, y?):
+                if x != y { return x < y }
+            case (nil, .some): return false        // 已实测的线优先于没测的
+            case (.some, nil): return true
+            default: break
+            }
+            let ha = h.score(ua), hb = h.score(ub)
+            return ha != hb ? ha > hb : a < b
+        }
+    }
+
+    private func tune(to i: Int, pos: Int = 0) {
+        guard stations.indices.contains(i) else { return }
+        let st = stations[i]
+        let order = rankedLines(st)
+        guard !order.isEmpty else { statusText = "本台没有可用线路"; return }
+        let p = max(0, min(pos, order.count - 1))
+        tuneRaw(i, order[p], pos: p)
+    }
+
+    private func tuneRaw(_ i: Int, _ raw: Int, pos: Int? = nil) {
+        guard stations.indices.contains(i), stations[i].lines.indices.contains(raw) else { return }
+        let st = stations[i]
+        index = i
+        rawIndex = raw
+        lastChannelName = st.name
+        linePos = pos ?? (rankedLines(st).firstIndex(of: raw) ?? 0)
+        reconnectTries = 0
+        lineTries = 0
+        probeGen &+= 1
+        startPlayback(url: st.lines[raw], name: st.name)
+    }
+
+    private func startPlayback(url: URL, name: String) {
+        LiveDiag.write("起播 \(name) 线#\(rawIndex + 1)/\(stations.indices.contains(index) ? stations[index].lines.count : 0) url=\(url.absoluteString)")
+        // 换台先彻底断旧流：旧流会抢带宽/抢解码器（v61 记录过的老毛病）。
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+
+        let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = bufferSeconds
+        player.replaceCurrentItem(with: item)
+        // 让系统按「最小化卡顿」调度：对边带边播的直播，这比「零缓冲 + 不等待」稳得多，
+        // 也是「出一帧就卡死」的直接解药。
+        player.automaticallyWaitsToMinimizeStalling = true
+        player.playImmediately(atRate: 1.0)
+        player.isMuted = false
+
+        currentURL = url
+        lastTime = -1
+        progressTicks = 0
+        bigJumps = 0
+        lastProgressAt = Date()
+        tuneAt = Date()
+        linePlayed = false
+        buffering = false
+        statusText = "正在起播…  \(name)"          // 新线必提示（换台黑屏时用户要知道在加载）
+        tryAudioSession()
+    }
+
+    private func advanceLine(reason: String, hopChannel: Bool) {
+        guard stations.indices.contains(index) else { return }
+        let st = stations[index]
+        if let u = currentURL { LiveSourceHealth.shared.record(u, ok: false) }
+        lineTries += 1
+        let cap = max(st.lines.count * 2, 2)
+        if lineTries < cap {
+            LiveDiag.write("换线(\(reason)) \(st.name) 第 \(lineTries + 1) 次")
+            tune(to: index, pos: linePos + 1)
+            return
+        }
+        // ★ 端上自愈补源（v45）：本台表内线路都试完了 → **当场**从候选池给这台找一条能播的补进来。
+        //   主人的要求是「不是整体替换，是这台坏了就给它补上，始终保持能用」——就是这里。
+        if refillIfPossible(reason: reason) { return }
+        finishAbandoned(st.name, reason: reason, hopChannel: hopChannel)
+    }
+
+    /// 本台表内线路穷尽后的收尾：能兜底就跨台兜底，否则**停下说清楚**（绝不无限跳台刷屏）。
+    private func finishAbandoned(_ name: String, reason: String, hopChannel: Bool) {
+        // 只在本台从未出过画时才跨台兜底，且上限 6 台。
+        if hopChannel, !linePlayed, hopTries < 6, stations.count > 1 {
+            hopTries += 1
+            let nxt = (index + 1) % stations.count
+            LiveDiag.write("本台全死(\(reason)) \(name) → 跨台兜底 #\(hopTries) → \(stations[nxt].name)")
+            tune(to: nxt)
+            return
+        }
+        LiveDiag.write("本台放弃 \(name) 原因=\(reason) 已试 \(lineTries) 条")
+        buffering = false
+        statusText = "本台线路暂时都不可用 · 点屏幕换台"
+    }
+
+    // MARK: - 端上自愈补源（v45 · 主人钦定：「坏一条就换掉补齐」）
+
+    /// 表内线路全坏 → 从候选池取该台候选 → **本机真测** → 最快的一条补进这台并立刻起播。
+    /// 返回 true 表示「已经在补（本次不再走别的分支）」。
+    ///
+    /// 设计口径：
+    ///   · 只补**当前这一台**，不动别的台、不整表替换；
+    ///   · 候选必过 `LiveCollector` 三级判活（列表 200 + 无 ENDLIST + 首片真有字节）；
+    ///   · 补进来的线落盘（`LiveRefill`），下次进页直接并回 —— 这就是「天天都能看」；
+    ///   · 同一台一页只补一轮；补不到就老实说「本台线路暂时都不可用」。
+    @discardableResult
+    private func refillIfPossible(reason: String) -> Bool {
+        guard stations.indices.contains(index) else { return false }
+        let st = stations[index]
+        let key = LivePool.normalize(st.name)
+        guard !refilledStations.contains(key), refillingStation == nil else { return false }
+        let excluding = Set(st.lines.map(\.absoluteString))
+        let cands = LivePool.candidates(for: st.name, excluding: excluding, limit: 6)
+        guard !cands.isEmpty else {
+            LiveDiag.write("补源无候选 \(st.name)（池里没有这台 / 候选都已在表内）")
+            return false
+        }
+        refilledStations.insert(key)
+        refillingStation = key
+        let myIndex = index
+        let myName = st.name
+        buffering = false
+        statusText = "本台线路都在恢复中 · 正在自找备用源…"
+        LiveDiag.write("补源开始 \(myName) 候选 \(cands.count) 条（表内 \(st.lines.count) 条已试完，原因=\(reason)）")
+        Task { @MainActor in
+            let res = await LiveCollector.shared.probe(cands)
+            let alive = cands.compactMap { u -> (URL, Int)? in
+                guard let r = res[u.absoluteString], r.ok else { return nil }
+                return (u, r.listMs + r.segMs)
+            }.sorted { $0.1 < $1.1 }
+            if refillingStation == key { refillingStation = nil }
+            // 体检期间用户可能已经换台/换线 —— 不是同一台就别乱动画面。
+            guard stations.indices.contains(myIndex), stations[myIndex].name == myName else { return }
+            guard let best = alive.first else {
+                LiveDiag.write("补源失败 \(myName) 候选 \(cands.count) 条全坏 → 跨台兜底")
+                refilledStations.remove(key)          // 放行：池子/网络变了还能再试
+                finishAbandoned(myName, reason: "补源失败", hopChannel: true)
+                return
+            }
+            stations[myIndex].lines.append(best.0)
+            LiveRefill.add(station: myName, url: best.0)
+            lineTries = 0
+            hopTries = 0
+            LiveDiag.write("补源成功 \(myName) 补入第 \(stations[myIndex].lines.count) 条 " +
+                           "候选 \(cands.count) 条中活 \(alive.count) 条 实测\(best.1)ms url=\(best.0.absoluteString)")
+            tuneRaw(myIndex, stations[myIndex].lines.count - 1)
+        }
+        return true
+    }
+
+    private func step(_ delta: Int) {
+        guard !stations.isEmpty else { return }
+        let n = stations.count
+        hopTries = 0
+        tune(to: ((index + delta) % n + n) % n)
+    }
+
+    private func toggleList() {
+        withAnimation(.easeInOut(duration: 0.22)) { showList.toggle() }
+    }
+
+    // MARK: - 看门狗（换线判据的唯一作者）
+
+    private func startWatchdog() {
+        watchdog?.cancel()
+        watchdog = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if Task.isCancelled { return }
+                check()
+            }
+        }
+    }
+
+    private func check() {
+        guard !showList, let item = player.currentItem else { return }
+
+        if let err = item.error {
+            let e = err as NSError
+            LiveDiag.write("线路错误 \(currentName) \(e.domain):\(e.code) \(e.localizedDescription)")
+            advanceLine(reason: "err \(e.code)", hopChannel: true)
+            return
+        }
+        if item.status == .failed {
+            LiveDiag.write("线路判死 \(currentName) status=.failed")
+            advanceLine(reason: "status failed", hopChannel: true)
+            return
+        }
+
+        // 出画判据（v44.1 修正）：只认「小步前进」，**不认大跳**。
+        // 大跳 = AVPlayer 起播/重连时把位置置到直播边缘（或 DVR 窗口起点），此时一个字节都还没缓冲，
+        // 旧写法（基准 0）会把它当成出画 → 坏线被当成好线 → 无限重连（实测 RTBalkan 一晚上都在重连）。
+        let t = item.currentTime().seconds
+        guard t.isFinite else { return }
+        if lastTime < 0 {
+            lastTime = t
+            lastProgressAt = Date()
+            LiveDiag.write("建立位置基准 \(currentName) 线#\(rawIndex + 1) t=\(String(format: "%.1f", t))s")
+            return
+        }
+        let d = t - lastTime
+        if d > 0.04, d < 3.0 {
+            lastTime = t
+            lastProgressAt = Date()
+            progressTicks += 1
+            if !linePlayed, progressTicks >= 2 {
+                linePlayed = true
+                reconnectTries = 0
+                hopTries = 0
+                LiveDiag.write("出画 \(currentName) 线#\(rawIndex + 1) t=\(String(format: "%.1f", t))s " +
+                               "缓冲=\(String(format: "%.1f", item.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? -1))s")
+            }
+            if !everPlayed, linePlayed { everPlayed = true; statusText = nil }
+            if buffering { buffering = false; statusText = nil }
+            return
+        }
+        if d >= 3.0 {
+            // 位置大跳：更新基准，但**不算出画**；同一线路出现两次且始终没真出画 = DVR 录播窗口。
+            lastTime = t
+            bigJumps += 1
+            LiveDiag.write("位置跳变 \(Int(d))s \(currentName) 线#\(rawIndex + 1)（第 \(bigJumps) 次，不认作出画）")
+            if bigJumps >= 2, !linePlayed {
+                LiveDiag.write("DVR 录播窗口（无真前进）→ 换线 \(currentName)")
+                advanceLine(reason: "dvr", hopChannel: true)
+            }
+            return
+        }
+
+        let stalled = Date().timeIntervalSince(lastProgressAt)
+
+        if !linePlayed {
+            // 从未出画：给足宽限再动手（首片 2MB 在手机上要好几秒）。
+            let since = Date().timeIntervalSince(tuneAt)
+            if since > firstFrameGrace {
+                if let u = currentURL { LiveSourceHealth.shared.record(u, ok: false) }
+                LiveDiag.write("\(Int(since))s 未出画 \(currentName) 线#\(rawIndex + 1) " +
+                               "itemStatus=\(item.status.rawValue) " +
+                               "loaded=\(String(format: "%.1f", item.loadedTimeRanges.first?.timeRangeValue.duration.seconds ?? -1))s")
+                advanceLine(reason: "未出画", hopChannel: true)
+            } else if since > 4 {
+                statusText = "正在起播…  \(currentName)"
+            }
+            return
+        }
+
+        // 出过画之后再卡：先等它自己恢复 → 不行就**原地重连**（同 URL 重拉，不换源）→ 两次后才换线。
+        if stalled > stallGrace {
+            if reconnectTries < 2 {
+                reconnectTries += 1
+                LiveDiag.write("卡顿 \(Int(stalled))s → 原地重连 #\(reconnectTries) \(currentName) url=\(currentURL?.absoluteString ?? "")")
+                if let u = currentURL { startPlayback(url: u, name: currentName) }
             } else {
-                ZStack {
-                    LivePlayerScreen(channels: channels,
-                                     startIndex: startIndex,
-                                     showList: $showList,
-                                     onRequestExit: exitLive,
-                                     onPickSource: { showSourcePicker = true })
-                    if showList {
-                        channelListOverlay
-                    }
-                    if !remoteLoaded && bannerVisible {
-                        // 默认订阅源失败横幅：明示已自动切源 + 给「换源」入口；6 秒自动消失
-                        VStack {
-                            HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption)
-                                Text("订阅源失败，当前「\(currentSourceName)」")
-                                    .font(.caption).lineLimit(1)
-                                Spacer()
-                                Button("换源") { showSourcePicker = true }
-                                    .font(.caption.weight(.medium))
-                                Button("重试") { Task { await load() } }
-                                    .font(.caption.weight(.medium))
-                            }
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .shadow(color: .black.opacity(0.7), radius: 3)
-                            .padding(.top, 2)
-                            Spacer()
+                LiveDiag.write("卡顿 \(Int(stalled))s → 换线 \(currentName)")
+                advanceLine(reason: "卡顿", hopChannel: false)
+            }
+        } else if stalled > 2.5 {
+            buffering = true
+            statusText = "缓冲中…"
+        }
+    }
+
+    private var currentName: String {
+        stations.indices.contains(index) ? stations[index].name : "?"
+    }
+
+    private func tryAudioSession() {
+        let s = AVAudioSession.sharedInstance()
+        try? s.setCategory(.playback, mode: .moviePlayback)
+        try? s.setActive(true)
+    }
+
+    // MARK: - 本机自体检（端上真测：谁播谁知道）
+
+    /// 进页后台体检**当前台的线路**（不阻塞起播、不打断画面）：
+    /// 拿到本机实测耗时后①写黑匣子 ②重排选线 ③还没出画时直接换到最快那条。
+    private func startSelfProbe() {
+        probeTask?.cancel()
+        let gen = probeGen
+        let myIndex = index
+        let myTable = tableGen
+        guard stations.indices.contains(myIndex) else { return }
+        let myName = stations[myIndex].name
+        probeTask = Task { @MainActor in
+            guard stations.indices.contains(myIndex), stations[myIndex].name == myName else { return }
+            let t0 = Date()
+            let target = Array(stations[myIndex].lines.prefix(6))
+            let res = await LiveCollector.shared.probe(target)
+            // 只采信**本次这台**的结果：`LiveCollector.probe` 返回的是**全量历史 results**，
+            // 直接 `res.values` 统计会把往次别的台的成绩算进来（v44.2 实测就打成「条=6 活=2」的虚数）。
+            let mine = target.compactMap { u -> (String, LiveCollector.Result)? in
+                guard let r = res[u.absoluteString] else { return nil }
+                return (u.absoluteString, r)
+            }
+            var m = probeMs
+            for (k, r) in mine where r.ok { m[k] = r.listMs + r.segMs }
+            probeMs = m
+            let alive = mine.filter { $0.1.ok }.count
+            let fastest = mine.filter { $0.1.ok }
+                .min { ($0.1.listMs + $0.1.segMs) < ($1.1.listMs + $1.1.segMs) }
+            let fastTag = fastest.map { String($0.0.suffix(20)) + "/\($0.1.listMs + $0.1.segMs)ms" } ?? "-"
+            LiveDiag.write("本机自体检 \(myName) 条=\(mine.count) 活=\(alive) " +
+                           "用时=\(Int(Date().timeIntervalSince(t0) * 1000))ms 最快=\(fastTag)")
+            // 应用条件（v45 再加「表代号」这条）：① 世代号没变（期间没人切台/换线）
+            // ② **没有换过表**（换表后同一个 index 是另一个台）③ 还在同一台（名+下标都对上）
+            // ④ 这条线还没出画 ⑤ 本页也还没出画 ⑥ 确实另有更快的活线。
+            // 少任何一条都可能在用户已经看别的台时把画面抢回去。
+            guard gen == probeGen, tableGen == myTable, index == myIndex,
+                  stations[myIndex].name == myName,
+                  !linePlayed, !everPlayed, let best = fastest?.0 else { return }
+            let here = stations[myIndex]
+            guard let bi = here.lines.firstIndex(where: { $0.absoluteString == best }), bi != rawIndex else { return }
+            LiveDiag.write("按本机实测换到最快线 #\(bi + 1) \(myName)")
+            tuneRaw(myIndex, bi)
+        }
+    }
+
+    // MARK: - 后台保鲜（不阻塞、不打断）
+
+    private func refreshFromRemote() async {
+        let loader = LiveLoader(bases: feedBases)
+        let remote = await loader.load(path: livePath)
+        guard !remote.isEmpty else { return }
+        var fresh = LiveStation.build(from: remote)
+        guard fresh.count >= Int(Double(stations.count) * 0.9) else { return }
+        let keep = stations.indices.contains(index) ? stations[index].name : lastChannelName
+        let cur = currentURL
+        fresh = withRefilled(fresh)          // 自愈补进来的线在这张表里也要在
+        tableGen &+= 1                       // ★ 换表：异步任务（自体检）据此作废自己的结果
+        stations = fresh
+        LiveDiag.write("远端保鲜生效：台 \(fresh.count)")
+        // 新表已含**正在播的这条 URL** 时不动画面：保鲜是后台行为，
+        // 不该把用户正在看的台打断重起播（v44.2 实测每次进页都因此白闪一下）。
+        if let i = fresh.firstIndex(where: { $0.name == keep }) {
+            if let cur, let r = fresh[i].lines.firstIndex(of: cur) {
+                index = i
+                rawIndex = r
+            } else if i != index {
+                tune(to: i)
+            }
+        }
+    }
+
+    // MARK: - 频道面板（v42 形态：从**右侧**滑出，左列分类 + 右列频道）
+
+    private var panelGroups: [String] {
+        var out: [String] = []
+        for st in stations where !out.contains(st.group) { out.append(st.group) }
+        return out
+    }
+
+    private var shownStations: [LiveStation] {
+        guard let g = pickGroup else { return stations }
+        return stations.filter { $0.group == g }
+    }
+
+    private var channelPanel: some View {
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                // 左侧留空：点空白收起（也把「返回键 + 台名」的位置让出来）
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture { withAnimation(.easeOut(duration: 0.18)) { showList = false } }
+
+                HStack(spacing: 0) {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            catRow("全部", tag: nil)
+                            ForEach(panelGroups, id: \.self) { g in catRow(g, tag: g) }
                         }
-                        .transition(.opacity)
                     }
-                    if showGestureHint {
-                        gestureHintOverlay
+                    .frame(width: 82)
+                    .background(Color.black.opacity(0.55))
+
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(shownStations) { st in channelRow(st) }
+                            }
+                        }
+                        .onAppear { proxy.scrollTo(index, anchor: .center) }
                     }
                 }
-                .toolbar(.hidden, for: .navigationBar)
-                .toolbar(.hidden, for: .tabBar)   // 直播沉浸全屏：藏底部 tab 栏（用户反馈 2026-09-20）
+                .frame(width: min(350, geo.size.width * 0.74))
+                .background(Color.black.opacity(0.88))
             }
-        }
-        .background(Color.black.ignoresSafeArea())
-        .navigationTitle("直播")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await load() }
-        .refreshable { await load() }
-        .sheet(isPresented: $showSourcePicker) { sourcePicker }
-    }
-
-    /// 用户点返回 = 真退出：停播（视图移除触发 onDisappear）+ 跳回首页 tab。
-    /// 想看再点「重新打开」，随时反悔；绝不留后台声音。
-    private func exitLive() {
-        showList = false
-        liveClosed = true
-        NotificationCenter.default.post(name: .liveExitToHome, object: nil)
-    }
-
-    private var closedScreen: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "tv")
-                .font(.system(size: 42)).foregroundStyle(.secondary)
-            Text("直播已关闭").font(.headline).foregroundStyle(theme.textPrimary)
-            Text("播放已完全停止，不会有后台声音")
-                .font(.footnote).foregroundStyle(theme.textSecondary)
-            Button {
-                liveClosed = false
-            } label: {
-                Label("重新打开直播", systemImage: "play.fill")
-                    .font(.footnote.weight(.medium))
-                    .padding(.horizontal, 20).padding(.vertical, 11)
-                    .background(theme.accent, in: Capsule())
-                    .foregroundStyle(.white)
-            }
-        }
-        .padding(30)
-    }
-
-    // MARK: - 频道列表（小薇直播 TV 式全屏：序号+台名+分组，当前台高亮，点选即换）
-
-    private var channelListOverlay: some View {
-        // 60包（用户钦定 2026-09-23：「不行就列表放右侧 左侧给个返回键加剧名」）：
-        // 频道面板由**左侧**改到**右侧**——原来面板贴在左边，正好盖住左上的「返回键 + 台名」，
-        // 用户找不到返回。现在左侧留空给返回键与台名（常驻可见），面板从右侧滑出，点左侧空白收起。
-        HStack(spacing: 0) {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { showList = false }
-            LiveChannelList(channels: channels,
-                            sourceName: currentSourceName,
-                            onPickSource: { showSourcePicker = true },
-                            onPick: { ch in
-                                lastChannelKey = ch.name
-                                LiveSwitchBus.shared.request = ch.id   // 精确换到点选的这条线路
-                                showList = false
-                            },
-                            onClose: { showList = false },
-                            adultMode: profileMode == "adult")
-                .frame(width: min(340, UIScreen.main.bounds.width * 0.62))
         }
         .transition(.move(edge: .trailing))
     }
 
-    // MARK: - 选择直播源（TVBox 原版：全部直播源一屏点选，当前高亮）
-
-    private var sourcePicker: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach(sourceOptions) { opt in
-                        Button { pickSource(opt.id) } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(opt.name).font(.footnote)
-                                        .foregroundStyle(theme.textPrimary).lineLimit(1)
-                                    Text(opt.subtitle).font(.caption2)
-                                        .foregroundStyle(theme.textSecondary).lineLimit(1)
-                                }
-                                Spacer()
-                                if opt.id == activeSourceKey {
-                                    Text("当前").font(.caption2).foregroundStyle(theme.accent)
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    Text("直播源（\(sourceOptions.count)）")
-                } footer: {
-                    Text("点选即切换直播源（TVBox 原版功能）。内置源为实测可用的公开聚合源；自己的直播源在「设置 → 自定义直播源」添加，支持 M3U 与 TVBox txt 格式。")
-                }
-                Section {
-                    Button {
-                        showSourcePicker = false
-                        NotificationCenter.default.post(name: .openAppSettings, object: nil)
-                    } label: {
-                        Label("去添加直播源", systemImage: "plus.circle.fill")
-                            .foregroundStyle(theme.accent)
-                    }
-                }
-            }
-            .navigationTitle("选择直播源")
-            .navigationBarTitleDisplayMode(.inline)
-            .scrollContentBackground(.hidden)
-        }
-        .presentationDetents([.medium, .large])
-        // 2026-09-30 用户：「自己看看全局还有那些没用毛玻璃」「全局都是毛玻璃为什么要用黑框」。
-        // 全 App 弹层统一毛玻璃：List/Form 自带的不透明底已在上面让出，材质才能透上来。
-        .glassSheet()
-    }
-
-    private func pickSource(_ key: String) {
-        showSourcePicker = false
-        showList = false
-        guard key != activeSourceKey else { return }
-        activeSourceKey = key
-        lastChannelKey = ""   // 新源没有旧台，从头开始
-        Task { await load() }
-    }
-
-    // MARK: - 直播源（TVBox 原版语义：一个源一套频道，点选切换）
-
-    private struct LiveSourceOption: Identifiable {
-        let id: String
-        let name: String
-        let subtitle: String
-    }
-
-    /// 可选直播源：默认订阅 → 内置实测源 → 用户自定义（设置里加的每个源一条）。
-    private var sourceOptions: [LiveSourceOption] {
-        var out: [LiveSourceOption] = [LiveSourceOption(id: "remote",
-                                                        name: "默认订阅源",
-                                                        subtitle: "App 订阅直播（随包配置）")]
-        for g in DefaultSites.builtinLiveSources(forMode: profileMode) {
-            out.append(LiveSourceOption(id: "builtin:" + g.id, name: g.name,
-                                        subtitle: profileMode == "adult" ? "官方成人直播" : "内置实测公开源"))
-        }
-        for g in tvbox.customLives {
-            out.append(LiveSourceOption(id: "custom:" + g.id, name: g.name, subtitle: "我的自定义源"))
-        }
-        return out
-    }
-
-    /// 当前生效源名（横幅/列表头显示）。
-    private var currentSourceName: String {
-        sourceOptions.first(where: { $0.id == activeSourceKey })?.name ?? "默认订阅源"
-    }
-
-    /// 配置自带的直播组（生效订阅里的 lives；手动自定义组除外）。
-    private var configLiveGroups: [TVBoxLiveGroup] {
-        let manual = Set(tvbox.customLives.map(\.id))
-        return tvbox.displayResult.lives.filter { !manual.contains($0.id) }
-    }
-
-    /// 加载指定源的频道。列表地址（m3u/txt）异步展开，直链频道直接入库。
-    private func loadChannels(for key: String) async -> [LiveChannel] {
-        // ③直播慢修复 2026-09-22：所有列表地址并行展开。
-        // 原串行 for 循环 × 每地址多候选 × 15s 超时 = 一个坏地址拖死整个直播页。
-        func expand(_ groups: [TVBoxLiveGroup]) async -> [LiveChannel] {
-            let addresses = groups.flatMap { g in g.m3uURLs.map { (name: g.name, url: $0) } }
-            return await withTaskGroup(of: [LiveChannel].self) { grp in
-                for a in addresses {
-                    grp.addTask {
-                        // TVBoxConfigStore 为 @MainActor 类，静态方法在子任务里同样需 await
-                        if await TVBoxConfigStore.isExpandableListAddress(a.url) {
-                            return await self.tvbox.expandM3U(a.url)
-                        } else if let url = URL(string: a.url) {
-                            return [LiveChannel(id: a.url, name: a.name, url: url)]
-                        }
-                        return []
-                    }
-                }
-                var chs: [LiveChannel] = []
-                for await c in grp { chs += c }
-                return chs
-            }
-        }
-        if key == "remote" {
-            var chs = await loader.load(path: livePath)
-            chs += await expand(configLiveGroups)
-            return chs
-        }
-        let prefix = key.contains(":") ? String(key[..<key.firstIndex(of: ":")!]) : ""
-        let rest = prefix.isEmpty ? key : String(key.dropFirst(prefix.count + 1))
-        if prefix == "builtin",
-           let g = DefaultSites.builtinLiveSources(forMode: profileMode).first(where: { $0.id == rest }) {
-            return await expand([g])
-        }
-        if prefix == "custom",
-           let g = tvbox.customLives.first(where: { $0.id == rest }) {
-            return await expand([g])
-        }
-        return []
-    }
-
-    /// 源池 → 有序频道表：所选源排最前（用户手选优先）→ 其余源依次补位 →
-    /// URL 去重 + 同名台编线路号（CCTV1 / CCTV1·备2 / ·备3…）。跨源同名全部保留，
-    /// 自动换源靠它们逐条接力（normalized 名相同即同台，·备N 不影响归一匹配）。
-    /// 60包：从 load() 里抽出，因为流式首屏与最终全集都要用它。
-    private func mergedChannels(_ pool: [(key: String, chs: [LiveChannel])]) -> [LiveChannel] {
-        var ordered: [LiveChannel] = []
-        if let sel = pool.first(where: { $0.key == activeSourceKey }) { ordered += sel.chs }
-        for r in pool where r.key != activeSourceKey { ordered += r.chs }
-        var seenKeys = Set<String>()   // 去重键 = LiveChannel.id（名+URL），不是只按 URL
-        var nameCount: [String: Int] = [:]
-        var out: [LiveChannel] = []
-        // 只按 URL 去重会把「共用同一路流」的整台吞掉（云端表实测 20 台）；
-        // 改按 LiveChannel.id 去重：同台多线路保留、跨源同表镜像仍被合并。
-        for ch in ordered where seenKeys.insert(ch.id).inserted {
-            let base = ch.name.firstIndex(of: "·").map { String(ch.name[..<$0]) } ?? ch.name
-            let clean = base.replacingOccurrences(of: " ", with: "")
-            if let n = nameCount[clean] {
-                nameCount[clean] = n + 1
-                // 2026-09-22 修复：原来此处丢掉 group，同名多线路全落进「其他」桶
-                out.append(LiveChannel(id: ch.id, name: "\(clean)·备\(n)", url: ch.url, group: ch.group))
-            } else {
-                nameCount[clean] = 1
-                out.append(ch)
-            }
-        }
-        return out
-    }
-
-    // MARK: - 加载
-
-    private func load() async {
-        loading = true
-        loadFailed = false
-        // ③直播慢修复 2026-09-22：缓存秒开——上次成功抓到的频道立即上屏，
-        // 网络聚合完成后整体替换；网络全挂时缓存兜底（优先于内置测试源）。
-        var cacheBackup: [LiveChannel] = []
-        if let cached = await loader.cachedChannels(path: livePath), !cached.isEmpty {
-            cacheBackup = cached
-            channels = cached
-            loading = false
-        } else {
-            // 60包（用户：「直播依然需要等很久一直在缓存」）：**包内真直播快照立即上屏**——
-            // 没有本地缓存时不再白屏等网络，进页面就有台可选可播（零网络秒开），远端随后刷新覆盖。
-            let snap = LiveDefaults.embeddedChannels(forMode: profileMode)
-            if !snap.isEmpty {
-                channels = snap
-                loading = false
-            }
-        }
-        // 全源并行聚合（容灾升级 2026-09-21 用户钦定）：不再「第一个有货的源独占」，
-        // 而是把所有源的频道合成一个池——同名台（CCTV1）跨源互为备用线路，
-        // 播放中坏一条自动换下一条 CCTV1（autoHeal 同名优先），绝不跳到别的台。
-        let opts = sourceOptions
-        var pool: [(key: String, chs: [LiveChannel])] = []
-        // 60包（2026-09-23 用户：「直播依然需要等很久一直在缓存」）：**流式首屏**——
-        // 原实现是「所有源都回来才 channels = final」，6 个源（订阅+5 个内置 CDN）里
-        // 只要有 1 个在手机上不通，就得干等它超时，用户看到的就是长时间「加载频道…」。
-        // 现在：第一个源到货立即上屏起播，其余源后台继续聚合（全集到达后整体替换，
-        // 正在播的台已 pinned 在播放器里，不会被换掉）。
-        var onScreen = !channels.isEmpty
-        await withTaskGroup(of: (String, [LiveChannel]).self) { grp in
-            for opt in opts {
-                grp.addTask { (opt.id, await self.loadChannels(for: opt.id)) }
-            }
-            for await (key, chs) in grp where !chs.isEmpty {
-                pool.append((key: key, chs: chs))
-                if !onScreen {
-                    let quick = mergedChannels(pool)
-                    if !quick.isEmpty {
-                        channels = quick
-                        loading = false
-                        onScreen = true
-                    }
-                }
-            }
-        }
-        // 全部源都失败 → 缓存频道兜底（③修复：有缓存不降级测试源、不亮失败横幅）
-        var usedCacheBackup = false
-        if pool.isEmpty && !cacheBackup.isEmpty { usedCacheBackup = true }
-        // 默认订阅源是否有货：决定要不要亮「订阅源失败」横幅（显示 6 秒自动消失）
-        // 缓存兜底生效 = 视为有货（频道实际可看，别吓用户）
-        remoteLoaded = pool.contains { $0.key == "remote" } || usedCacheBackup
-        scheduleBanner()
-        var final = mergedChannels(pool)
-        // 无缓存且全部源都失败 → 内置离线频道兜底（多为测试源，UI 明示可能不可播）
-        // 夜航例外：通用兜底频道严禁混入成人产品（隔离 2026-09-21），失败就明示失败
-        if final.isEmpty && !cacheBackup.isEmpty { final = cacheBackup }
-        // 60包：兜底改用「包内真直播快照」（normal_live.m3u / adult_live.m3u）。
-        // 原兜底是 LiveDefaults.embedded（北邮测试源 ivi.bupt.edu.cn）——用户实测那批在播循环测试片
-        // （「浙江卫视一个镜头循环 N 次」），属于「假直播」，已从自动链路摘除。
-        if final.isEmpty { final = LiveDefaults.embeddedChannels(forMode: profileMode) }
-        channels = final
-        loading = false
-        loadFailed = final.isEmpty
-        // 首次使用引导：拿到频道后出一次操作指南（点任意处或 8 秒后消失）
-        if !final.isEmpty && !gestureHintShown {
-            gestureHintShown = true
-            withAnimation(.easeIn(duration: 0.3)) { showGestureHint = true }
-            scheduleHintHide()
-        }
-    }
-
-    /// 横幅调度：订阅源失败时显示，6 秒后自动淡出（用户反馈 2026-09-20：能播就别一直挂）。
-    private func scheduleBanner() {
-        bannerHideTask?.cancel()
-        withAnimation { bannerVisible = !remoteLoaded && !loading }
-        guard bannerVisible else { return }
-        bannerHideTask = Task {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.4)) { bannerVisible = false }
-        }
-    }
-
-    // MARK: - 首次使用引导（手 = 遥控器：点屏呼面板 / 上下滑换台 / 面板换源）
-
-    private var gestureHintOverlay: some View {
-        VStack(spacing: 14) {
-            Label("直播操作指南", systemImage: "hand.tap.fill")
-                .font(.headline).foregroundStyle(.white)
-            VStack(alignment: .leading, spacing: 9) {
-                hintRow(icon: "hand.tap", text: "点屏幕 = 呼出 / 收起频道面板")
-                hintRow(icon: "arrow.up.arrow.down", text: "上下滑动 = 换台（上滑下一台）")
-                hintRow(icon: "antenna.radiowaves.left.and.right", text: "面板打开时顶部信号图标 = 换直播源")
-            }
-            Text("点任意位置开始观看").font(.caption2).foregroundStyle(.white.opacity(0.6))
-        }
-        .padding(22)
-        // 2026-09-30 用户「不能出现黑色的框」根修：黑 0.5 实底 → 全局玻璃（受光面+发丝边）。
-        .filmGlass(cornerRadius: 20)
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.14), lineWidth: 1))
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.easeOut(duration: 0.3)) { showGestureHint = false } }
-    }
-
-    private func hintRow(icon: String, text: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).font(.footnote).frame(width: 22)
-            Text(text).font(.footnote)
-        }
-        .foregroundStyle(.white.opacity(0.92))
-    }
-
-    private func scheduleHintHide() {
-        hintHideTask?.cancel()
-        hintHideTask = Task {
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.4)) { showGestureHint = false }
-        }
-    }
-
-    private var emptyOrError: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.system(size: 40)).foregroundStyle(.secondary)
-            Text("没有拿到任何频道").font(.headline).foregroundStyle(theme.textPrimary)
-            Text("添加一个直播源即可开看\n支持 M3U 地址与 TVBox txt 格式（组名,#genre#）")
-                .font(.footnote).foregroundStyle(theme.textSecondary)
-                .multilineTextAlignment(.center)
-            Button {
-                NotificationCenter.default.post(name: .openAppSettings, object: nil)
-            } label: {
-                Label("去添加直播源", systemImage: "plus.circle.fill")
-                    .font(.subheadline.weight(.medium))
-                    .padding(.horizontal, 22).padding(.vertical, 11)
-                    .background(theme.accent, in: Capsule())
-                    .foregroundStyle(.white)
-            }
-            Button {
-                // 60包：显式入口才用 generic embedded（北邮测试源）；这条路径由用户主动选择
-                let snap = LiveDefaults.embeddedChannels(forMode: profileMode)
-                channels = snap.isEmpty ? LiveDefaults.embedded : snap
-                remoteLoaded = false
-            } label: {
-                Text("先看离线备用频道").font(.footnote).foregroundStyle(theme.accent)
-            }
-            Button("重试") { Task { await load() } }
-                .font(.footnote).foregroundStyle(theme.textSecondary)
-        }
-        .padding(30)
-    }
-}
-
-/// 频道列表总线补充：当前播放台名（列表高亮用）。
-final class LiveSwitchBus: ObservableObject {
-    static let shared = LiveSwitchBus()
-    @Published var request: String?      // 目标频道 id
-    @Published var requestIndex = 0      // 61包：同一 id 连点也要重新换（onChange 需值变化）
-    @Published var nowPlaying = ""       // 当前播放台名（归一后），列表高亮
-    @Published var nowPlayingID = ""     // 当前播放频道精确 id（同台名多线路时唯一高亮）
-    /// 61包（用户：「换台不要卡」）——**预取提示表**：把「点屏呼出频道列表」当作换台前兆，
-    /// 命中时提前对可见范围内的频道表做一次预热抓取（URLSession 连接/TLS/DNS 就绪 +
-    /// 进磁盘缓存），用户真正点下去时命中缓存 → 起播明显更快。
-    /// 只预热、不建播放器（零流量浪费、不干扰正在播的台）。
-    @Published var prefetchTick = 0
-}
-
-/// 星幕频道面板（用户钦定 2026-09-20：贴屏幕左侧竖条，右侧透出视频）。
-/// 顶部：面板题 + 直播源胶囊 + 关闭；分组 chips 横滚（全部/央视/卫视/体育…自动归类计数）；
-/// 下面频道列表上下滑动（组内连续编号 + ▶正在播 红色高亮），点选精确换到该线路。
-struct LiveChannelList: View {
-    let channels: [LiveChannel]
-    var sourceName: String = ""              // 当前直播源名（源入口按钮显示）
-    var onPickSource: (() -> Void)? = nil    // 呼出「选择直播源」
-    let onPick: (LiveChannel) -> Void
-    let onClose: () -> Void
-    /// 夜航（成人端）用「源站真实分组」做分类 chips（欧美/华语/时装秀…），与 TV 版夜航面板一致；
-    /// 星幕仍走通用桶（央视/卫视/体育…）。2026-09-22 跨端一致性约定。
-    var adultMode: Bool = false
-    @ObservedObject private var bus = LiveSwitchBus.shared
-    @Environment(\.filmTheme) private var theme
-    @State private var selectedGroup: String? = nil   // nil = 全部频道
-    // v18（用户钦点 2026-09-26）：分组记忆——上次在哪个组，下次进直播还停在那个组，不回「全部」
-    @AppStorage("live.lastGroupName") private var lastGroupRaw = ""
-    @State private var appliedSavedGroup = false
-    @State private var expandedBase = Set<String>()   // 已展开备线的台（归一名）
-
-    // MARK: 分组归类（频道面板式标准分组；按 group 名 + 台名关键词归桶）
-
-    static let groupOrder = ["央视", "卫视", "体育", "新闻", "电影·剧场", "少儿", "音乐", "综艺", "纪录", "其他"]
-
-    private func classify(_ ch: LiveChannel) -> String {
-        // 夜航：直接用源站分组（欧美/华语/时装秀），与 TV 版夜航面板逐字一致
-        if adultMode { return ch.group.isEmpty ? "其他" : ch.group }
-        let bag = (ch.group + " " + ch.name).lowercased()
-        if bag.contains("cctv") || bag.contains("cetv") || bag.contains("cgtn") || bag.contains("央视") { return "央视" }
-        if bag.contains("卫视") { return "卫视" }
-        if bag.contains("体育") || bag.contains("赛事") || bag.contains("足球") || bag.contains("篮球") || bag.contains("sport") { return "体育" }
-        if bag.contains("新闻") || bag.contains("资讯") || bag.contains("news") { return "新闻" }
-        if bag.contains("电影") || bag.contains("剧场") || bag.contains("影院") || bag.contains("影视") || bag.contains("movie") { return "电影·剧场" }
-        if bag.contains("少儿") || bag.contains("卡通") || bag.contains("动画") || bag.contains("kids") || bag.contains("cartoon") { return "少儿" }
-        if bag.contains("音乐") || bag.contains("music") { return "音乐" }
-        if bag.contains("综艺") { return "综艺" }
-        if bag.contains("纪录") || bag.contains(" documentary") { return "纪录" }
-        return "其他"
-    }
-
-    private var classified: [(ch: LiveChannel, group: String)] {
-        channels.map { ($0, classify($0)) }
-    }
-
-    /// 左侧 chips：有频道的标准分组按固定顺序（「全部频道」固定第一）。
-    private var availableGroups: [String] {
-        let counts = Dictionary(grouping: classified, by: \.group).mapValues(\.count)
-        if adultMode {
-            // 夜航：按出现顺序给真实分组（欧美/华语/时装秀），不把三类压成一个「其他」
-            var seen = Set<String>()
-            var out: [String] = []
-            for c in classified where (counts[c.group] ?? 0) > 0 {
-                if seen.insert(c.group).inserted { out.append(c.group) }
-            }
-            return out
-        }
-        return Self.groupOrder.filter { (counts[$0] ?? 0) > 0 }
-    }
-
-    private func groupCount(_ g: String?) -> Int {
-        guard let g else { return channels.count }
-        return classified.filter { $0.group == g }.count
-    }
-
-    /// 右列频道行：所选分类（nil=全部）。
-    /// 61包（用户钦定 2026-09-23）：**默认只显示主源**（同台的 ·备N 折叠起来），
-    /// 列表干净、不用在几十条重复台名里找；需要手动换源的台，点右侧「⇄ N」展开备线。
-    private var rows: [(idx: Int, ch: LiveChannel)] {
-        let base: [(ch: LiveChannel, group: String)]
-        if let g = selectedGroup {
-            base = classified.filter { $0.group == g }
-        } else {
-            base = classified
-        }
-        var hide = Set<String>()   // 已折叠的备线 id
-        var counted: [(String, [String])] = []   // (归一名, 该组全部 id，按序)
-        for (ch, _) in base {
-            let k = normalize(ch.name)
-            if let last = counted.last, last.0 == k {
-                counted[counted.count - 1].1.append(ch.id)
-            } else {
-                counted.append((k, [ch.id]))
-            }
-        }
-        for (k, ids) in counted where ids.count > 1 && !expandedBase.contains(k) {
-            for id in ids.dropFirst() { hide.insert(id) }
-        }
-        return base.enumerated()
-            .filter { !hide.contains($0.element.ch.id) }
-            .map { ($0.offset + 1, $0.element.ch) }
-    }
-
-    /// 某条主源后面还有几条备线（用于「⇄ N」按钮）。
-    private func backupCount(of ch: LiveChannel) -> Int {
-        let k = normalize(ch.name)
-        return channels.filter { normalize($0.name) == k }.count - 1
-    }
-
-    var body: some View {
-        // TVBox 原版双栏（2026-09-21 用户钦定，位置贴屏幕左侧）：左窄列分类竖排 + 右宽列频道
-        HStack(spacing: 0) {
-            // 左列：分类
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    catRow("全部", tag: nil)
-                    ForEach(availableGroups, id: \.self) { g in
-                        catRow(g, tag: g)
-                    }
-                }
-            }
-            .frame(width: 96)
-            .background(Color.white.opacity(0.05))
-            .onAppear {
-                // v18：进面板恢复上次分组（不回「全部」）；组不存在（表换过）才落回全部
-                if !appliedSavedGroup {
-                    appliedSavedGroup = true
-                    if !lastGroupRaw.isEmpty, availableGroups.contains(lastGroupRaw) {
-                        selectedGroup = lastGroupRaw
-                    }
-                }
-            }
-
-            // 右列：当前分类频道
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(rows, id: \.ch.id) { row in
-                            channelRow(row).id(row.ch.id)
-                        }
-                    }
-                }
-                .onAppear {
-                    if let cur = currentPlayingID { proxy.scrollTo(cur, anchor: .center) }
-                }
-                .onChange(of: selectedGroup) { _ in
-                    if let cur = currentPlayingID { proxy.scrollTo(cur, anchor: .center) }
-                }
-            }
-        }
-        // 52包：频道面板遮罩 0.86 → 0.7（少一点"满屏黑"，面板与画面都看得清）。
-        .background(Color.black.opacity(0.7).ignoresSafeArea())
-    }
-
-    /// 左列分类行：名 + 台数，选中高亮。
     private func catRow(_ title: String, tag: String?) -> some View {
-        let isSel = selectedGroup == tag
+        let sel = pickGroup == tag
         return Button {
-            withAnimation(.easeOut(duration: 0.15)) {
-                selectedGroup = tag
-                lastGroupRaw = tag ?? ""   // v18：分组记忆（小薇式「记住上次位置」）
-            }
+            withAnimation(.easeOut(duration: 0.15)) { pickGroup = tag }
         } label: {
             HStack {
-                Text(title)
-                    .font(.footnote.weight(isSel ? .semibold : .regular))
-                    .foregroundStyle(isSel ? theme.accent : .primary)
+                Text(title).font(.footnote.weight(sel ? .semibold : .regular))
+                    .foregroundStyle(sel ? Color.orange : .white.opacity(0.85))
                     .lineLimit(1)
-                Spacer()
-                Text("\(groupCount(tag))")
+                Spacer(minLength: 2)
+                Text("\(tag == nil ? stations.count : stations.filter { $0.group == tag }.count)")
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.45))
             }
-            .padding(.horizontal, 10).padding(.vertical, 12)
-            .background(isSel ? theme.accent.opacity(0.16) : Color.clear)
+            .padding(.horizontal, 8).padding(.vertical, 12)
+            .background(sel ? Color.orange.opacity(0.18) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    /// 当前播放频道 id（仅当它在当前 rows 里才有滚动意义）。
-    private var currentPlayingID: String? {
-        bus.nowPlayingID.isEmpty ? nil : bus.nowPlayingID
-    }
-
-    private func channelRow(_ row: (idx: Int, ch: LiveChannel)) -> some View {
-        let isNow = bus.nowPlayingID == row.ch.id
-            || (bus.nowPlayingID.isEmpty && bus.nowPlaying == normalize(row.ch.name))
-        let isBackup = row.ch.name.contains("·备")
-        let bk = backupCount(of: row.ch)
-        let key = normalize(row.ch.name)
-        return HStack(spacing: 0) {
-            Button {
-                onPick(row.ch)
-            } label: {
-                HStack(spacing: 8) {
-                    // 台标（与 TV 端星幕同源：包内优先 -> 远程 tvg-logo -> 序号兜底）
-                    LiveLogo(channel: row.ch, index: row.idx)
-                    Text(String(format: "%02d", row.idx))
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(isNow ? theme.accent : .secondary)
-                        .frame(minWidth: 22, alignment: .leading)
-                    Text(row.ch.name)
-                        .font(.subheadline.weight(isNow ? .semibold : .regular))
-                        .foregroundStyle(isNow ? theme.accent : .primary)
-                        .lineLimit(1)
-                    Spacer()
-                    if isNow {
-                        HStack(spacing: 3) {
-                            Image(systemName: "play.fill").font(.caption2)
-                            Text("正在播").font(.caption)
-                        }
-                        .foregroundStyle(theme.accent)
-                    }
+    private func channelRow(_ st: LiveStation) -> some View {
+        let isNow = st.index == index
+        return Button {
+            hopTries = 0
+            tune(to: st.index)
+            withAnimation(.easeOut(duration: 0.18)) { showList = false }
+        } label: {
+            HStack(spacing: 8) {
+                LiveLogoBadge(url: st.logo, name: st.name, size: 26)
+                Text(String(format: "%02d", st.index + 1))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(isNow ? Color.orange : .white.opacity(0.4))
+                    .frame(minWidth: 20, alignment: .leading)
+                Text(st.name).font(.subheadline.weight(isNow ? .semibold : .regular))
+                    .foregroundStyle(isNow ? Color.orange : .white).lineLimit(1)
+                Spacer(minLength: 2)
+                if isNow {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .font(.caption2).foregroundStyle(Color.orange)
                 }
-                .padding(.leading, 14)
-                .padding(.trailing, 6)
-                .padding(.vertical, 11)
-                .contentShape(Rectangle())
+                Text("\(st.lines.count)线").font(.caption2).foregroundStyle(.white.opacity(0.4))
             }
-            .buttonStyle(.plain)
-            // v18（用户钦点 2026-09-26）：主源旁的入口从「⇄刷新圈+数字」换成「·备」——
-            // 点开折叠的备线，逐条点选试播哪个能用。分组折叠结构保留不变。
-            if bk > 0 && !isBackup {
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        if expandedBase.contains(key) { expandedBase.remove(key) }
-                        else { expandedBase.insert(key) }
-                    }
-                } label: {
-                    Text("·备")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(theme.accent.opacity(0.9))
-                        .padding(.horizontal, 8).padding(.vertical, 6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("展开备选信号源")
-            } else if isBackup {
-                Text("备")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 6)
-            }
+            .padding(.horizontal, 10).padding(.vertical, 9)
+            .contentShape(Rectangle())
         }
-        .padding(.trailing, 4)
-        .background(isNow ? Color.white.opacity(0.05) : Color.clear)
-        .contentShape(Rectangle())
-    }
-
-    private func normalize(_ name: String) -> String {
-        var n = name
-        if let dot = n.firstIndex(of: "·") { n = String(n[..<dot]) }
-        return n.replacingOccurrences(of: " ", with: "")
+        .buttonStyle(.plain)
+        .id(st.index)
     }
 }
 
-// MARK: - 直播播放器（全功能，五重返回保险，自动换源）
+// MARK: - 台（同台多条线合一）
 
-/// 直播播放器：
-/// - 嵌入模式（直播 Tab）：返回键 = 呼出/收起频道列表（经 showList binding）；
-/// - 封面模式（设置测播）：返回键 = 五重保险关闭（closed 本地态 + onClose + dismiss + UIKit 兜底）；
-/// - 播放失败自动换源：先试同名备用线路（·备N），再自动跳下一台，无人值守。
-struct LivePlayerScreen: View {
-    let channels: [LiveChannel]
-    @Binding var showList: Bool
-    var onRequestExit: (() -> Void)? = nil   // 嵌入模式：真退出直播（停播+跳首页），由宿主注入
-    var onClose: (() -> Void)? = nil         // 封面模式（设置测播）：五重关闭
-    var onPickSource: (() -> Void)? = nil    // 嵌入模式：呼出「选择直播源」（TVBox 菜单键语义）
+struct LiveStation: Identifiable {
+    let id: String
+    let index: Int          // 在总表中的位次（列表滚动/对齐用）
+    let name: String        // 去掉「·备N」后的台名
+    let group: String
+    let logo: URL?
+    /// **可变**：端上自愈补源会往这里追加「当场实测能播」的线（v45），
+    /// 所以它不是 `let` —— 表内线路全坏时这台要能被补活，而不是被划掉。
+    var lines: [URL]
 
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var index: Int
-    @State private var player: AVPlayer?
-    @State private var failed = false
-    @State private var tuning = false        // 起播/换台加载中（时间推进即出画）
-    @State private var stallBanner = false   // 缓冲横幅（27号包 用户钦定：卡了先等恢复，不立刻跳台）
-    // v18 探活换线：healing=探活进行中（防看门狗重复触发叠探）；allLinesDead=本台全部线路探活失败
-    @State private var healing = false
-    @State private var allLinesDead = false
-    @State private var everPlayed = false    // 当前链是否播起来过（28b：没播起来=坏链快切，不傻等）
-    @State private var failFastTries = 0     // 坏链快速换备线计数（同台最多3条，全死才跳台）
-    /// v42（2026-10-02 主人「直播不好用 / 一直缓冲中」）—— **3 秒救场**：
-    /// 旧逻辑「地表说这条活 → 直接起播」，起播后要干等 8 秒看门狗才有动作；
-    /// 而地表是**出包环境**（PC）探的，用户所在运营商网络未必一致 → 常见「地表活、端上就是不出画」。
-    /// 现在：起播 3 秒还没出画 → 立刻并发探活**本台全部线路**（含当前线），谁先真出流换谁；
-    /// 当前线自己赢了就原地不动（慢而活的好源不会被错杀）。
-    @State private var rescueFired = false
-    @State private var closed = false
-    @State private var lastProgressAt = Date()
-    // v17 源健康度：switchedAt=换线时刻（幻灯片检测豁免窗口）；recordedOK=已记成功的 URL；
-    // slideTries=幻灯片贴地秒数（连续 3 秒缓冲水位 <1.5s 即降级换线）
-    @State private var switchedAt = Date.distantPast
-    @State private var recordedOK: URL?
-    @State private var slideTries = 0
-    // v19 静帧检测（源方时段禁播占位卡=合法流但内容是死画面，旧判据全不触发）
-    @State private var videoOut: AVPlayerItemVideoOutput?
-    @State private var lastFrameHash: UInt64?
-    @State private var stillFrameTicks = 0
-    /// v40（2026-10-02 起播根因手术）：起播/重连的真实错误（AVPlayerItem.error 的
-    /// domain#code + 描述）透传到缓冲横幅与 syslog，不再只给笼统「缓冲中」。
-    @State private var liveStartError: String?
-    /// v40（主人 2026-10-02 新需求）：直播画面比例三档循环
-    /// 0=原始（保持比例留黑边）/ 1=裁切（填满裁溢出）/ 2=拉伸（全屏变形）。@AppStorage 记忆。
-    @AppStorage("live.aspectMode") private var aspectMode = 0
-    @State private var watchdog: Task<Void, Never>?
-    @State private var timeObs: Any?
-    /// 原地重连计数（2026-09-22 用户：「直播一直卡着不动，一直缓冲中」）。
-    /// 此前卡住只会去找「同名备用线路」，**该台只有一条线路时 autoHeal 直接 return** ——
-    /// 于是永远停在「缓冲中」。现在改为先原地重连（同 URL 重新拉流），两次后才换线/跳台。
-    @State private var reconnectTries = 0
-    /// 60包：起播时**固定住的台**。频道表会在后台被流式/全集替换（秒开必需），
-    /// 若 current 一直取 channels[index]，换表那一瞬就会指向另一个台（画面还在播老台，台名已变）。
-    /// 固定住 = 表刷新绝不打断正在看的台；换台（点列表/上下滑）时才更新它。
-    @State private var pinned: LiveChannel?
-    /// 60包（用户钦定 2026-09-23：「点屏幕一下先出返回…你看怎么合理」）：进入直播先闪现 3 秒
-    /// 控制层（返回键 + 台名），让用户一眼知道返回在哪；随后自动收起，点屏再呼出。
-    @State private var controlsPeek = false
-    @State private var peekTask: Task<Void, Never>?
-    /// 61包（用户：「要先把返回键还给我！！！」）—— 窗口级返回键兜底。
-    /// SwiftUI 按钮在 LiveContainer 里偶发被全屏手势层/视频层吞掉 tap（50/58 包记录过的老毛病）；
-    /// 这里再挂一个**挂在 keyWindow 上的 UIKit 按钮**，物理免疫 hit-testing 被吃，
-    /// 与 SwiftUI 那份显隐同步（同一语义：退出直播）。
-    @State private var winBack: WindowBackButton?
-    /// 2026-10-01：窗口级返回键**挂载失败**时才为 true。
-    /// 有它 = topBar 把 SwiftUI 箭头画回来兜底（否则挂载失败就一个返回键都没有）。
-    /// 正常情况下它为 false，左上角只有窗口级那一个箭头 → 根治「一大一小叠加」。
-    @State private var winBackDown = false
-    @ObservedObject private var switchBus = LiveSwitchBus.shared
+    /// 把 m3u 行表合成「台」：表内同台线路相邻，按名字前缀（去掉 ·备N）归并。
+    static func build(from raw: [LiveChannel]) -> [LiveStation] {
+        var out: [LiveStation] = []
+        var currentKey = ""
+        var bufName = ""
+        var bufGroup = ""
+        var bufLogo: URL?
+        var bufLines: [URL] = []
 
-    init(channels: [LiveChannel], startIndex: Int = 0,
-         showList: Binding<Bool> = .constant(false),
-         onRequestExit: (() -> Void)? = nil,
-         onClose: (() -> Void)? = nil,
-         onPickSource: (() -> Void)? = nil) {
-        self.channels = channels
-        _showList = showList
-        self.onRequestExit = onRequestExit
-        self.onClose = onClose
-        self.onPickSource = onPickSource
-        let start = channels.isEmpty ? 0 : min(max(startIndex, 0), channels.count - 1)
-        // v24 择优起播：从列表/上游进来的起始台，若第一条是地表已知的死线，
-        // 直接落到**同台的真实活线**，不再撞死线后干等 8~40 秒由看门狗换线。
-        _index = State(initialValue: Self.pickAliveIndex(channels, from: start))
+        func flush() {
+            guard !bufLines.isEmpty else { return }
+            out.append(LiveStation(id: "st.\(out.count).\(bufName)",
+                                   index: out.count,
+                                   name: bufName, group: bufGroup.isEmpty ? "其他" : bufGroup,
+                                   logo: bufLogo, lines: bufLines))
+            bufLines = []
+            bufLogo = nil
+        }
+
+        for ch in raw {
+            let key = baseName(ch.name)
+            if key != currentKey {
+                flush()
+                currentKey = key
+                bufName = key
+                bufGroup = ch.group
+            }
+            if bufLogo == nil { bufLogo = ch.logo }
+            if !bufLines.contains(ch.url) { bufLines.append(ch.url) }
+        }
+        flush()
+        return out
     }
 
-    /// v24 择优起播（**只在本台范围内换线，绝不跳台**）：
-    /// ① 当前这条在地表里明确存活 → 原样不动（主源恒存，不动好源）；
-    /// ② 当前这条是死线、同台另有地表明确的活线 → 落到那条（保持表内优先级）；
-    /// ③ 地表没数据 / 本台无明确活线 → 原样不动，交给运行期真探活兜底。
-    /// 表里「不在」= 未知，绝不据此判死，绝不替换源。
-    static func pickAliveIndex(_ channels: [LiveChannel], from idx: Int) -> Int {
-        let h = LiveHealthIndex.shared
-        guard h.hasData, channels.indices.contains(idx) else { return idx }
-        if h.isAlive(channels[idx].url) { return idx }
-        let base = baseName(channels[idx].name)
-        let same = channels.indices.filter { baseName(channels[$0].name) == base }
-        if let hit = same.first(where: { h.isAlive(channels[$0].url) }) { return hit }
-        return idx
+    /// 台名归一：去掉「·备1 / -2 / ②」等备用标记，同名归一台。
+    private static func baseName(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if let r = s.range(of: "·备") { s = String(s[..<r.lowerBound]) }
+        if let r = s.range(of: "備") { s = String(s[..<r.lowerBound]) }
+        return s.trimmingCharacters(in: .whitespaces)
     }
 
-    /// 台名归一（去「·备N」后缀 + 去空格）：同台多线路判定用。
-    static func baseName(_ name: String) -> String {
-        var n = name
-        if let dot = n.firstIndex(of: "·") { n = String(n[..<dot]) }
-        return n.replacingOccurrences(of: " ", with: "")
+    struct Group: Identifiable { let name: String; let stations: [LiveStation]; var id: String { name } }
+
+    static func groups(of all: [LiveStation]) -> [Group] {
+        var order: [String] = []
+        var map: [String: [LiveStation]] = [:]
+        for st in all {
+            if map[st.group] == nil { order.append(st.group) }
+            map[st.group, default: []].append(st)
+        }
+        return order.map { Group(name: $0, stations: map[$0] ?? []) }
+    }
+}
+
+// MARK: - 视频层（AVPlayerLayer，自绘，不吃手势）
+
+struct LiveVideoLayer: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerHostView {
+        let v = PlayerHostView()
+        v.backgroundColor = .black
+        v.attach(player)
+        return v
     }
 
-    private var current: LiveChannel? {
-        // 60包：优先返回 pinned（正在播的那条），表被后台替换时不改台。
-        if let pinned { return pinned }
-        return channels.indices.contains(index) ? channels[index] : nil
+    func updateUIView(_ uiView: PlayerHostView, context: Context) {
+        uiView.attach(player)
     }
 
-    /// 测播模式（从设置页「测播」按钮进入）：onClose 非空。
-    /// 测播时返回键必须常驻，不能学正常直播 3 秒后自动收起——否则黑屏时用户找不到退出。
-    private var isTestMode: Bool { onClose != nil }
+    static func dismantleUIView(_ uiView: PlayerHostView, coordinator: ()) {
+        uiView.detach()
+    }
+}
+
+final class PlayerHostView: UIView {
+    private var layer_: AVPlayerLayer?
+
+    func attach(_ player: AVPlayer) {
+        if let l = layer_, l.player === player { return }
+        layer_?.removeFromSuperlayer()
+        let l = AVPlayerLayer(player: player)
+        l.videoGravity = .resizeAspect
+        l.frame = bounds
+        // 2026-10-03 修：原写 `layer = l` —— UIView.layer 是**只读**属性（编译不过），
+        // 且即便能过也挂不上画面。正解是把自建 AVPlayerLayer 作为子层挂到视图的 backing layer 上。
+        self.layer.addSublayer(l)
+        layer_ = l
+    }
+
+    func detach() {
+        layer_?.removeFromSuperlayer()
+        layer_ = nil
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer_?.frame = bounds
+    }
+}
+
+// MARK: - 台标（表里给什么就显示什么；包内优先，零网络也全有）
+
+/// 台标来源（主人 2026-10-03：「台标是表里的，从表里找」「全都要有」）：
+///   ① 表里 `tvg-logo` 是本仓编号（`…/filmcollector-logos@main/NNNN.png`）→ 直接取**包内**同号 PNG
+///      （随包 332 张，与 TV 端同一套），断网/弱网照样有，且秒显；
+///   ② 表里是第三方可达 URL（gitee / tb.zbds.top 按名）→ 联网取；
+///   ③ 都没有 → 首字牌（不留空白）。
+struct LiveLogoBadge: View {
+    let url: URL?
+    let name: String
+    let size: CGFloat
+
+    @State private var bundled: UIImage?
 
     var body: some View {
-        if closed {
-            Color.clear.allowsHitTesting(false)
-        } else {
-            playerBody
+        ZStack {
+            Circle().fill(.white.opacity(0.12))
+            if let bundled {
+                Image(uiImage: bundled).resizable().scaledToFit().padding(size * 0.14)
+            } else if let url {
+                AsyncImage(url: url) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().scaledToFit().padding(size * 0.14)
+                    } else if case .failure = phase {
+                        letter
+                    } else {
+                        Color.clear
+                    }
+                }
+            } else {
+                letter
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .onAppear(perform: probeBundled)
+    }
+
+    private var letter: some View {
+        Text(String(name.prefix(1)))
+            .font(.system(size: max(size * 0.42, 9), weight: .semibold))
+            .foregroundStyle(.white.opacity(0.75))
+    }
+
+    /// 表里台标若为本仓 4 位编号 → 取包内同号 PNG（XcodeGen 两种落地布局都试）。
+    private func probeBundled() {
+        guard bundled == nil, let key = LiveLogos.key(for: url) else { return }
+        for dir in ["LiveLogo", nil] as [String?] {
+            if let p = Bundle.main.path(forResource: key, ofType: "png", inDirectory: dir),
+               let img = UIImage(contentsOfFile: p) { bundled = img; return }
+        }
+    }
+}
+
+// MARK: - 设置页「试播频道」用的轻量播放器
+//
+// 同签名实现，只服务于「单台试播」：起播链与 LiveView **同口径**
+// （15 秒出画宽限 / 12 秒卡顿 → 原地重连 ×2 → 换线），关闭键常驻（进去出不来是老病）。
+public struct LivePlayerScreen: View {
+    let channels: [LiveChannel]
+    @Binding var showList: Bool
+    let onClose: () -> Void
+
+    @State private var stations: [LiveStation] = []
+    @State private var index = 0
+    @State private var rawIndex = 0
+    @State private var linePos = 0
+    @State private var status: String? = "正在起播…"
+    @State private var buffering = false
+    @State private var player = AVPlayer()
+    @State private var watchdog: Task<Void, Never>?
+    @State private var everPlayed = false
+    @State private var linePlayed = false
+    @State private var lastTime: Double = -1        // -1 = 尚未建立基准（见 LiveView 同项注释）
+    @State private var progressTicks = 0
+    @State private var bigJumps = 0
+    @State private var lastProgressAt = Date()
+    @State private var tuneAt = Date()
+    @State private var reconnectTries = 0
+    @State private var lineTries = 0
+    @AppStorage("settings.startupMode") private var startupMode = "low"
+
+    public init(channels: [LiveChannel], showList: Binding<Bool>, onClose: @escaping () -> Void) {
+        self.channels = channels
+        self._showList = showList
+        self.onClose = onClose
+    }
+
+    private var bufferSeconds: Double {
+        switch startupMode {
+        case "stable": return 8
+        case "standard": return 4
+        default: return 2
         }
     }
 
-    private var playerBody: some View {
+    public var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if let player {
-                BareVideoContainer(player: player, gravity: aspectGravity)
-                    .ignoresSafeArea()
-            }
+            LiveVideoLayer(player: player).ignoresSafeArea()
 
-            // 手势层：单击呼出/隐藏控制层；上下滑换台（电视 CH± 的手机版，用户钦定 2026-09-20）
-            // 61包：列表打开时**关掉这层手势**——否则它在最上层，左侧返回键会被它吃掉
-            // （用户反馈「列表在时返回键点不动」的老问题）。
-            if !showList {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        // 60包（用户钦定 2026-09-23）—— 「点屏幕」用**两态**，不用四步循环：
-                        // 列表已移到右侧、不再压住左上角，所以一次点屏就能同时给出
-                        // 「右侧频道列表 + 左上返回键/台名」；再点一次一起收起。
-                        // （点四次那种循环要按好几下才能换台，反而烦。）
-                        peekTask?.cancel()
-                        controlsPeek = false
-                        withAnimation(.easeInOut(duration: 0.22)) { showList.toggle() }
-                        // 61包：用户点屏 = 准备换台的前兆 → 立刻预热附近台的 playlist，
-                        // 等他点下去时命中缓存，换台更快（不建播放器、不占画面）。
-                        if showList { prewarmVisible() }
-                    }
-                    .gesture(
-                        DragGesture(minimumDistance: 30)
-                            .onEnded { v in
-                                guard abs(v.translation.height) > abs(v.translation.width) else { return }
-                                stepChannel(v.translation.height < 0 ? 1 : -1)   // 上滑=下一台，下滑=上一台
-                            }
-                    )
-            } else {
-                // 列表打开时点左侧空白 = 收起列表（保留原来的点空白关闭习惯）
-                HStack(spacing: 0) {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { showList = false } }
-                    Color.clear
-                        .frame(width: min(340, UIScreen.main.bounds.width * 0.62))
-                        .allowsHitTesting(false)
-                }
-            }
-
-            if backVisible {
-                topBar
-            }
-
-            if failed {
-                failureOverlay
-            }
-
-
-            // 缓冲横幅（27号包 用户钦定）：卡了显示「缓冲中，请稍等」+ 手动换源入口。
-            // 61包（用户：「我要手动切换信号源」）——「换信号源」= **强制换到同台下一条线路**，
-            // 不再走 autoHeal 的"没有备线就什么都不做"（那条路让单线路频道点了没反应）。
-            // v13（2026-09-25 用户反馈「直播没有图像时无法返回」）——横幅第一位加「返回」：
-            // 黑屏卡住时这条横幅是唯一稳定可见的 UI，返回键必须常驻在这。
-            if stallBanner && !failed {
-                HStack(spacing: 14) {
+            if let status, !everPlayed || buffering {
+                VStack(spacing: 10) {
                     ProgressView().tint(.white)
-                    Text(stallBannerText)
-                        .font(.footnote)
-                        .foregroundStyle(liveStartError == nil ? Color.white : Color.orange)
-                        .lineLimit(2).multilineTextAlignment(.leading)
-                    Button {
-                        exitAction()
-                    } label: {
-                        Text("返回").font(.footnote.bold()).foregroundStyle(.yellow)
-                    }
-                    if nextLineExists {
-                        Button {
-                            forceNextLine()
-                        } label: {
-                            Text("换信号源").font(.footnote.bold()).foregroundStyle(.yellow)
+                    Text(status).font(.footnote).foregroundStyle(.white.opacity(0.9))
+                }
+                .padding(.horizontal, 18).padding(.vertical, 14)
+                .background(RoundedRectangle(cornerRadius: 14).fill(.black.opacity(0.55)))
+                .allowsHitTesting(false)
+            }
+
+            VStack {
+                HStack(spacing: 10) {
+                    Button { onClose() } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold))
+                            Text("关闭").font(.subheadline.weight(.medium))
                         }
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.75), radius: 3, y: 1)
+                        .frame(height: 40)
+                        .padding(.horizontal, 12)
+                        .background(Capsule().fill(.black.opacity(0.45)))
+                        .contentShape(Rectangle())
                     }
-                    Button {
-                        lastProgressAt = Date()
-                        peekTask?.cancel()
-                        controlsPeek = false
-                        withAnimation(.easeInOut(duration: 0.2)) { showList = true }
-                        prewarmVisible()
-                    } label: {
-                        Text("频道列表").font(.footnote.bold()).foregroundStyle(.yellow)
+                    .buttonStyle(.plain)
+                    if stations.indices.contains(index) {
+                        let st = stations[index]
+                        LiveLogoBadge(url: st.logo, name: st.name, size: 24)
+                        Text(st.name).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        Text("线路 \(linePos + 1)/\(st.lines.count)")
+                            .font(.caption2).foregroundStyle(.white.opacity(0.7))
                     }
+                    Spacer()
                 }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .shadow(color: .black.opacity(0.7), radius: 3)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, 96)
-                .transition(.opacity)
-            }
-
-        }
-        .onAppear {
-            LiveDiag.log("进入直播: 表 \(channels.count) 条 健康表=\(LiveHealthIndex.shared.ok)/\(LiveHealthIndex.shared.total) @\(LiveHealthIndex.shared.generatedAt) hasData=\(LiveHealthIndex.shared.hasData)")
-            startPlaySmart()
-            startWatchdog()
-            // 60包：进直播先闪现 3 秒控制层（返回键 + 台名），让用户一眼看到「返回在哪」；随后自动收起。
-            controlsPeek = true
-            schedulePeekHide()
-            // 61包：窗口级返回键兜底（与 SwiftUI 那份同显隐、同动作）
-            installWindowBack()
-        }
-        .onChange(of: showList) { _ in syncWinBack() }
-        .onChange(of: controlsPeek) { _ in syncWinBack() }
-        // 2026-10-01（用户：「如果出现这种情况想退出都不行」）：
-        // 缓冲/重连/起播/失败这些「画面不可控」的状态，返回键**必须可用**。
-        // 旧口径只看 showList||controlsPeek —— 控制层 3 秒收起后窗口级返回键也一起消失，
-        // 那时唯一可见的「返回」是 stallBanner 里的 SwiftUI 按钮，正是会被 LiveContainer
-        // 吞掉 tap 的那一类 → 卡住就真退不出。现在这些状态一律把窗口级按钮显出来。
-        .onChange(of: stallBanner) { _ in syncWinBack() }
-        .onChange(of: tuning) { _ in syncWinBack() }
-        .onChange(of: failed) { _ in syncWinBack() }
-        .onDisappear {
-            stopPlay()
-            watchdog?.cancel()
-            winBack?.remove()
-            winBack = nil
-        }
-        .onChange(of: scenePhase) { phase in
-            // 后台/切走必须静音：进后台暂停，回前台自动续播（直播不留后台声音）
-            guard let p = player else { return }
-            if phase == .background || phase == .inactive {
-                p.pause()
-            } else if phase == .active {
-                p.play()
-            }
-        }
-        .onChange(of: switchBus.request) { req in
-            guard let req else { return }
-            if let idx = channels.firstIndex(where: { $0.id == req }) {
-                switchTo(idx)
-            }
-            switchBus.request = nil
-        }
-    }
-
-    // MARK: - 控制层
-
-    /// 控制层闪现调度（60包）：进直播先亮 3 秒，让用户看到返回键位置，之后自动收起。
-    /// 测播模式（isTestMode）返回键常驻，避免黑屏卡住退不出。
-    private func schedulePeekHide() {
-        peekTask?.cancel()
-        guard !isTestMode else { return }
-        peekTask = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.35)) { controlsPeek = false }
-        }
-    }
-
-    /// 窗口级返回键兜底安装（61包 用户钦定「先把返回键还给我」）。
-    /// 动作与 SwiftUI 那份完全一致（退出直播）；装完按当前显隐状态对齐。
-    private func installWindowBack() {
-        guard winBack == nil else { return }
-        winBackDown = false
-        // onGiveUp：窗口级按钮 24×50ms 重试后仍挂不上 → 把 SwiftUI 箭头放回来兜底。
-        let b = WindowBackButton.install(onGiveUp: { winBackDown = true }) { exitAction() }
-        winBack = b
-        syncWinBack()
-    }
-
-    /// 窗口级返回键显隐的**唯一出口**（2026-10-01 用户：「如果出现这种情况想退出都不行」）。
-    /// 旧口径只看 `showList || controlsPeek` —— 控制层 3 秒收起后窗口级按钮也一起隐形，
-    /// 那时屏上唯一可见的「返回」是 stallBanner / failureOverlay 里的 SwiftUI 按钮，
-    /// 而 SwiftUI 按钮在 LiveContainer 里偶发被全屏手势层吞掉 tap（50/58 包老毛病）
-    /// → **卡住时就真退不出**。现口径：只要画面处于「不可控状态」
-    /// （缓冲 stallBanner / 起播换台 tuning / 彻底失败 failed）或控制层可见，返回键一律常驻。
-    private func syncWinBack() {
-        winBack?.setVisible(backVisible, animated: false)
-    }
-
-    /// 「返回键该不该在屏上」的**唯一口径**（2026-10-01）：
-    /// = 控制层可见（列表/3 秒闪现）**或** 画面处于不可控状态（缓冲/起播换台/彻底失败）。
-    /// topBar（含 SwiftUI 兜底箭头）与窗口级按钮共用它，保证两者永远同显隐。
-    private var backVisible: Bool {
-        showList || controlsPeek || stallBanner || tuning || failed
-    }
-
-    /// 返回键统一语义（两份按钮共用）= 退出直播（收列表用「点一下画面」，或列表状态点左侧空白）。
-    private func exitAction() {
-        if let exit = onRequestExit { exit() }
-        else if let c = onClose { c() }
-        else { close() }
-    }
-
-    private var topBar: some View {
-        VStack {
-            HStack(spacing: 6) {
-                // 58包：返回键并回控制层（SwiftUI 普通按钮）——窗口级 WindowBackButton 在 LC
-                // 里「有时不在/点不动」是老大难（50 包已在播放页根治），直播页同理论。
-                // 语义固定 = 退出直播（收列表交给「点一下画面」手势，不再一按就收列表）。
-                // 2026-10-01（用户：「返回的那个按钮是一大一小叠加在一起的」）：
-                // 窗口级 WindowBackButton 与这份 SwiftUI 箭头同显隐、同位置（都在左上 safeArea+10/+6）
-                // → 两个箭头错位叠在一起，就是「一大一小」。
-                // winBack 物理免疫 LC 吞 tap（更可靠），所以只要窗口级按钮**在**（winBack != nil）
-                // 且**没挂载失败**（!winBackDown），这里就只留 44pt 占位、不画箭头：
-                // 视觉只剩一个返回键，点击也统一走 winBack。
-                // 仅当：① 还没装（winBack == nil）或 ② 窗口级按钮 24×50ms 重试后仍挂不上
-                // （winBackDown == true）→ 才把 SwiftUI 箭头画回来当兜底，避免「一个都不剩」。
-                Group {
-                    if winBack == nil || winBackDown {
-                        Button {
-                            exitAction()
-                        } label: {
-                            Image(systemName: "chevron.left").font(.title3.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.75), radius: 4, y: 1)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)     // 61包：防父级手势吃掉 tap（列表开着时返回键必须点得动）
-                        .accessibilityLabel("返回")
-                    } else {
-                        // 占位：让窗口级按钮落在同一位置，标题不被挤动
-                        Color.clear.frame(width: 44, height: 44)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(current?.name ?? "直播").font(.subheadline.weight(.medium))
-                        .foregroundStyle(.white).lineLimit(1)
-                    if let g = current?.group, !g.isEmpty {
-                        Text(g).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
-                    }
-                }
+                .padding(.horizontal, 12).padding(.top, 6)
                 Spacer()
-                // v40（主人 2026-10-02 钦定）：画面比例三档循环按钮（原始 → 裁切 → 拉伸），
-                // 点一下进下一档，当前档名直接标在图标下方（不用猜现在是哪一档）。
-                Button {
-                    aspectMode = (aspectMode + 1) % 3
-                } label: {
-                    VStack(spacing: 0) {
-                        Image(systemName: "aspectratio").font(.body)
-                        Text(aspectLabel).font(.system(size: 9))
-                    }
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("画面比例：\(aspectLabel)")
-                if onPickSource != nil {
-                    // TVBox「直播源」菜单：播放中随时换源
-                    Button {
-                        onPickSource?()
-                    } label: {
-                        Image(systemName: "antenna.radiowaves.left.and.right").font(.body)
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("选择直播源")
-                }
-                if channels.count > 1 {
-                    Button {
-                        showList = true
-                    } label: {
-                        Image(systemName: "list.bullet").font(.body)
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("频道列表")
-                }
             }
-            .padding(.horizontal, 6)
-            .padding(.top, 4)
-            Spacer()
         }
-        // 54包：顶渐变删除（与播放页同批，黑纱根因）。文字可读性由投影保证。
+        .statusBarHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear { boot() }
+        .onDisappear { shutdown() }
     }
 
-    // bottomBar 已移除（用户钦定 2026-09-20）：上下滑手势=换台，左侧面板=选台，
-    // 按钮条鸡肋。换台入口只剩手势与面板，与电视遥控逻辑一致（手=遥控器）。
-
-    private var failureOverlay: some View {
-        VStack(spacing: 12) {
-            ProgressView().tint(.white)
-            Text("信号不佳，自动换源中…").font(.footnote).foregroundStyle(.white.opacity(0.85))
-                .shadow(color: .black.opacity(0.7), radius: 3)
-        }
-        .padding(18)
+    private func boot() {
+        guard stations.isEmpty else { return }
+        stations = LiveStation.build(from: channels)
+        guard !stations.isEmpty else { status = "这条源没有可用线路"; return }
+        LiveDiag.write("试播进入 台=\(stations.count) 线=\(stations.reduce(0) { $0 + $1.lines.count })")
+        tune(0, pos: 0)
+        startWatchdog()
     }
 
-    /// 起播/换台加载提示：转圈直到画面真正出来（周期观察器发现时间推进即收）。
-    private var tuningOverlay: some View {
-        VStack(spacing: 10) {
-            ProgressView().tint(.white).controlSize(.large)
-            Text("正在连接信号…").font(.footnote).foregroundStyle(.white.opacity(0.85))
-                .shadow(color: .black.opacity(0.7), radius: 3)
-        }
-        .padding(18)
+    private func shutdown() {
+        watchdog?.cancel(); watchdog = nil
+        player.pause(); player.replaceCurrentItem(with: nil)
     }
 
-    // MARK: - 行为
-
-    private func stepChannel(_ delta: Int) {
-        guard !channels.isEmpty else { return }
-        let next = (index + delta + channels.count) % channels.count
-        switchTo(next)
-    }
-
-    private func switchTo(_ idx: Int) {
-        guard channels.indices.contains(idx) else {
-            showList = false
-            return
-        }
-        if idx == index, pinned != nil {   // 已是当前台（列表点自己）：只收面板
-            showList = false
-            return
-        }
-        // v24 择优起播：用户点的这一台，若第一条是地表已知死线，直接落到同台活线
-        // （换台立刻出画，不必先黑屏缓冲、等看门狗换线）。只在本台内换线，绝不跳台。
-        let resolved = Self.pickAliveIndex(channels, from: idx)
-        index = resolved
-        pinned = channels[resolved]   // 60包：换台同步更新 pinned（表刷新仍不改台）
-        failed = false
-        switchedAt = Date()      // v17：幻灯片检测豁免窗口从换线时刻起算
-        slideTries = 0
-        healing = false          // v18：已切走，探活会话结束
-        allLinesDead = false
-        if let ch = current { LiveLastChannel.save(ch.name) }
-        // 61包（用户：「换台也是卡住…卡一会才能正常播放」）——换台动作要立刻在 UI 上成立：
-        // ① 先把旧的播放器**彻底停掉**（pause + replaceCurrentItem(nil)），
-        //    否则旧流的分片下载与解码会和新的抢带宽，新台起播被拖慢；
-        // ② 立刻开始拉新流（不等列表收起、不等动画）。
-        stopPlay()
-        startPlaySmart()
-        // ③ 列表在**新流开播的同时**收起：换台生效是毫秒级，用户不会再怀疑"点了没反应"。
-        showList = false
-    }
-
-    // MARK: - 播放与自动换源
-
-    /// v24 择优起播（主人硬诉求「我要看上直播」）：
-    /// 离线地表（`live_health.json`）只是**先验**，不是结论 —— 用户所在网络（运营商）
-    /// 能达的源与出包探针环境未必一致。真正确定的只有「此刻实测」。
-    ///   ① 当前线在地表里明确活 → 直接起播（绝大多数情况零延迟，不动好源）；
-    ///   ② 不确定/已知死 → **并发探活本台全部线路**（~2 秒出结果），首个真出流的立即起播；
-    ///      严格只在本台内换线，绝不跳台、绝不改任何源；
-    ///   ③ 全不可达 → 照常按当前线起播，交给看门狗（不无限转圈）。
-    private func startPlaySmart() {
-        guard let ch = current else { return }
-        if LiveHealthIndex.shared.isAlive(ch.url) { startPlay(); return }
-        let base = normalized(ch.name)
-        let same = channels.indices.filter { normalized(channels[$0].name) == base }
-        guard same.count > 1 else { startPlay(); return }   // 单线路没得挑
-        stopPlay()
-        tuning = true
-        Task { @MainActor in
-            let winner = await raceBestLine(same)
-            guard !closed else { return }
-            if let w = winner, w != index { switchTo(w) } else { startPlay() }
-        }
-    }
-
-    /// 并发探活：本台线路里谁先真出流就用谁（全败返回 nil）。
-    /// 串行探 6 条要 12~18 秒；并发封顶 2.2 秒，起播等待从「十几秒」压到「两秒内」。
-    private func raceBestLine(_ idxs: [Int]) async -> Int? {
-        // 台名先取好再进任务组：外层 `for await` 循环不保证继承 MainActor，
-        // 在那里读 `self.current`（MainActor 隔离的计算属性）会撞并发检查。
-        let chName = current?.name ?? "?"
-        // ⚠️ `returning: Int?.self` 必须显式写：只用 `withTaskGroup(of:)` 时，
-        // Swift 会从闭包里第一个 `return i` 把 GroupResult 推断成 **Int**，
-        // 末尾 `return nil` 直接编译失败（CI: `'nil' is not compatible with closure result type 'Int'`）。
-        return await withTaskGroup(of: (Int, Bool).self, returning: Int?.self) { group in
-            for i in idxs {
-                group.addTask { @MainActor in
-                    let ok = await self.probeLine(self.channels[i].url, timeout: 2.2)
-                    return (i, ok)
-                }
-            }
-            for await (i, ok) in group {
-                if ok {
-                    group.cancelAll()
-                    LiveDiag.log("race ch=\(chName) 首胜=第\(i + 1)条/共\(idxs.count)条")
-                    return i
-                }
-            }
-            LiveDiag.log("race ch=\(chName) 本台 \(idxs.count) 条探活全败 → 退回原线起播")
-            return nil
-        }
-    }
-
-    private func startPlay() {
-        guard let ch = current else { return }
-        pinned = ch          // 60包：首播也固定住（表后台刷新不改台）
-        everPlayed = false
-        // 旧会话清理（换台/重试前先拆观察者）
-        if let t = timeObs { player?.removeTimeObserver(t); timeObs = nil }
-        // v40：换台/重试时把上一条链的异常横幅与错误一起复位，
-        // 否则旧台的「缓冲中/起播异常」会贴在新台上（既有缺陷，本次一并收掉）
-        stallBanner = false
-        liveStartError = nil
-        player?.pause()
-        // 61包（用户：「换台也是卡住…卡一会才能正常播放」）——**旧流必须立刻断开**：
-        // 只 pause 的话旧 AVPlayerItem 仍在后台下分片、仍占着解码器与连接，
-        // 新流起来时两者抢带宽/抢解码 → 用户看到的正是"看得见内容但卡一会才正常"。
-        player?.replaceCurrentItem(with: nil)
-        // v40（2026-10-02 起播根因手术）—— 上面 v13/61 那一整套「低延迟起播参数」
-        //（UA 头 / 峰值码率 / 前向缓冲 / 暂停不拉流 / 不等缓冲）在 iOS 27 上把 HLS 起播搞死了。
-        // 真机三组对照把责任面收窄到只剩这里：
-        //   ① TVBox 吃**星幕自己那份表**、播同一个 CCTV-1 源 → 秒出画面（源/表/手机/WiFi 无罪）
-        //   ② 同一个 App、同一个 LiveContainer、同一个 http 域，**点播**秒播（AVPlayer/LC/iOS 无罪）
-        //   ③ 星幕直播 CCTV-1/CCTV-13 全灭，卡在「缓冲中」不出画
-        // 唯一的结构差异：点播是 `AVPlayer(url:)` **裸奔**，直播走了「一身参数」。
-        // → 起播回归裸 item，先保证「能播」；被证伪的参数日后逐条回归、逐条验证。
-        let item = AVPlayerItem(url: ch.url)
-        LiveDiag.log("startPlay ch=\(ch.name) idx=\(index)/\(channels.count) healthAlive=\(LiveHealthIndex.shared.isAlive(ch.url)) url=\(ch.url.absoluteString)")
-        // v19 静帧检测：像素输出口只挂在渲染侧（读帧做指纹），不参与网络起播决策，故保留。
-        let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ])
-        item.add(out)
-        videoOut = out
-        lastFrameHash = nil
-        stillFrameTicks = 0
-        let p = AVPlayer()
-        p.replaceCurrentItem(with: item)
-        // v40.1（2026-10-02 主人「我要直播好用」）—— 修 v40 自己引入的回归：
-        // v40 连 `playImmediately(atRate:)` 一起删了、退回 `play()`，而 `play()` 受
-        // `automaticallyWaitsToMinimizeStalling`（默认 true）管辖 —— 慢源要"攒够缓冲才出画"，
-        // 正是「起播慢 / 一直在缓冲」的机器层解释。这里只恢复"立即播"，
-        // 其余（UA 头 / 峰值码率 / 前向缓冲 / 暂停不拉流）保持 v40 的裸态不动。
-        p.playImmediately(atRate: 1.0)
-        player = p
-        UIApplication.shared.isIdleTimerDisabled = true
-        lastProgressAt = Date()
+    private func tune(_ i: Int, pos: Int) {
+        guard stations.indices.contains(i) else { return }
+        let st = stations[i]
+        let order = LiveSourceHealth.ranked(st.lines)
+        guard !order.isEmpty else { return }
+        let p = max(0, min(pos, order.count - 1))
+        index = i
+        rawIndex = order[p]
+        linePos = p
         reconnectTries = 0
-        failFastTries = 0
-        rescueFired = false      // v42：新起播 = 新的一轮 3 秒救场窗口
-        failed = false
-        tuning = true   // 加载提示：转圈直到时间推进（出画）
-        LiveSwitchBus.shared.nowPlaying = normalized(ch.name)   // 列表高亮当前台
-        LiveSwitchBus.shared.nowPlayingID = ch.id               // 精确到线路（同台名多线路唯一高亮）
-        // 61包：预热下一台（用户上下滑/列表点下一条时命中已缓存的表，换台更快）。
-        // 只抓一次 playlist 进 URLSession 缓存，不建播放器、不占用户看到的东西。
-        prewarmNeighbor()
-        // 状态观察：条目级失败立即触发自动换源（v40：同时把真实 error 亮出来）
-        p.currentItem?.observe(\.status, options: [.new]) { item, _ in
-            Task { @MainActor in
-                guard item === self.player?.currentItem else { return }
-                if item.status == .failed {
-                    self.captureStartError(item)
-                    self.autoHeal()
-                }
-            }
-        }
-        // 周期观察：有进展就刷新看门狗时间戳
-        timeObs = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { _ in
-            Task { @MainActor in
-                self.lastProgressAt = Date()
-                self.everPlayed = true                   // 播起来过 = 不是坏链
-                self.failFastTries = 0
-                self.reconnectTries = 0                  // 出画 = 重连成功，计数归零
-                if self.tuning { self.tuning = false }   // 时间在走 = 画面已出
-                // v40：出画即清掉起播异常提示与缓冲横幅（否则换台后旧提示赖着不走）
-                if self.liveStartError != nil { self.liveStartError = nil }
-                if self.stallBanner { self.stallBanner = false }
-                // v17 健康度：这条源真播起来了 → +1（每条线路只记一次）
-                if let u = self.current?.url, self.recordedOK != u {
-                    LiveSourceHealth.shared.record(u, ok: true)
-                    self.recordedOK = u
-                }
-                // v17 幻灯片检测（用户实况「一帧一帧卡着放」）：时间在走但缓冲水位
-                // <1.5s = 下载追不上播放。连续 3 秒贴地直接降级换备线，不再等 12s
-                // 完全卡死才动。起播 8s 内豁免（水位本来就在爬坡）。
-                if self.everPlayed, Date().timeIntervalSince(self.switchedAt) > 8,
-                   let item = p.currentItem,
-                   let r = item.loadedTimeRanges.last?.timeRangeValue {
-                    let ahead = (r.start + r.duration).seconds - p.currentTime().seconds
-                    if p.rate > 0 && ahead < 1.5 { self.slideTries += 1 } else { self.slideTries = 0 }
-                    if self.slideTries >= 3, let u = self.current?.url {
-                        LiveSourceHealth.shared.record(u, ok: false)
-                        self.slideTries = 0
-                        self.lastProgressAt = Date()
-                        self.autoHeal(sameChannelOnly: true)
-                    }
-                }
-                // v19 静帧检测（2026-09-26 手机实测 CCTV-12：源方时段禁播时推「由于播出安排」
-                // 占位卡——流本身在"合法播放"，报错/缓冲/水位/幻灯片四个判据全不触发，
-                // 用户卡死在占位卡上没人管）。修法：每秒从像素输出口采样一帧做指纹哈希
-                // （跨行抽样 ~2K 采样点，CPU 开销趋近 0），连续 6 帧全同 = 死画面 →
-                // 记坏分 + 自动换备线（与幻灯片同路径）。起播 8s 内豁免（首帧可能重复出）。
-                if self.everPlayed, Date().timeIntervalSince(self.switchedAt) > 8,
-                   let out = self.videoOut, let item = p.currentItem {
-                    let t = p.currentTime()
-                    if let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) {
-                        let h = Self.frameFingerprint(pb)
-                        if let last = self.lastFrameHash, h == last {
-                            self.stillFrameTicks += 1
-                        } else {
-                            self.stillFrameTicks = 0
-                            self.lastFrameHash = h
-                        }
-                        if self.stillFrameTicks >= 6, let u = self.current?.url {
-                            LiveSourceHealth.shared.record(u, ok: false)
-                            self.stillFrameTicks = 0
-                            self.lastFrameHash = nil
-                            self.lastProgressAt = Date()
-                            self.autoHeal(sameChannelOnly: true)
-                        }
-                    }
-                }
-                // 61包：**出画后不再抬高缓冲门槛**（60包以前抬到 8s + 打开 automaticallyWaitsToMinimizeStalling）。
-                // 免费源分片普遍 6~20s，抬高门槛 = 每次出画都要重攒一大段，
-                // 用户感受到的就是「卡一会儿才正常播放」。低延迟优先：维持 0 + 不等待。
-                // 抗卡顿改由看门狗兜底（20s 无进展 → 原地重连 → 换备线），体验更稳。
-            }
-        }
+        lineTries = 0
+        start(url: st.lines[rawIndex], name: st.name)
     }
 
-    /// 换台升温（61包）：预抓"下一台/上一台"的 playlist 进 URLSession 缓存。
-    /// 依据：HLS 起播耗时大头在 DNS/TLS/首个 playlist，预热后点选可省掉这一跳。
-    private func prewarmNeighbor() {
-        for delta in [1, -1] {
-            let i = (index + delta + channels.count) % channels.count
-            guard channels.indices.contains(i) else { continue }
-            prewarmURL(channels[i].url)
-        }
-    }
-
-    /// 列表呼出时的批量升温（61包）：优先当前台之前的若干台（用户多在附近台切换）。
-    private func prewarmVisible() {
-        guard !channels.isEmpty else { return }
-        var picked: [URL] = []
-        for d in 1...8 {
-            for s in [1, -1] {
-                let i = (index + s * d + channels.count * 10) % channels.count
-                if channels.indices.contains(i) { picked.append(channels[i].url) }
-            }
-        }
-        for u in picked.prefix(12) { prewarmURL(u) }
-    }
-
-    private func prewarmURL(_ u: URL) {
-        var req = URLRequest(url: u)
-        req.setValue("okhttp/3.12", forHTTPHeaderField: "User-Agent")
-        req.timeoutInterval = 4
-        req.cachePolicy = .useProtocolCachePolicy
-        URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
-    }
-
-    /// 原地重连：同一 URL 重新拉流（不换台、不换线路）。
-    ///
-    /// 为什么必须有它（2026-09-22 用户实测反馈）：绝大多数「一直缓冲中」并不是流坏了，
-    /// 而是连接/切片会话僵死 —— 重新拉一次就好。此前只有「换同名备用线路」一条路，
-    /// 而索倪/星秀这类**单线路频道**根本没有备线，`autoHeal` 直接 return → 永远卡住。
-    /// v40：把 AVPlayerItem 的真实失败原因（domain#code + 描述）落到状态 + syslog。
-    /// 只在真的 failed 时调用；无限缓冲（不报错）时保持 nil，这本身也是判据。
-    private func captureStartError(_ item: AVPlayerItem) {
-        let e = item.error as NSError?
-        if let e {
-            liveStartError = "\(e.domain)#\(e.code) \(e.localizedDescription)"
-        } else {
-            liveStartError = "item.status=failed（无 error 对象）"
-        }
-        filmLog.error("live startPlay item FAILED: \(liveStartError ?? "nil") url=\(current?.url.absoluteString ?? "?")")
-        LiveDiag.log("item FAILED ch=\(current?.name ?? "?") err=\(liveStartError ?? "nil") url=\(current?.url.absoluteString ?? "?")")
-    }
-
-    private func reconnectSameURL() {
-        guard let ch = current else { return }
-        guard let p = player else { startPlay(); return }
-        // v40：与 startPlay 对齐，回归裸 item（参数化起播在 iOS 27 上被证伪）
-        let item = AVPlayerItem(url: ch.url)
-        liveStartError = nil
-        // v19 静帧检测：重连的 item 同样挂像素输出口（渲染侧，不参与起播决策）
-        let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ])
-        item.add(out)
-        videoOut = out
-        lastFrameHash = nil
-        stillFrameTicks = 0
-        p.replaceCurrentItem(with: item)
-        // v42：与首播口径一致 —— `play()` 受 automaticallyWaitsToMinimizeStalling 管辖
-        // （要"攒够缓冲才出画"= 慢源观感就是「一直在缓冲」）；重连也必须"立即播"。
-        p.playImmediately(atRate: 1.0)
+    private func start(url: URL, name: String) {
+        LiveDiag.write("试播起播 \(name) 线#\(rawIndex + 1) url=\(url.absoluteString)")
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = bufferSeconds
+        player.replaceCurrentItem(with: item)
+        player.automaticallyWaitsToMinimizeStalling = true
+        player.playImmediately(atRate: 1.0)
+        lastTime = -1
+        progressTicks = 0
+        bigJumps = 0
         lastProgressAt = Date()
-        switchedAt = Date()      // v17：重连也重给 8s 爬坡豁免
-        slideTries = 0
-        rescueFired = false      // v42：重连 = 新的一轮 3 秒救场窗口
-        tuning = true
-        item.observe(\.status, options: [.new]) { it, _ in
-            Task { @MainActor in
-                guard it === self.player?.currentItem else { return }
-                if it.status == .failed {
-                    self.captureStartError(it)
-                    self.autoHeal()
-                }
-            }
-        }
+        tuneAt = Date()
+        linePlayed = false
+        buffering = false
+        if !everPlayed { status = "正在起播…  \(name)" }
     }
 
-    private func stopPlay() {
-        UIApplication.shared.isIdleTimerDisabled = false
-        if let t = timeObs { player?.removeTimeObserver(t) }
-        timeObs = nil
-        player?.pause()
-        player = nil
+    private func nextLine(reason: String) {
+        guard stations.indices.contains(index) else { return }
+        let st = stations[index]
+        lineTries += 1
+        if lineTries >= max(st.lines.count * 2, 2) {
+            LiveDiag.write("试播本台放弃 \(st.name) 原因=\(reason)")
+            buffering = false
+            status = "本台线路暂时都不可用"
+            return
+        }
+        tune(index, pos: linePos + 1)
     }
 
     private func startWatchdog() {
         watchdog?.cancel()
-        watchdog = Task {
+        watchdog = Task { @MainActor in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard !Task.isCancelled else { return }
-                // 27号包（用户钦定 2026-09-21）：源慢缓冲 ≠ 信号断，8s 就切台被真机实测证伪（恶性跳台）。
-                // 新策略：8s 亮「缓冲中」横幅等恢复；20s 换同台备用信号源；40s 仍黑才跳下一台（最后手段）。
-                // 28b（用户钦定 2026-09-21）：坏链从头就是死的，「缓冲请稍等」没有意义。
-                // 分两类：①从没播起来（everPlayed=false）→ 5 秒快速换同台备线（最多3条），全死跳台；
-                //         ②播起来后卡住 → 才值得等：8s 亮缓冲框，20s 换同台备线，40s 跳台。
-                let gap = Date().timeIntervalSince(lastProgressAt)
-                if !everPlayed {
-                    // 61包（用户：「还是会卡很久才会播 换台也是卡住」）——起播/换台的容忍时间下调：
-                    // 分片已重建为小片（≤6s 优先）+ 列表升温，正常台 2s 内出画；
-                    // 3s 还没出画就是这条线路不行，没必要让用户干等 5s，直接换。
-                    // 61包下调到 3s；v14（用户复测「直播不好用」）回调到 8s：
-                    // PC 实测慢源 4.8s/片，首帧常要 5~8s，3s 判死会把慢而活的线路全部错杀。
-                    // v42 3 秒救场（见 `rescueFired` 声明处注释）：
-                    // 地表（PC 探的）说活 ≠ 用户端出得了画。3 秒没动静就并发探活本台全部线路，
-                    // 谁先真出流换谁；当前线自己首胜则原地不动（慢而活的源不被错杀）。
-                    if gap > 3, !rescueFired, !healing {
-                        rescueFired = true
-                        let base = normalized(current?.name ?? "")
-                        let same = channels.indices.filter { normalized(channels[$0].name) == base }
-                        LiveDiag.log("3s 未出画 → 并发探活本台 \(same.count) 条 ch=\(current?.name ?? "?")")
-                        if same.count > 1 {
-                            healing = true
-                            Task { @MainActor in
-                                defer { healing = false }
-                                if let w = await raceBestLine(same), !closed, !everPlayed {
-                                    if w != index {
-                                        LiveDiag.log("3s 救场换线 → 第\(w + 1)条")
-                                        switchTo(w)
-                                    } else {
-                                        LiveDiag.log("3s 救场：当前线自己就是首胜，原地不换")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if gap > 8 {
-                        lastProgressAt = Date()
-                        // v40：8 秒完全不出画时把 item 真实状态亮出来 ——
-                        //「ready 但没数据」与「failed 被拒」是两条完全不同的修法，必须能区分。
-                        if liveStartError == nil, let it = player?.currentItem {
-                            liveStartError = "8s 无进展（item.status=\(it.status.rawValue)）"
-                            filmLog.error("live watchdog: 8s no progress, item.status=\(it.status.rawValue) err=\(String(describing: it.error))")
-                        }
-                        LiveDiag.log("watchdog 8s 不出画 ch=\(current?.name ?? "?") 第\(failFastTries + 1)次 healthAlive=\(current.map { LiveHealthIndex.shared.isAlive($0.url) } ?? false) url=\(current?.url.absoluteString ?? "?")")
-                        failFastTries += 1
-                        if failFastTries <= 3 { autoHeal(sameChannelOnly: true) }
-                        else {
-                            failFastTries = 0
-                            if let u = current?.url { LiveSourceHealth.shared.record(u, ok: false) }
-                            stepChannel(1)
-                        }
-                    }
-                } else {
-                    // 播起来后卡住（2026-09-22 修正「一直卡着不动一直缓冲中」）：
-                    // 恢复链改为 **原地重连 ×2 → 同名备线 ×2 → 跳台**，而不是一步跳备线。
-                    // 原地重连是关键：单线路频道（索倪/星秀）根本没有备线，旧逻辑下
-                    // autoHeal 直接 return（什么都不做）→ 永远停在「缓冲中」。
-                    // reconnectTries 只在**真正出画**时归零，所以上限必定达成、不会无限重连。
-                    if gap > 6 { stallBanner = true }
-                    if gap > 12 {
-                        lastProgressAt = Date()
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if Task.isCancelled { return }
+                guard let item = player.currentItem else { continue }
+                if item.error != nil || item.status == .failed { nextLine(reason: "err"); continue }
+                let t = item.currentTime().seconds
+                guard t.isFinite else { continue }
+                if lastTime < 0 { lastTime = t; lastProgressAt = Date(); continue }   // 首个样本只做基准
+                let d = t - lastTime
+                if d > 0.04, d < 3.0 {
+                    lastTime = t
+                    lastProgressAt = Date()
+                    progressTicks += 1
+                    if !linePlayed, progressTicks >= 2 { linePlayed = true; reconnectTries = 0 }
+                    if !everPlayed, linePlayed { everPlayed = true; status = nil }
+                    if buffering { buffering = false; status = nil }
+                    continue
+                }
+                if d >= 3.0 { lastTime = t; bigJumps += 1                 // 大跳不认作出画（DVR/直播边缘）
+                    if bigJumps >= 2, !linePlayed { nextLine(reason: "dvr") }
+                    continue
+                }
+                let stalled = Date().timeIntervalSince(lastProgressAt)
+                if !linePlayed {
+                    if Date().timeIntervalSince(tuneAt) > 15 { nextLine(reason: "未出画") }
+                    return
+                }
+                if stalled > 12 {
+                    if reconnectTries < 2, let u = player.currentItem?.asset as? AVURLAsset {
                         reconnectTries += 1
-                        if reconnectTries <= 1 {
-                            reconnectSameURL()                 // ① 同 URL 重新拉流
-                        } else if reconnectTries <= 3 {
-                            autoHeal(sameChannelOnly: true)    // ② 换同名备用线路（记败+选优在 autoHeal 内）
-                        } else {
-                            reconnectTries = 0
-                            if let u = current?.url { LiveSourceHealth.shared.record(u, ok: false) }
-                            stepChannel(1)                     // ③ 最后手段：跳下一台
-                        }
+                        LiveDiag.write("试播卡顿 \(Int(stalled))s → 原地重连 #\(reconnectTries)")
+                        start(url: u.url, name: stations[index].name)
+                    } else {
+                        nextLine(reason: "卡顿")
                     }
+                } else if stalled > 2.5 {
+                    buffering = true
+                    status = "缓冲中…"
                 }
             }
-        }
-    }
-
-    /// v40：缓冲横幅文案——有真实起播错误就亮真相（domain#code + 描述），
-    /// 否则沿用「缓冲中 / 正在重连」（那种情况说明没报错、只是不见数据）。
-    private var stallBannerText: String {
-        if let e = liveStartError { return "起播异常：\(e)" }
-        return reconnectTries > 0 ? "正在重连信号…" : "缓冲中，请稍等…"
-    }
-
-    // MARK: - v40 画面比例三档（主人 2026-10-02 钦定：原始 / 裁切 / 拉伸 循环）
-
-    /// 三档 → AVLayerVideoGravity：原始=适应留边；裁切=填满裁溢出；拉伸=全屏变形。
-    private var aspectGravity: AVLayerVideoGravity {
-        switch aspectMode {
-        case 1: return .resizeAspectFill
-        case 2: return .resize
-        default: return .resizeAspect
-        }
-    }
-
-    private var aspectLabel: String {
-        ["原始", "裁切", "拉伸"][min(max(aspectMode, 0), 2)]
-    }
-
-    /// 自动换源：同名备用线路（·备N 归一后台名）优先 → 否则下一台。
-    /// 该台是否还有别的线路（决定「换信号源」按钮是否给）。
-    private var nextLineExists: Bool {
-        guard let ch = current else { return false }
-        let k = normalized(ch.name)
-        return channels.contains { $0.id != ch.id && normalized($0.name) == k }
-    }
-
-    /// 手动换信号源（61包 用户钦定）：**强制**换到同台的下一条线路（环形）。
-    /// 与 autoHeal 的区别：不看 everPlayed、不做"单线路就放弃"，用户点了就必须有动作
-    /// ——没有别的线路时（本台只有一条）不给按钮，避免点了没反应。
-    private func forceNextLine() {
-        guard let ch = current else { return }
-        let k = normalized(ch.name)
-        let lineIdx = channels.indices.filter { normalized(channels[$0].name) == k }
-        guard lineIdx.count > 1,
-              let pos = lineIdx.firstIndex(of: index) else { return }
-        // 从**当前实际在播的线路**往后找同台的下一条（pinned 可能不是 index，用 lineIdx 定位）
-        let curPos = channels.indices.contains(index) && normalized(channels[index].name) == k
-            ? index : (channels.firstIndex(where: { $0.id == ch.id }) ?? pos)
-        let at = lineIdx.firstIndex(of: curPos) ?? pos
-        // v24：优先落到「地表明确的活线」——从当前往后环形扫，命中活线就用它；
-        // 没有地表数据/本台无明确活线 → 退回原「下一条」行为。
-        let h = LiveHealthIndex.shared
-        var next = lineIdx[(at + 1) % lineIdx.count]
-        if h.hasData {
-            for step in 1..<lineIdx.count {
-                let cand = lineIdx[(at + step) % lineIdx.count]
-                if h.isAlive(channels[cand].url) { next = cand; break }
-            }
-        }
-        lastProgressAt = Date()
-        reconnectTries = 0
-        switchTo(next)
-    }
-
-    private func autoHeal(sameChannelOnly: Bool = false) {
-        guard let ch = current else { return }
-        guard !healing else { return }      // v18：探活进行中不叠探（看门狗每 2s 醒一次会重复叫）
-        let base = normalized(ch.name)
-        // v17：这条线被判死/降级 → 健康度 -2，坏源快速沉底
-        LiveSourceHealth.shared.record(ch.url, ok: false)
-        // 1) 同名备用线路——按健康度降序 + **逐条探活通过才切**（v18 根治「盲切到烂线无限换源」）
-        let candidates = channels.indices.filter {
-            channels[$0].id != ch.id && normalized(channels[$0].name) == base
-        }
-        if !candidates.isEmpty {
-            healing = true
-            let ranked = LiveSourceHealth.ranked(candidates.map { channels[$0].url })
-            Task { @MainActor in
-                defer { healing = false }
-                for pos in ranked {
-                    let cand = channels[candidates[pos]]
-                    if await probeLine(cand.url) {
-                        switchTo(candidates[pos])
-                        return
-                    }
-                    LiveSourceHealth.shared.record(cand.url, ok: false)   // 探活不过=坏线，沉底
-                }
-                // 全部备线探活失败：不再盲跳台（跳过去大概率也是烂的），亮明真相留在本台等恢复
-                allLinesDead = true
-                stallBanner = true
-            }
-            return
-        }
-        // 2) 27号包：sameChannelOnly=true 时绝不跳台（等待缓冲/用户手动换源）
-        if sameChannelOnly { return }
-        stepChannel(1)
-    }
-
-    private func normalized(_ name: String) -> String { Self.baseName(name) }
-
-    /// v19 静帧指纹：对像素帧跨行抽样 ~2K 点做 FNV 哈希（CPU 开销趋近 0）。
-    /// 静态占位卡（时段禁播）各帧解码结果一致 → 哈希相同；真实直播画面必然变化。
-    private static func frameFingerprint(_ pb: CVPixelBuffer) -> UInt64 {
-        CVPixelBufferLockBaseAddress(pb, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(pb) else { return 0 }
-        let bpr = CVPixelBufferGetBytesPerRow(pb)
-        let h = CVPixelBufferGetHeight(pb)
-        let total = bpr * h
-        guard total > 64 else { return 0 }
-        let buf = base.assumingMemoryBound(to: UInt8.self)
-        var hash: UInt64 = 1_469_598_103_934_665_603
-        let step = max(64, total / 2048)
-        var off = 0
-        while off < total - 8 {
-            let v = UInt64(buf[off])
-                | UInt64(buf[off + 1]) << 8
-                | UInt64(buf[off + 4]) << 16
-                | UInt64(buf[off + 8]) << 24
-            hash = (hash ^ v) &* 1_099_511_628_211
-            off += step
-        }
-        return hash
-    }
-
-    /// v18 换线前探活：playlist 200 且含 #EXTM3U + 最新分片 3 秒内真的下得到数据。
-    /// 专抓 voc 那种「表活片死」（playlist 不停更新、分片 404/滴灌）——只看 playlist 200 会被骗。
-    private func probeLine(_ url: URL, timeout: TimeInterval = 3) async -> Bool {
-        var req = URLRequest(url: url)
-        req.setValue("okhttp/3.12", forHTTPHeaderField: "User-Agent")
-        req.timeoutInterval = timeout
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              let http = resp as? HTTPURLResponse, http.statusCode == 200,
-              let text = String(data: data.prefix(32768), encoding: .utf8)
-                  ?? String(data: data.prefix(32768), encoding: .isoLatin1),
-              text.contains("#EXTM3U") else { return false }
-        guard let seg = text.split(separator: "\n").last(where: {
-            let l = $0.trimmingCharacters(in: .whitespaces)
-            return !l.isEmpty && !l.hasPrefix("#")
-        }) else { return false }
-        var s = seg.trimmingCharacters(in: .whitespaces)
-        let segURL: URL?
-        if s.hasPrefix("http") {
-            segURL = URL(string: s)
-        } else if s.hasPrefix("/") {
-            segURL = URL(string: "\(url.scheme ?? "https")://\(url.host ?? "")\(s)")
-        } else {
-            s = url.deletingLastPathComponent().absoluteString + s
-            segURL = URL(string: s)
-        }
-        guard let u2 = segURL else { return false }
-        var req2 = URLRequest(url: u2)
-        req2.setValue("okhttp/3.12", forHTTPHeaderField: "User-Agent")
-        req2.setValue("bytes=0-65535", forHTTPHeaderField: "Range")
-        req2.timeoutInterval = timeout
-        guard let (d2, r2) = try? await URLSession.shared.data(for: req2),
-              let h2 = r2 as? HTTPURLResponse, (200..<300).contains(h2.statusCode),
-              !d2.isEmpty else { return false }
-        // ★ 2026-09-26 幻灯片终局判据（对齐 live_build_fast）：
-        // 轮播站会把录播伪装成直播（列表滚动/吞吐正常），但分片 URL 里带归档日期
-        // （如 bestv 的 /2025/0604/ = 479 天前素材）。超 2 天 = 录播轮播，探活直接判死。
-        let dateRe = try? NSRegularExpression(
-            pattern: "/(20\\d{2})/?(\\d{2})(\\d{2})/")
-        if let dateRe {
-            let hay = u2.absoluteString
-            let ns = hay as NSString
-            if let m = dateRe.firstMatch(in: hay, range: NSRange(location: 0, length: ns.length)) {
-                let y = ns.substring(with: m.range(at: 1))
-                let mo = ns.substring(with: m.range(at: 2))
-                let d = ns.substring(with: m.range(at: 3))
-                let f = DateFormatter()
-                f.dateFormat = "yyyyMMdd"
-                f.timeZone = TimeZone(identifier: "Asia/Shanghai")
-                if let arch = f.date(from: y + mo + d) {
-                    let lagDays = Date().timeIntervalSince(arch) / 86400.0
-                    if lagDays > 2.0 { return false }   // 录播轮播站，杀
-                }
-            }
-        }
-        return true
-    }
-
-    // MARK: - 五重关闭保险（对齐点播播放器；封面模式专用）
-
-    private func close() {
-        guard !closed else { return }
-        filmLog.info("live close: entered (window back tapped)")   // syslog 埋点
-        closed = true                    // 保险 1：本地状态立即让出画面
-        stopPlay()                       // 保险 2：先停播放
-        onClose?()                       // 保险 3：宿主 binding 关闭
-        dismiss()                        // 保险 4：SwiftUI 环境 dismiss
-        DispatchQueue.main.async {       // 保险 5：UIKit 根控制器兜底（LC 环境）
-            // 测播模式呈现链＝ root ─presented→ 播放器(fullScreenCover)，播放器就是根之上那一层。
-            // 但**根上已无模态层时绝不能补刀**：那说明播放器其实已经关了，
-            // 此时 root.dismiss() 会误关之后被呈现的其它层（＝点播播放器 2026-09-27 的同款事故）。
-            guard let root = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene }).first?.keyWindow?.rootViewController,
-                  root.presentedViewController != nil else {
-                filmLog.info("live close: 根上已无模态层 → 跳过 UIKit 兜底（不误关他层）")
-                return
-            }
-            root.dismiss(animated: true)
-        }
-    }
-}
-
-/// 兼容旧调用点（仅测试路径）：按名字记忆上次频道。
-enum LiveLastChannel {
-    static func save(_ name: String) {
-        UserDefaults.standard.set(name, forKey: "live.lastChannelName")
-    }
-}
-
-/// 裸视频容器（直播用）：AVPlayerViewController 关掉自带控制条，控制层全部自绘。
-/// v40：新增 gravity 参数——画面比例三档（原始/裁切/拉伸）由宿主 aspectMode 驱动，切换实时生效。
-struct BareVideoContainer: UIViewControllerRepresentable {
-    let player: AVPlayer?
-    var gravity: AVLayerVideoGravity = .resizeAspect
-
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let vc = AVPlayerViewController()
-        vc.showsPlaybackControls = false
-        // 57包：关掉系统 Live Text 识别钮（视频有字就在右下角浮灰圆钮，用户钦点删除）
-        if #available(iOS 16.0, *) { vc.allowsVideoFrameAnalysis = false }
-        vc.videoGravity = gravity
-        vc.player = player
-        return vc
-    }
-
-    func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {
-        if vc.player !== player { vc.player = player }
-        if vc.videoGravity != gravity { vc.videoGravity = gravity }   // v40：三档比例实时生效
-    }
-}
-
-/// 直播黑匣子（2026-10-02 主人：「我要直播好用 —— 至于该干什么怎么干你比我清楚」）。
-///
-/// 为什么必须由**端上自己**记：直播「不出画」的可能卡点至少三层（选线错 / 探活假活 /
-/// 起播被拒），PC 探针只能证「源此刻活不活」，证不了「App 拿它做了什么」。
-/// 把每次**起播 / 探活竞速 / 看门狗判死 / item 失败**的真实结果写进 UserDefaults，
-/// 随 App 容器落盘 —— `ios_ctrl` 用 HouseArrest 直接拉回核验（**不需要 tunneld、不需要主人动手**）。
-/// 有了它，下一轮就是「读数定案」，不是「再猜一次」。
-enum LiveDiag {
-    static let key = "livediag.log"
-
-    /// 文件落盘路径（App 沙盒 `Documents/livediag.txt`）。
-    ///
-    /// 为什么必须有（2026-10-02 实测教训）：UserDefaults 走 cfprefsd，**写盘是懒批的** ——
-    /// 起播后 8s / 20s 那些关键条目（看门狗判死、换线）在容器 plist 里迟迟不出现，
-    /// 探针拉到的还是开播那一刻的两行，于是「日志看不到」被误读成「看门狗没跑」。
-    /// 文件 append 是立即落盘的，探针（HouseArrest）拉到的一定是全部真相。
-    private static func fileURL() -> URL? {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("livediag.txt")
-    }
-
-    static func log(_ msg: String) {
-        let ts = ISO8601DateFormatter().string(from: Date())
-        let line = "\(ts) \(msg)"
-        var arr = UserDefaults.standard.stringArray(forKey: key) ?? []
-        arr.append(line)
-        if arr.count > 240 { arr.removeFirst(arr.count - 240) }
-        UserDefaults.standard.set(arr, forKey: key)
-        appendFile(line)
-    }
-
-    /// 追加落盘 + 超大自动瘦身（只留后半，防止长期运行把文件撑大）。
-    private static func appendFile(_ line: String) {
-        guard let u = fileURL(), let data = (line + "\n").data(using: .utf8) else { return }
-        let fm = FileManager.default
-        if let attrs = try? fm.attributesOfItem(atPath: u.path),
-           let size = attrs[.size] as? Int, size > 200_000,
-           let old = try? String(contentsOf: u, encoding: .utf8) {
-            let half = String(old.suffix(old.count / 2))
-            try? half.write(to: u, atomically: true, encoding: .utf8)
-        }
-        if let h = try? FileHandle(forWritingTo: u) {
-            defer { try? h.close() }
-            _ = try? h.seekToEnd()
-            try? h.write(contentsOf: data)
-        } else {
-            try? data.write(to: u)          // 首次创建
         }
     }
 }

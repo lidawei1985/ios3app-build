@@ -1483,7 +1483,18 @@ private struct PlaybackGroupView: View {
     @AppStorage("settings.defaultRate") private var defaultRate = "1.0"
     @AppStorage("settings.backgroundPlay") private var backgroundPlay = true
     @AppStorage("settings.autoNextEpisode") private var autoNext = true
-    @AppStorage("settings.hardwareDecode") private var hardwareDecode = true
+    /// 起播模式（2026-10-03 修：原「硬解码」是**假开关**，播放器根本没读它）。
+    /// 现在换成真生效的项——控制 AVPlayer 起播缓冲（`preferredForwardBufferDuration`）：
+    ///   低延迟 = 1s（直播默认，要的就是快）｜标准 = 3s｜稳定 = 8s（弱网更抗抖）。
+    @AppStorage("settings.startupMode") private var startupMode = "low"
+
+    private var startupLabel: String {
+        switch startupMode {
+        case "stable": return "稳定"
+        case "standard": return "标准"
+        default: return "低延迟"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1499,7 +1510,16 @@ private struct PlaybackGroupView: View {
             hairline
             toggleRow(icon: "arrow.right.circle", title: "自动播下一集", sub: nil, isOn: $autoNext)
             hairline
-            toggleRow(icon: "cpu", title: "硬解码", sub: "更省电（iOS 恒为开）", isOn: $hardwareDecode)
+            // 2026-10-03：原「硬解码」是**假开关**（播放器根本没读它，且 iOS 恒为开）→ 换成真生效的
+            // 「起播缓冲」：低延迟=1s / 标准=3s / 稳定=8s，直接落到 AVPlayerItem.preferredForwardBufferDuration。
+            // 直播默认「低延迟」，就是要快出画。
+            Menu {
+                Button("低延迟（1 秒 · 直播推荐）") { startupMode = "low" }
+                Button("标准（3 秒）") { startupMode = "standard" }
+                Button("稳定（8 秒 · 弱网抗抖）") { startupMode = "stable" }
+            } label: {
+                valueRow(icon: "timer", title: "起播缓冲", value: startupLabel)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
