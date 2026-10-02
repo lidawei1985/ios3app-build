@@ -29,7 +29,13 @@ public struct ProductProfile: Sendable {
         appName: "星幕", logoName: "STARSCREEN", mode: "normal",
         feedRepo: "filmcollector-pages-xingmu",
         accentColorHex: "#E8443A",
-        liveM3UPath: "/v1/live/normal.m3u",
+        // ★ 2026-10-02 主人钦定「直播表各用各的，免得弄完别人的不能用」：
+        //   星幕读**自己的** `v1/live/xingmu.m3u`（作者 = ios_ctrl/live_refresh_xingmu.py）。
+        //   曾经读的是 `v1/live/normal.m3u` —— 那是 **TV/安卓三端**的表
+        //   （云端 live-build.yml 按 TV 名册每 6h 重写、只补不换；安卓 LiveCatalog 6 条 URL 全指它）。
+        //   共用一张表的后果：TV 一改 iOS 就跟着变、iOS 一改 TV 就挂；
+        //   且 TV 口径（只补不换）会把 iOS 端的死线永远留着 → 起播常撞死线。
+        liveM3UPath: "/v1/live/xingmu.m3u",
         tagline: "海量影视 · 每日更新")
 
     public static let xinwu = ProductProfile(

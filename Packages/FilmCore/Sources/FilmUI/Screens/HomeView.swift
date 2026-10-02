@@ -670,61 +670,66 @@ struct HeroCarousel: View {
     /// 切到别的 tab 就停轮播（见 `homeTabActive` 声明处注释）。
     @Environment(\.homeTabActive) private var tabActive
 
-    /// 点击「上膛」闸（2026-10-02「点 1 得 2」根治）。
-    ///
-    /// 光把点击提到 TabView 外层还不够：轮播每 5 秒自动翻页，换页动画 0.45 秒。
-    /// 手指按在第 1 张、翻页动画把第 2 张推到眼前、手指抬起 → 落点变成第 2 张，
-    /// 用户看到的就是「我点的明明是 1，打开的却是 2」。
-    /// 做法：**换页后 0.6 秒内不吃点击**（覆盖整段动画），过了再上膛。
-    /// 宁可这一下没反应，也绝不能开错片 —— 开错片比不响应严重得多。
-    @State private var tapArmed = true
-    @State private var armWork: Task<Void, Never>?
+    /// 交互锁（2026-10-02 二次改）：用户刚点/刚滑过，8 秒内不自动翻页 ——
+    /// 「手指刚要落下、页面自己翻走」是「点的和看到的不一样」的另一个来源。
+    /// 有了它就不需要旧的 `tapArmed` 闸（那套是给分页 TabView 的命中错位兜底的，现已整段替换）。
+    @State private var lastTouchAt = Date.distantPast
+    private func touch() { lastTouchAt = Date() }
 
-    private func disarmTaps() {
-        tapArmed = false
-        armWork?.cancel()
-        armWork = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 600_000_000)   // 0.6s > 换页动画 0.45s
-            tapArmed = true
-        }
+    /// 当前帧开详情 —— 页内所有点击的唯一入口。
+    /// 落点恒等于**屏幕上正在显示的那一帧**（`items[index]`），不存在"点到邻页"的可能。
+    private func open(from src: String, autoplay: Bool = false) {
+        guard items.indices.contains(index) else { return }
+        touch()
+        router.open(items[index], from: src, autoplay: autoplay)
     }
 
     var body: some View {
-        // 2026-10-02 主人「点的是 1 却错位点到 2 上」——**点击不再挂在 TabView 内部**：
-        // 分页式 TabView 会同时渲染相邻页，并由 UIScrollView 接管触摸判定；页与页在换页
-        // （5 秒自动翻页 / 左右键切换）期间 hit-test 会落到**邻页**那个 Button 上 →
-        // 用户看到的是第 1 张，打开的是第 2 张。这是 SwiftUI TabView(.page) 的已知行为。
-        // 正解：TabView 内只画画面（不可点），点击层**提到 TabView 之上**，
-        // 落点由 `items[index]`（当前选中页）唯一决定 = 屏幕上真正显示的那一张。
-        TabView(selection: $index) {
-            ForEach(Array(items.enumerated()), id: \.offset) { i, item in
-                HeroSlide(item: item, logoName: logoName, height: height,
-                          palette: palette, pageIndex: i, pageCount: items.count)
-                    // 画面本身不吃点击（标题层已 allowsHitTesting(false)，这里保持一致）
-                    .allowsHitTesting(false)
-                    .tag(i)
-            }
+        // 命中层演进（2026-10-02 两刀，全程真机取痕判定，不靠猜）：
+        //   一刀：点击从 TabView **内部**提到外层 overlay —— 治「点的是 1 却错位点到 2」
+        //        （分页 TabView 同时渲染相邻页，UIScrollView 接管命中判定，会落到邻页 Button）。
+        //   二刀（本轮）：外层 overlay **也收不到触摸** —— 端上 `taptrace.log` 60 次点击里
+        //        hero 入口 0 次，实证「主视觉点不进去」。根因是分页 TabView 的手势域把覆盖层吞了。
+        //        → 干脆不用分页容器：自己画当前页 + 自己接点击（与能正常点开的货架同一套机制）。
+        ZStack {
+            // 画面：只画当前一页。**不再用分页 TabView** ——
+            // 2026-10-02 端上实证（铁证）：`taptrace.log` 里 60 次点击、**hero 入口 0 次**，
+            // 说明挂在分页 TabView 上的 overlay 点击层从未收到过触摸
+            // （分页 TabView 的 UIScrollView 把覆盖层手势吞了）＝ 主人「主视觉点不进去」。
+            // 现在命中判定交回 SwiftUI 自己（与能正常点开的货架同一套机制），换页走淡入淡出。
+            HeroSlide(item: items[index], logoName: logoName, height: height,
+                      palette: palette, pageIndex: index, pageCount: items.count)
+                .id(index)
+                .transition(.opacity)
+                .allowsHitTesting(false)      // 画面不吃点击，点击由下面这层统一接管
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
         .frame(height: height)
-        .overlay {
-            Button {
-                // tapArmed 见声明处注释：换页动画期间不吃点击，避免开错片
-                guard tapArmed, items.indices.contains(index) else { return }
-                router.open(items[index], from: "hero#\(index)")
-            } label: { Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity) }
-            .buttonStyle(.plain)
-        }
+        .clipped()
+        .animation(.easeInOut(duration: 0.45), value: index)
+        .contentShape(Rectangle())
+        .onTapGesture { open(from: "hero#\(index)") }
+        // 横滑换页（原分页 TabView 的能力，自己实现）：simultaneous 不抢纵向滚动手势。
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20).onEnded { v in
+                guard abs(v.translation.width) > abs(v.translation.height),
+                      abs(v.translation.width) > 50 else { return }
+                step(v.translation.width < 0 ? 1 : -1)
+            }
+        )
         .overlay(alignment: .leading) { arrow("chevron.left") { step(-1) } }
         .overlay(alignment: .trailing) { arrow("chevron.right") { step(1) } }
-        .task { await loadPalette() }
-        // 无论自动翻页还是左右键换页，只要换了页就先下闸 0.6 秒（见 `tapArmed` 注释）
-        .onChange(of: index) { _, _ in
-            disarmTaps()
-            Task { await loadPalette() }
+        // 可视入口（2026-10-02 主人「主视觉……点不进去播放不了」）：
+        // 只有"整帧可点"不够 —— 屏幕上必须有**看得见**的按钮，用户才知道这里能点。
+        .overlay(alignment: .bottomLeading) {
+            actionRow
+                .padding(.horizontal, 22)
+                .padding(.bottom, 58)
         }
+        .task { await loadPalette() }
+        .onChange(of: index) { _, _ in Task { await loadPalette() } }
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
             guard tabActive, items.count > 1 else { return }
+            guard Date().timeIntervalSince(lastTouchAt) > 8 else { return }   // 刚动过手 → 本轮不抢屏
             withAnimation(.easeInOut(duration: 0.45)) {
                 index = (index + 1) % items.count
             }
@@ -733,6 +738,41 @@ struct HeroCarousel: View {
         .onChange(of: items.count) { _, n in
             if n == 0 { index = 0 } else if index >= n { index = n - 1 }
         }
+    }
+
+    /// 主视觉可视按钮行（2026-10-02 新增）。
+    ///
+    /// 主人原话：「主视觉海报没有详情页、点不进去、播放不了」。
+    /// 病根是命中层（见 `body` 顶部注释，端上落痕实证 hero 0 次），但**同时**也缺一个
+    /// 看得见的入口 —— 整块海报是个不可见热区，用户根本不知道该点哪。
+    /// 两个都补上：整帧仍可点（进详情），这里再给「播放 / 详情」两颗明确按钮。
+    /// 「播放」带 autoplay：落地详情卡的同时直接起播（详情卡托底，退出播放器即回到详情页）。
+    private var actionRow: some View {
+        HStack(spacing: 10) {
+            Button { open(from: "hero.play", autoplay: true) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.fill").font(.system(size: 12, weight: .bold))
+                    Text("播放").font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(.black)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 9)
+                .background(Capsule().fill(.white))
+            }
+            .buttonStyle(.plain)
+
+            Button { open(from: "hero.detail") } label: {
+                Text("详情")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(.white.opacity(0.18)))
+                    .overlay(Capsule().stroke(.white.opacity(0.28), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 8, y: 2)
     }
 
     private func arrow(_ name: String, action: @escaping () -> Void) -> some View {

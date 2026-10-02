@@ -760,6 +760,12 @@ struct LivePlayerScreen: View {
     @State private var allLinesDead = false
     @State private var everPlayed = false    // 当前链是否播起来过（28b：没播起来=坏链快切，不傻等）
     @State private var failFastTries = 0     // 坏链快速换备线计数（同台最多3条，全死才跳台）
+    /// v42（2026-10-02 主人「直播不好用 / 一直缓冲中」）—— **3 秒救场**：
+    /// 旧逻辑「地表说这条活 → 直接起播」，起播后要干等 8 秒看门狗才有动作；
+    /// 而地表是**出包环境**（PC）探的，用户所在运营商网络未必一致 → 常见「地表活、端上就是不出画」。
+    /// 现在：起播 3 秒还没出画 → 立刻并发探活**本台全部线路**（含当前线），谁先真出流换谁；
+    /// 当前线自己赢了就原地不动（慢而活的好源不会被错杀）。
+    @State private var rescueFired = false
     @State private var closed = false
     @State private var lastProgressAt = Date()
     // v17 源健康度：switchedAt=换线时刻（幻灯片检测豁免窗口）；recordedOK=已记成功的 URL；
@@ -1291,6 +1297,7 @@ struct LivePlayerScreen: View {
         lastProgressAt = Date()
         reconnectTries = 0
         failFastTries = 0
+        rescueFired = false      // v42：新起播 = 新的一轮 3 秒救场窗口
         failed = false
         tuning = true   // 加载提示：转圈直到时间推进（出画）
         LiveSwitchBus.shared.nowPlaying = normalized(ch.name)   // 列表高亮当前台
@@ -1436,10 +1443,13 @@ struct LivePlayerScreen: View {
         lastFrameHash = nil
         stillFrameTicks = 0
         p.replaceCurrentItem(with: item)
-        p.play()
+        // v42：与首播口径一致 —— `play()` 受 automaticallyWaitsToMinimizeStalling 管辖
+        // （要"攒够缓冲才出画"= 慢源观感就是「一直在缓冲」）；重连也必须"立即播"。
+        p.playImmediately(atRate: 1.0)
         lastProgressAt = Date()
         switchedAt = Date()      // v17：重连也重给 8s 爬坡豁免
         slideTries = 0
+        rescueFired = false      // v42：重连 = 新的一轮 3 秒救场窗口
         tuning = true
         item.observe(\.status, options: [.new]) { it, _ in
             Task { @MainActor in
@@ -1478,6 +1488,29 @@ struct LivePlayerScreen: View {
                     // 3s 还没出画就是这条线路不行，没必要让用户干等 5s，直接换。
                     // 61包下调到 3s；v14（用户复测「直播不好用」）回调到 8s：
                     // PC 实测慢源 4.8s/片，首帧常要 5~8s，3s 判死会把慢而活的线路全部错杀。
+                    // v42 3 秒救场（见 `rescueFired` 声明处注释）：
+                    // 地表（PC 探的）说活 ≠ 用户端出得了画。3 秒没动静就并发探活本台全部线路，
+                    // 谁先真出流换谁；当前线自己首胜则原地不动（慢而活的源不被错杀）。
+                    if gap > 3, !rescueFired, !healing {
+                        rescueFired = true
+                        let base = normalized(current?.name ?? "")
+                        let same = channels.indices.filter { normalized(channels[$0].name) == base }
+                        LiveDiag.log("3s 未出画 → 并发探活本台 \(same.count) 条 ch=\(current?.name ?? "?")")
+                        if same.count > 1 {
+                            healing = true
+                            Task { @MainActor in
+                                defer { healing = false }
+                                if let w = await raceBestLine(same), !closed, !everPlayed {
+                                    if w != index {
+                                        LiveDiag.log("3s 救场换线 → 第\(w + 1)条")
+                                        switchTo(w)
+                                    } else {
+                                        LiveDiag.log("3s 救场：当前线自己就是首胜，原地不换")
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if gap > 8 {
                         lastProgressAt = Date()
                         // v40：8 秒完全不出画时把 item 真实状态亮出来 ——
@@ -1758,11 +1791,44 @@ struct BareVideoContainer: UIViewControllerRepresentable {
 /// 有了它，下一轮就是「读数定案」，不是「再猜一次」。
 enum LiveDiag {
     static let key = "livediag.log"
+
+    /// 文件落盘路径（App 沙盒 `Documents/livediag.txt`）。
+    ///
+    /// 为什么必须有（2026-10-02 实测教训）：UserDefaults 走 cfprefsd，**写盘是懒批的** ——
+    /// 起播后 8s / 20s 那些关键条目（看门狗判死、换线）在容器 plist 里迟迟不出现，
+    /// 探针拉到的还是开播那一刻的两行，于是「日志看不到」被误读成「看门狗没跑」。
+    /// 文件 append 是立即落盘的，探针（HouseArrest）拉到的一定是全部真相。
+    private static func fileURL() -> URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("livediag.txt")
+    }
+
     static func log(_ msg: String) {
         let ts = ISO8601DateFormatter().string(from: Date())
+        let line = "\(ts) \(msg)"
         var arr = UserDefaults.standard.stringArray(forKey: key) ?? []
-        arr.append("\(ts) \(msg)")
+        arr.append(line)
         if arr.count > 240 { arr.removeFirst(arr.count - 240) }
         UserDefaults.standard.set(arr, forKey: key)
+        appendFile(line)
+    }
+
+    /// 追加落盘 + 超大自动瘦身（只留后半，防止长期运行把文件撑大）。
+    private static func appendFile(_ line: String) {
+        guard let u = fileURL(), let data = (line + "\n").data(using: .utf8) else { return }
+        let fm = FileManager.default
+        if let attrs = try? fm.attributesOfItem(atPath: u.path),
+           let size = attrs[.size] as? Int, size > 200_000,
+           let old = try? String(contentsOf: u, encoding: .utf8) {
+            let half = String(old.suffix(old.count / 2))
+            try? half.write(to: u, atomically: true, encoding: .utf8)
+        }
+        if let h = try? FileHandle(forWritingTo: u) {
+            defer { try? h.close() }
+            _ = try? h.seekToEnd()
+            try? h.write(contentsOf: data)
+        } else {
+            try? data.write(to: u)          // 首次创建
+        }
     }
 }
