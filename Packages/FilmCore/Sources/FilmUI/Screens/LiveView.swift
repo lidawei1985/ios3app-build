@@ -54,8 +54,18 @@ public struct LiveView: View {
     @State private var tuneAt = Date()
     @State private var currentURL: URL?
     @State private var reconnectTries = 0       // 原地重连次数（同 URL 重拉）
-    @State private var lineTries = 0            // 本台累计试线次数（有上限，防无限换）
+    @State private var lineTries = 0            // 本台累计试线次数（日志用；判据见 triedURLs）
+    /// **本台本轮已试过的线路 URL**（2026-10-03 换线机制重做）。
+    ///
+    /// 为什么不再用「位次 (linePos)」换线：`rankedLines` 每次都按最新实测/健康分**重排**，
+    /// 用「当前位置 +1」取下一条，重排后会**指回刚失败的那条**——真机实测就是这么循环的：
+    /// 黑匣子里连着三条 `换线(无数据) 第 1 次 → 3/5`，而每次起播的 URL 一模一样。
+    /// 另外 `tuneRaw` 里原有的 `lineTries = 0` 让「本台试线上限」**完全失效**（每次都算第 1 次）。
+    /// 现在改用 URL 集合：试过就进集合，选下一条时**直接排除** —— 与排序无关，结构上不可能回头。
+    @State private var triedURLs: Set<String> = []
     @State private var hopTries = 0             // 跨台兜底次数（仅「从未出画」时用，上限 3）
+    /// 单台最多试几条线（2026-10-03「秒播」）：超过就转补源 / 跨台兜底。
+    private let maxLineTries = 6
     /// 本机自体检实测耗时（url → 列表+首片 ms，越小越快）。空 = 还没测出来。
     @State private var probeMs: [String: Int] = [:]
     /// 自体检的「世代号」：每次切台/换线 +1。体检是异步的，回来时**必须**核对世代号，
@@ -354,11 +364,12 @@ public struct LiveView: View {
 
     private func tune(to i: Int, pos: Int = 0) {
         guard stations.indices.contains(i) else { return }
+        // 换台（不是同台换线）→ 试线记录与跨台计数都重来。
+        if i != index { triedURLs.removeAll(); hopTries = 0 }
         let st = stations[i]
-        let order = rankedLines(st)
+        let order = rankedLines(st).filter { !triedURLs.contains(st.lines[$0].absoluteString) }
         guard !order.isEmpty else { statusText = "本台没有可用线路"; return }
-        let p = max(0, min(pos, order.count - 1))
-        tuneRaw(i, order[p], pos: p)
+        tuneRaw(i, order[max(0, min(pos, order.count - 1))])
     }
 
     private func tuneRaw(_ i: Int, _ raw: Int, pos: Int? = nil) {
@@ -369,7 +380,8 @@ public struct LiveView: View {
         lastChannelName = st.name
         linePos = pos ?? (rankedLines(st).firstIndex(of: raw) ?? 0)
         reconnectTries = 0
-        lineTries = 0
+        // ⚠️ 这里**不再**清 `lineTries` —— 换线不该重置「本台累计试线」，
+        //    旧写法正是它让上限判据永远为假（真机日志每次都是「第 1 次」）。
         probeGen &+= 1
         startPlayback(url: st.lines[raw], name: st.name)
     }
@@ -404,20 +416,20 @@ public struct LiveView: View {
     private func advanceLine(reason: String, hopChannel: Bool) {
         guard stations.indices.contains(index) else { return }
         let st = stations[index]
-        if let u = currentURL { LiveSourceHealth.shared.record(u, ok: false) }
-        lineTries += 1
-        let order = rankedLines(st)
-        // ── 「秒播」关键修复（2026-10-03 主人「不能一直在这加载」）───────────────
-        // 旧写法 `cap = max(st.lines.count * 2, 2)`：线多的台（20 条线 → cap 40）
-        // 每条等宽限一次 ⇒ **十几分钟**都停在「正在起播」；更糟的是 `pos: linePos + 1`
-        // 会被 `min(pos, order.count - 1)` 夹在**最后一条**上 —— 到末尾后剩下的次数
-        // 全在同一条死线上白等，用户看到的就是「十几分钟不播」。
-        // 现在：① 最多试 min(max(3, 线数), 6) 条；② 已到末尾就**立刻**转补源 / 跨台兜底。
-        let cap = min(max(3, order.count), 6)
-        let nextPos = linePos + 1
-        if lineTries < cap, nextPos < order.count {
-            LiveDiag.write("换线(\(reason)) \(st.name) 第 \(lineTries) 次 → \(nextPos + 1)/\(order.count)")
-            tune(to: index, pos: nextPos)
+        if let u = currentURL {
+            LiveSourceHealth.shared.record(u, ok: false)
+            triedURLs.insert(u.absoluteString)      // 这条试过且失败 → 本轮不再回头
+        }
+        lineTries = triedURLs.count
+        // 候选 = 本台**还没试过**的线（已按实测耗时/健康分排好）。
+        // 用 URL 集合筛，天然免疫「重排后位次指回同一条」的老问题（真机实测过的循环换线）。
+        let order = rankedLines(st).filter { !triedURLs.contains(st.lines[$0].absoluteString) }
+        // 「秒播」上限（2026-10-03 主人「不能一直在这加载」）：最多试 6 条就转补源/兜底。
+        // 旧写法 `cap = max(lines.count * 2, 2)` 对线多的台（20 条 → cap 40、每条等 15s）
+        // 就是十几分钟停在「正在起播」。
+        if let next = order.first, triedURLs.count < maxLineTries {
+            LiveDiag.write("换线(\(reason)) \(st.name) 第 \(triedURLs.count) 条 → 线#\(next + 1)/\(st.lines.count)")
+            tuneRaw(index, next)
             return
         }
         // ★ 端上自愈补源（v45）：本台表内线路都试完了 → **当场**从候选池给这台找一条能播的补进来。
@@ -499,6 +511,8 @@ public struct LiveView: View {
             LiveDiag.write("补源成功\(quiet ? "(巡检)" : "") \(name) 补入第 \(stations[i].lines.count) 条 " +
                            "候选 \(cands.count) 条中活 \(aliveList.count) 条 实测\(best.1)ms url=\(best.0.absoluteString)")
             if !quiet {
+                // 补进来的线是**新的**（刚实测过能播）→ 试线记录重来，直接起播它。
+                triedURLs.removeAll()
                 lineTries = 0
                 hopTries = 0
                 tuneRaw(i, stations[i].lines.count - 1)
@@ -1052,6 +1066,8 @@ public struct LivePlayerScreen: View {
     @State private var tuneAt = Date()
     @State private var reconnectTries = 0
     @State private var lineTries = 0
+    /// 本台本轮已试过的线路 URL（与 LiveView 同款修法：用集合而不是位次换线）。
+    @State private var triedURLs: Set<String> = []
     @AppStorage("settings.startupMode") private var startupMode = "low"
     /// 画面比例 / 锁屏（2026-10-03 主人「直播里没有屏幕比例和锁屏等按钮」→ 试播页同口径补齐）。
     @State private var aspect: AspectMode = .fit
@@ -1156,15 +1172,16 @@ public struct LivePlayerScreen: View {
 
     private func tune(_ i: Int, pos: Int) {
         guard stations.indices.contains(i) else { return }
+        if i != index { triedURLs.removeAll() }          // 换台 → 试线记录重来
         let st = stations[i]
         let order = LiveSourceHealth.ranked(st.lines)
+            .filter { !triedURLs.contains(st.lines[$0].absoluteString) }
         guard !order.isEmpty else { return }
         let p = max(0, min(pos, order.count - 1))
         index = i
         rawIndex = order[p]
         linePos = p
         reconnectTries = 0
-        lineTries = 0
         start(url: st.lines[rawIndex], name: st.name)
     }
 
@@ -1190,18 +1207,25 @@ public struct LivePlayerScreen: View {
     private func nextLine(reason: String) {
         guard stations.indices.contains(index) else { return }
         let st = stations[index]
-        lineTries += 1
-        // 与 LiveView 同口径（2026-10-03）：最多试 min(max(3, 线数), 6) 条；
-        // 已到末尾就**立刻**放弃 —— 旧写法 `max(lines.count * 2, 2)` 会磨到 cap，
-        // 而 `pos: linePos + 1` 被夹在最后一条上 ⇒ 剩下全在同一条死线上白等（每轮 15 秒）。
-        let cap = min(max(3, st.lines.count), 6)
-        if lineTries >= cap || linePos + 1 >= st.lines.count {
-            LiveDiag.write("试播本台放弃 \(st.name) 原因=\(reason) 已试 \(lineTries) 条")
-            buffering = false
-            status = "本台线路暂时都不可用"
+        // 与 LiveView 同口径（2026-10-03）：按**已试过的 URL 集合**选下一条，
+        // 不用位次（重排后位次会指回同一条）；最多试 6 条就放弃。
+        if let u = (player.currentItem?.asset as? AVURLAsset)?.url {
+            triedURLs.insert(u.absoluteString)
+        }
+        lineTries = triedURLs.count
+        let remain = LiveSourceHealth.ranked(st.lines)
+            .filter { !triedURLs.contains(st.lines[$0].absoluteString) }
+        if let first = remain.first, triedURLs.count < 6 {
+            LiveDiag.write("试播换线(\(reason)) \(st.name) 第 \(triedURLs.count) 条 → 线#\(first + 1)/\(st.lines.count)")
+            rawIndex = first
+            linePos = 0
+            reconnectTries = 0
+            start(url: st.lines[first], name: st.name)
             return
         }
-        tune(index, pos: linePos + 1)
+        LiveDiag.write("试播本台放弃 \(st.name) 原因=\(reason) 已试 \(triedURLs.count) 条")
+        buffering = false
+        status = "本台线路暂时都不可用"
     }
 
     private func startWatchdog() {

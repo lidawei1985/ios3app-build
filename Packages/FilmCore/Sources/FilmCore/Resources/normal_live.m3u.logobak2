@@ -197,11 +197,11 @@ http://english-livetx.cgtn.com/hls/yypdyyctzb_hd.m3u8
 http://112.27.235.94:8000/hls/17/index.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0703.png" group-title="国际",CGTN·备2
 http://t.061899.xyz/tl/tl.php?id=cgtn
-#EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0703.png" group-title="其他",CGTN(1080p)
+#EXTINF:-1 tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/CGTN.svg/960px-CGTN.svg.png" group-title="其他",CGTN(1080p)
 https://english-livebkali.cgtn.com/live/encgtn.m3u8
-#EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0703.png" group-title="其他",CGTN(1080p)·备2
+#EXTINF:-1 tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/CGTN.svg/960px-CGTN.svg.png" group-title="其他",CGTN(1080p)·备2
 https://hlspackager.akamaized.net/live/DB/CGTN_ENGLISH/HLS/CGTN_ENGLISH.m3u8
-#EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0703.png" group-title="News",CGTN(1080p)·备1
+#EXTINF:-1 tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/CGTN.svg/960px-CGTN.svg.png" group-title="News",CGTN(1080p)·备1
 https://amg00405-rakutentv-cgtn-rakuten-i9tar.amagi.tv/master.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0705.png" group-title="国际",CGTN纪录·备1
 https://hlspackager.akamaized.net/live/DB/CGTN_DOCUMENTARY/HLS/CGTN_DOCUMENTARY.m3u8
@@ -345,7 +345,7 @@ https://jwcdnqx.hebyun.com.cn/live/xlzh/1500k/tzwj_video.m3u8
 http://liveout.btzx.com.cn/62ds9e/4nxdih.m3u8?fbl=
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0140.png" group-title="地方",农安新闻综合
 http://stream2.jlntv.cn/naxw/sd/live.m3u8
-#EXTINF:-1 group-title="其他" tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0140.png",农安新闻综合[Geo-blocked]
+#EXTINF:-1 group-title="其他",农安新闻综合[Geo-blocked]
 https://stream2.jlntv.cn/naxw/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0141.png" group-title="地方",前郭综合
 https://stream2.jlntv.cn/qg/sd/live.m3u8
@@ -381,7 +381,7 @@ http://jrlive.jrntv.com/live/_definst_/jrxwzhs/playlist.m3u8
 http://jrlive.jrntv.com/live/_definst_/shenghuos/playlist.m3u8?%E5%85%B3%E6%B3%A8%E5%BE%AE%E4%BF%A1%E5%85%AC%E4%BC%97%E5%8F%B7[%E6%99%B4%E5%9B%AD]
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0157.png" group-title="地方",吉林市新闻综合
 http://stream2.jlntv.cn/jilin1/sd/live.m3u8
-#EXTINF:-1 group-title="其他" tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0157.png",吉林市新闻综合[Geo-blocked]
+#EXTINF:-1 group-title="其他",吉林市新闻综合[Geo-blocked]
 https://stream2.jlntv.cn/jilin1/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0158.png" group-title="地方",名山综合
 https://m3u8channel-bx.yunxya.com/nmip-media/channellive/channel104666/playlist.m3u8
@@ -411,7 +411,7 @@ https://gcalic.v.myalicdn.com/gc/emsyh_1/index.m3u8
 http://182.150.115.21:8030/pcgacg/pcgacg_0.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0164.png" group-title="地方",四平新闻综合
 http://stream2.jlntv.cn/sptv/sd/live.m3u8?_upt=f27750421743154598
-#EXTINF:-1 group-title="其他" tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0164.png",四平新闻综合[Geo-blocked]
+#EXTINF:-1 group-title="其他",四平新闻综合[Geo-blocked]
 https://stream2.jlntv.cn/sptv/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://tb.zbds.top/logo/天涯石.png" group-title="直播中国",天涯石
 https://gcalic.v.myalicdn.com/gc/tyhjtys_1/index.m3u8
@@ -501,7 +501,7 @@ https://gcalic.v.myalicdn.com/gc/hlwxt_1/index.m3u8
 http://stream8.jlntv.cn/sytv2/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0215.png" group-title="地方",松原新闻综合
 http://stream2.jlntv.cn/sytv/sd/live.m3u8
-#EXTINF:-1 group-title="其他" tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0215.png",松原新闻综合[Geo-blocked]
+#EXTINF:-1 group-title="其他",松原新闻综合[Geo-blocked]
 https://stream2.jlntv.cn/sytv/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0217.png" group-title="地方",松阳综合
 http://l.cztvcloud.com/channels/lantian/SXsongyang1/720p.m3u8
@@ -563,7 +563,7 @@ http://106.53.99.30/tv/api.php?id=hebtv4k
 http://tmpstream.hyrtv.cn/hygg/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0241.png" group-title="地方",河源综合
 http://tmpstream.hyrtv.cn/xwzh/sd/live.m3u8
-#EXTINF:-1 group-title="其他" tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0241.png",河源综合(540p)
+#EXTINF:-1 group-title="其他",河源综合(540p)
 https://tmpstream.hyrtv.cn/xwzh/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://tb.zbds.top/logo/泰山主峰.png" group-title="直播中国",泰山主峰
 https://gcalic.v.myalicdn.com/gc/taishan01_1/index.m3u8
@@ -697,11 +697,11 @@ http://stream5.jlntv.cn/hn/sd/live.m3u8?zjild
 http://stream5.jlntv.cn/hn/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0314.png" group-title="地方",辽源新闻综合
 http://stream2.jlntv.cn/liaoyuan1/sd/live.m3u8
-#EXTINF:-1 group-title="其他" tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0314.png",辽源新闻综合[Geo-blocked]
+#EXTINF:-1 group-title="其他",辽源新闻综合[Geo-blocked]
 https://stream2.jlntv.cn/liaoyuan1/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0316.png" group-title="地方",通化新闻
 http://stream2.jlntv.cn/tonghua1/sd/live.m3u8
-#EXTINF:-1 group-title="其他" tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0316.png",通化新闻[Geo-blocked]
+#EXTINF:-1 group-title="其他",通化新闻[Geo-blocked]
 https://stream2.jlntv.cn/tonghua1/sd/live.m3u8
 #EXTINF:-1 tvg-logo="https://cdn.jsdelivr.net/gh/lidawei1985/filmcollector-logos@main/0317.png" group-title="地方",通海电视台
 https://zb-live.ynurl.com/tonghai/3bfe3a9e-48e6-4c1e-8770-1df66447cc6c.m3u8
