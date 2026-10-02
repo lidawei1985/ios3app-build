@@ -282,6 +282,92 @@ def stage(work):
     return total, changed, size
 
 
+def push_via_api(work, repo):
+    """git push 直连不通时的兜底：走 GitHub Git Data API 推 HEAD 全量内容。
+
+    为什么必须有（2026-10-03 实测）：本机 `github.com:443` 直连超时（21s 无响应）、
+    代理软件未启动 → `git push` 必挂；而 `api.github.com:443` 稳定可达（129ms）。
+    这就是「换个对话框就卡在推送」的老病根 —— 出口不该只有 git 一条路。
+
+    只上传**内容真正变化**的文件：未变文件在 tree 里直接复用远端已有 blob sha
+    （git blob sha 只取决于内容，两边同内容必然同 sha）→ 512 个文件里通常只传十几个。
+    """
+    import base64
+    import json as _json
+    import urllib.request as _url
+    from concurrent.futures import ThreadPoolExecutor
+
+    tok = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True).stdout.strip()
+    if not tok:
+        print("[兜底] 取不到 gh token，放弃")
+        return False
+
+    def api(method, path, body=None, timeout=180):
+        req = _url.Request("https://api.github.com" + path,
+                           data=_json.dumps(body).encode() if body is not None else None,
+                           headers={"Authorization": "token " + tok,
+                                    "Accept": "application/vnd.github+json",
+                                    "User-Agent": "ios3app-build"},
+                           method=method)
+        with _url.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", "replace")
+        return _json.loads(raw) if raw.strip() else {}
+
+    try:
+        ref = api("GET", "/repos/%s/git/ref/heads/main" % repo)
+        base_commit = ref["object"]["sha"]
+    except Exception as e:
+        print("[兜底] 取远端 ref 失败：%s" % e)
+        return False
+    commit = api("GET", "/repos/%s/git/commits/%s" % (repo, base_commit))
+    base_tree = commit["tree"]["sha"]
+    tree = api("GET", "/repos/%s/git/trees/%s?recursive=1" % (repo, base_tree))
+    remote = {e["path"]: (e["sha"], e["mode"])
+              for e in tree.get("tree", []) if e.get("type") == "blob"}
+    print("[兜底] 远端 blob %d 个 / truncated=%s" % (len(remote), tree.get("truncated")))
+
+    # 本地 index 已由 stage() 的 `git add -A` 建好 → 直接读 sha+mode，免去逐文件 hash-object
+    local = {}
+    for line in sh("git ls-files -s", cwd=work).stdout.splitlines():
+        m = re.match(r"^(\d+)\s+([0-9a-f]{40})\s+\d+\t(.*)$", line)
+        if m:
+            local[m.group(3)] = (m.group(1), m.group(2))
+
+    changed = [(rel, os.path.join(work, rel), sha)
+               for rel, (mode, sha) in local.items()
+               if remote.get(rel, (None, None))[0] != sha]
+    gone = [r for r in remote if r not in local]
+    print("[兜底] 需上传 %d / 删除 %d / 复用远端 %d"
+          % (len(changed), len(gone), len(local) - len(changed)))
+
+    def upload(item):
+        rel, p, _ = item
+        with open(p, "rb") as fh:
+            data = base64.b64encode(fh.read()).decode()
+        r = api("POST", "/repos/%s/git/blobs" % repo, {"content": data, "encoding": "base64"})
+        return rel, r["sha"]
+
+    newsha = {}
+    if changed:
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for rel, sha in ex.map(upload, changed):
+                newsha[rel] = sha
+                print("       ↑ %s" % rel)
+
+    entries = []
+    for rel, (mode, sha) in local.items():
+        rm = remote.get(rel, (None, None))[1]
+        entries.append({"path": rel, "mode": rm or mode, "type": "blob",
+                        "sha": newsha.get(rel, sha)})
+    nt = api("POST", "/repos/%s/git/trees" % repo, {"base_tree": base_tree, "tree": entries})
+    nc = api("POST", "/repos/%s/git/commits" % repo,
+             {"message": "iOS 星幕/心屋 免签构建源（公开中转，不含夜航数据）",
+              "tree": nt["sha"], "parents": [base_commit]})
+    api("PATCH", "/repos/%s/git/refs/heads/main" % repo, {"sha": nc["sha"], "force": True})
+    print("[兜底] ✅ 已推送 → %s（%d 文件）" % (nc["sha"][:7], len(entries)))
+    return True
+
+
 def push(work, repo):
     env = dict(os.environ)
     for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
@@ -306,6 +392,10 @@ def push(work, repo):
         if not proxy:
             print("（当前为直连；若网络需代理，确认代理软件已启动后重跑，"
                   "或 FC_GIT_PROXY=http://127.0.0.1:端口 指定）")
+        print("\n[兜底] github.com:443 不通 → 改走 Git Data API（api.github.com 实测可达）")
+        if push_via_api(work, repo):
+            print("\n[push OK] → https://github.com/%s/actions" % repo)
+            return True
         return False
     print("\n[push OK] → https://github.com/%s/actions" % repo)
     return True
