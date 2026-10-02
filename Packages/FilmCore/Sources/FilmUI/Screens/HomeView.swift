@@ -460,7 +460,8 @@ public struct HomeView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
                     ForEach(Array(library.history.prefix(20).enumerated()), id: \.element.id) { i, entry in
-                        Button { router.open(entry.item, from: "continue#\(i)") } label: {
+                        // 2026-10-02（主人）：「继续观看」点海报 = 直接续播（autoplay），不再只弹详情卡。
+                        Button { router.open(entry.item, from: "continue#\(i)", autoplay: true) } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 PosterImage(urlString: entry.item.bestPosterURL?.absoluteString)
                                     .frame(width: 108, height: 160)

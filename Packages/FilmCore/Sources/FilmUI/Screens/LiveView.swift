@@ -955,6 +955,7 @@ struct LivePlayerScreen: View {
 
         }
         .onAppear {
+            LiveDiag.log("进入直播: 表 \(channels.count) 条 健康表=\(LiveHealthIndex.shared.ok)/\(LiveHealthIndex.shared.total) @\(LiveHealthIndex.shared.generatedAt) hasData=\(LiveHealthIndex.shared.hasData)")
             startPlaySmart()
             startWatchdog()
             // 60包：进直播先闪现 3 秒控制层（返回键 + 台名），让用户一眼看到「返回在哪」；随后自动收起。
@@ -1219,6 +1220,9 @@ struct LivePlayerScreen: View {
     /// 并发探活：本台线路里谁先真出流就用谁（全败返回 nil）。
     /// 串行探 6 条要 12~18 秒；并发封顶 2.2 秒，起播等待从「十几秒」压到「两秒内」。
     private func raceBestLine(_ idxs: [Int]) async -> Int? {
+        // 台名先取好再进任务组：外层 `for await` 循环不保证继承 MainActor，
+        // 在那里读 `self.current`（MainActor 隔离的计算属性）会撞并发检查。
+        let chName = current?.name ?? "?"
         await withTaskGroup(of: (Int, Bool).self) { group in
             for i in idxs {
                 group.addTask { @MainActor in
@@ -1227,8 +1231,13 @@ struct LivePlayerScreen: View {
                 }
             }
             for await (i, ok) in group {
-                if ok { group.cancelAll(); return i }
+                if ok {
+                    group.cancelAll()
+                    LiveDiag.log("race ch=\(chName) 首胜=第\(i + 1)条/共\(idxs.count)条")
+                    return i
+                }
             }
+            LiveDiag.log("race ch=\(chName) 本台 \(idxs.count) 条探活全败 → 退回原线起播")
             return nil
         }
     }
@@ -1257,6 +1266,7 @@ struct LivePlayerScreen: View {
         // 唯一的结构差异：点播是 `AVPlayer(url:)` **裸奔**，直播走了「一身参数」。
         // → 起播回归裸 item，先保证「能播」；被证伪的参数日后逐条回归、逐条验证。
         let item = AVPlayerItem(url: ch.url)
+        LiveDiag.log("startPlay ch=\(ch.name) idx=\(index)/\(channels.count) healthAlive=\(LiveHealthIndex.shared.isAlive(ch.url)) url=\(ch.url.absoluteString)")
         // v19 静帧检测：像素输出口只挂在渲染侧（读帧做指纹），不参与网络起播决策，故保留。
         let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -1267,7 +1277,12 @@ struct LivePlayerScreen: View {
         stillFrameTicks = 0
         let p = AVPlayer()
         p.replaceCurrentItem(with: item)
-        p.play()
+        // v40.1（2026-10-02 主人「我要直播好用」）—— 修 v40 自己引入的回归：
+        // v40 连 `playImmediately(atRate:)` 一起删了、退回 `play()`，而 `play()` 受
+        // `automaticallyWaitsToMinimizeStalling`（默认 true）管辖 —— 慢源要"攒够缓冲才出画"，
+        // 正是「起播慢 / 一直在缓冲」的机器层解释。这里只恢复"立即播"，
+        // 其余（UA 头 / 峰值码率 / 前向缓冲 / 暂停不拉流）保持 v40 的裸态不动。
+        p.playImmediately(atRate: 1.0)
         player = p
         UIApplication.shared.isIdleTimerDisabled = true
         lastProgressAt = Date()
@@ -1400,6 +1415,7 @@ struct LivePlayerScreen: View {
             liveStartError = "item.status=failed（无 error 对象）"
         }
         filmLog.error("live startPlay item FAILED: \(liveStartError ?? "nil") url=\(current?.url.absoluteString ?? "?")")
+        LiveDiag.log("item FAILED ch=\(current?.name ?? "?") err=\(liveStartError ?? "nil") url=\(current?.url.absoluteString ?? "?")")
     }
 
     private func reconnectSameURL() {
@@ -1467,6 +1483,7 @@ struct LivePlayerScreen: View {
                             liveStartError = "8s 无进展（item.status=\(it.status.rawValue)）"
                             filmLog.error("live watchdog: 8s no progress, item.status=\(it.status.rawValue) err=\(String(describing: it.error))")
                         }
+                        LiveDiag.log("watchdog 8s 不出画 ch=\(current?.name ?? "?") 第\(failFastTries + 1)次 healthAlive=\(current.map { LiveHealthIndex.shared.isAlive($0.url) } ?? false) url=\(current?.url.absoluteString ?? "?")")
                         failFastTries += 1
                         if failFastTries <= 3 { autoHeal(sameChannelOnly: true) }
                         else {
@@ -1726,5 +1743,23 @@ struct BareVideoContainer: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {
         if vc.player !== player { vc.player = player }
         if vc.videoGravity != gravity { vc.videoGravity = gravity }   // v40：三档比例实时生效
+    }
+}
+
+/// 直播黑匣子（2026-10-02 主人：「我要直播好用 —— 至于该干什么怎么干你比我清楚」）。
+///
+/// 为什么必须由**端上自己**记：直播「不出画」的可能卡点至少三层（选线错 / 探活假活 /
+/// 起播被拒），PC 探针只能证「源此刻活不活」，证不了「App 拿它做了什么」。
+/// 把每次**起播 / 探活竞速 / 看门狗判死 / item 失败**的真实结果写进 UserDefaults，
+/// 随 App 容器落盘 —— `ios_ctrl` 用 HouseArrest 直接拉回核验（**不需要 tunneld、不需要主人动手**）。
+/// 有了它，下一轮就是「读数定案」，不是「再猜一次」。
+enum LiveDiag {
+    static let key = "livediag.log"
+    static func log(_ msg: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        var arr = UserDefaults.standard.stringArray(forKey: key) ?? []
+        arr.append("\(ts) \(msg)")
+        if arr.count > 240 { arr.removeFirst(arr.count - 240) }
+        UserDefaults.standard.set(arr, forKey: key)
     }
 }

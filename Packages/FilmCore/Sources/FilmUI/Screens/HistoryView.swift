@@ -41,7 +41,8 @@ public struct HistoryView: View {
     private var historyList: some View {
         List {
             ForEach(library.history) { entry in
-                Button { router.open(entry.item, from: "历史") } label: {
+                // 2026-10-02（主人）：历史点条目 = 直接续播（同「继续观看」货架口径）。
+                Button { router.open(entry.item, from: "历史", autoplay: true) } label: {
                     HistoryRow(entry: entry)
                 }
                 .buttonStyle(.plain)

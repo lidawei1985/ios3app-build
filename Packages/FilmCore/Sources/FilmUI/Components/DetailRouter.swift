@@ -13,9 +13,15 @@ import FilmCore
 /// 两种病的修法完全不同，不许靠猜。痕迹写进 UserDefaults（随容器落盘，探针可拉取）。
 public final class DetailRouter: ObservableObject {
     @Published public var item: FeedItem?
+    /// 2026-10-02（主人：「点继续播放 —— ①海报直接打开 ②详情页」）：
+    /// 「继续观看」货架 / 观看历史里点条目 = **直接开播**，详情卡仍照常托底
+    /// （播放器是详情卡之上的 fullScreenCover，退出播放器即落到详情页 —— 两个诉求同时满足）。
+    /// 非续播入口（普通海报墙）一律传 false，行为不变。
+    @Published public var autoplay = false
     public init() {}
-    public func open(_ item: FeedItem, from: String = "") {
+    public func open(_ item: FeedItem, from: String = "", autoplay: Bool = false) {
         TapTrace.record(dedupId: item.dedupId, title: item.title, from: from)
+        self.autoplay = autoplay
         // 2026-10-02「点 1 得 2」根修：.sheet(item:) 在 sheet 已展开时换片，
         // SwiftUI 会复用同一 sheet 视图实例，导致 DetailView 的 @State 仍停在旧条目。
         // 这里先关再开，强制 sheet 重新创建，DetailView 的 @State 必重新初始化。
@@ -53,6 +59,13 @@ enum TapTrace {
     static func present(dedupId: String, title: String) {
         let stamp = ISO8601DateFormatter().string(from: Date())
         push("taptrace.present", "\(stamp) [shown] \(title) <\(dedupId)>")
+    }
+    /// 2026-10-02：从「继续观看 / 历史」进来后**真的自动起播**了的那一刻。
+    /// 用来区分「点了没续播」的两种病：没走到起播（autoplay 没触发）还是
+    /// 走到了但起播被拦（player 层问题）—— 与 taptrace 对照即可定案。
+    static func autoplay(dedupId: String, title: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        push("taptrace.autoplay", "\(stamp) [autoplay] \(title) <\(dedupId)>")
     }
 }
 

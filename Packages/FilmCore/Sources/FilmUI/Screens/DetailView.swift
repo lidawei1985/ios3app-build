@@ -22,6 +22,9 @@ public struct DetailView: View {
 
     @State private var showPlayer = false
     @State private var startAtResume = false
+    /// 2026-10-02（主人：「点继续播放 —— ①海报直接打开 ②详情页」）：本实例是否已自动起播过，
+    /// 防重绘把「落地即播」跑第二遍。
+    @State private var autoplayFired = false
     @State private var pendingLine = 0      // 选集进入：目标集（playCandidates 下标）
     @State private var sourceIdx = 0        // 当前选集网格展示的线路（换源循环）
     @State private var lastEpName: String?  // 换源时保持同一集
@@ -142,6 +145,24 @@ public struct DetailView: View {
                          episodeGroups: isTVItem ? episodeGroups : [],
                          onEpisodeChange: { lastEpName = $0 })
                 .environment(\.colorScheme, .dark)   // 播放=视频层，恒深色
+        }
+        // 2026-10-02（主人：「点继续播放 —— ①海报直接打开 ②详情页」）：
+        // 从「继续观看」货架 / 观看历史进来（`router.open(..., autoplay: true)`）→ **落地即续播**，
+        // 不再"先进详情页、再自己找播放键"。播放器是详情卡之上的 fullScreenCover，
+        // 所以 ①直接看片 与 ②详情页 同时成立：退出播放器落在详情页。
+        .task {
+            guard router.autoplay, !autoplayFired else { return }
+            autoplayFired = true
+            // 等 sheet 呈现实例化完成再起播，否则 fullScreenCover 会被 sheet 转场吞掉。
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            // 分类浏览进来的 TVBox 条目进详情页才回源补拉播放地址 —— 自动起播同样要等它。
+            if !item.isPlayable, canRefreshPlay { await refreshTVBoxPlay() }
+            guard item.isPlayable else { return }        // 没源就留在详情页，不硬起、不空转
+            let hist = library.historyEntry(for: item)
+            startAtResume = true                          // 续播入口：恒按历史进度续播
+            if let li = hist?.lineIndex, li >= 0, li < allSourceLines.count { pendingLine = li }
+            TapTrace.autoplay(dedupId: item.dedupId, title: item.title)
+            showPlayer = true
         }
         .task { await store.loadPersonAvatarsIfNeeded() }   // 演员小头像（2026-09-25）
         .task { await loadRelated() }
