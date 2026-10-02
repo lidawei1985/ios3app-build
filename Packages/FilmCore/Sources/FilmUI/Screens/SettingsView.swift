@@ -1816,8 +1816,9 @@ private struct AboutGroupView: View {
                 .stroke(theme.textSecondary.opacity(0.16), lineWidth: 0.5)
         )
         .alert("发现新版本", isPresented: $updater.showUpdate) {
-            Button("立即更新") { updater.installLatest() }
-            Button("稍后", role: .cancel) {}
+            // 2026-10-03：与 App 入口同口径，3 秒自关（见 UpdateChecker.presentThenAutoClose）。
+            Button("立即更新") { updater.dismissUpdate(); updater.installLatest() }
+            Button("稍后", role: .cancel) { updater.dismissUpdate() }
         } message: {
             Text(updater.releaseNote)
         }

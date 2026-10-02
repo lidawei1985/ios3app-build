@@ -70,9 +70,18 @@ public enum LivePool {
             .replacingOccurrences(of: "_", with: "")
             .replacingOccurrences(of: "\u{3000}", with: "")
         // 去中英文括号补充说明（「东方卫视（高清）」→「东方卫视」）
+        //
+        // ⚠️ 2026-10-03 血案：这里原来写的是 `s.removeSubrange(a.lowerBound...b.upperBound)`（**闭**区间）。
+        // 闭区间走的是 `RangeReplaceableCollection.removeSubrange<R: RangeExpression>` 这条泛型重载，
+        // 内部 `ClosedRange.relative(to: s)` 会调 `s.index(after: b.upperBound)`；
+        // 当右括号正好是**串尾**（`CGTN(1080p)`、`BaichengTV[Geo-blocked]`、`河源综合(540p)` 全是这种）
+        // 时，`index(after: endIndex)` ⇒ `_StringGuts.validateCharacterIndex` 断言 ⇒ SIGTRAP 闪退。
+        // 端上崩溃栈铁证：LiveView.boot → withRefilled → LiveRefill.urls → LivePool.normalize → String.index(after:)。
+        // 改**半开**区间 `a.lowerBound..<b.upperBound`（Range 重载，不做 index(after:)），串尾括号即安全。
+        // 静态门禁：scripts/check_swift_string_index.py
         for (open, close) in [("（", "）"), ("(", ")"), ("【", "】"), ("[", "]")] {
             while let a = s.range(of: open), let b = s.range(of: close, range: a.upperBound..<s.endIndex) {
-                s.removeSubrange(a.lowerBound...b.upperBound)
+                s.removeSubrange(a.lowerBound..<b.upperBound)
             }
         }
         let suffices = ["高清版", "标清版", "超清版", "高清", "标清", "超清", "蓝光", "1080P", "720P", "FHD", "HD", "SD", "4K"]

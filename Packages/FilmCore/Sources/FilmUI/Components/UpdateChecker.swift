@@ -35,6 +35,11 @@ public final class UpdateChecker: ObservableObject {
     @Published public var showUpdate = false
     @Published public private(set) var releaseNote = ""
 
+    /// 弹窗自动关的定时任务（2026-10-03 主人钦定：「那个更新弹窗不能弹完 3 秒就关吗？一直在那烦死人了」）
+    private var autoCloseTask: Task<Void, Never>?
+    /// 弹窗自动关闭延时（秒）
+    public static let autoCloseSeconds: Double = 3
+
     private var remoteStamp: String?
     /// 本端 IPA 的 Release 资产名（App 入口处设置：星幕 XingmuISO.ipa / 心屋 XinwuISO.ipa）
     public var assetName: String = ""
@@ -74,12 +79,32 @@ public final class UpdateChecker: ObservableObject {
                 releaseNote = note.isEmpty
                     ? "新版本构建 \(stamp) 已发布，更新由 LiveContainer 自动完成，数据保留。"
                     : note
-                if silent { showUpdate = true }             // 启动静默检查 → 有新版才弹
+                if silent { presentThenAutoClose() }        // 启动静默检查 → 有新版才弹（3 秒自关）
             }
         } catch {
             state = .idle
             if !silent { releaseNote = "检查失败：\(error.localizedDescription)" }
         }
+    }
+
+    /// 弹「发现新版本」并 **3 秒后自动关**（主人 2026-10-03 钦定）。
+    /// 手动触发（设置页）也走同一路径 —— 一致行为，避免两套。
+    /// 关掉后 `state` 仍是 `.available`，设置页那行仍显示「点此更新」，功能不减。
+    private func presentThenAutoClose() {
+        showUpdate = true
+        autoCloseTask?.cancel()
+        autoCloseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.autoCloseSeconds * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            if self.showUpdate { self.showUpdate = false }
+        }
+    }
+
+    /// 用户手点「稍后 / 立即更新」时收掉定时任务，避免重复触发。
+    public func dismissUpdate() {
+        autoCloseTask?.cancel()
+        autoCloseTask = nil
+        showUpdate = false
     }
 
     /// 一键更新：优先 LiveContainer scheme（免电脑直装），未装 LC 时打开 Release 网页兜底。

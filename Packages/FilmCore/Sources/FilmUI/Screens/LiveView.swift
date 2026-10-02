@@ -736,6 +736,8 @@ public struct LiveView: View {
 
     private func channelRow(_ st: LiveStation) -> some View {
         let isNow = st.index == index
+        // 健康数据按**台名归一 key** 存（换表后下标会指向别的台），这里必须用同一个 key。
+        let hkey = LivePool.normalize(st.name)
         return Button {
             hopTries = 0
             tune(to: st.index)
@@ -755,7 +757,7 @@ public struct LiveView: View {
                         .font(.caption2).foregroundStyle(Color.orange)
                 }
                 // ★ 本机实测信号（v45.2）：面板打开即自动巡检测试，坏台当场自愈补源
-                if let a = health[st.index] {
+                if let a = health[hkey] {
                     HStack(spacing: 3) {
                         Circle().fill(a == 0 ? Color.red : Color.green)
                             .frame(width: 6, height: 6)
@@ -763,7 +765,7 @@ public struct LiveView: View {
                             .font(.caption2)
                             .foregroundStyle(a == 0 ? Color.red.opacity(0.95) : Color.green.opacity(0.95))
                     }
-                } else if healthTesting == st.index || healthPending.contains(st.index) {
+                } else if healthTesting == hkey || healthPending.contains(hkey) {
                     Text("测…").font(.caption2).foregroundStyle(.white.opacity(0.35))
                 }
                 Text("\(st.lines.count)线").font(.caption2).foregroundStyle(.white.opacity(0.4))

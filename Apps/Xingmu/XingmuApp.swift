@@ -43,8 +43,9 @@ struct XingmuApp: App {
                     await UpdateChecker.shared.check(silent: true)
                 }
                 .alert("发现新版本", isPresented: $updateChecker.showUpdate) {
-                    Button("立即更新") { updateChecker.installLatest() }
-                    Button("稍后", role: .cancel) {}
+                    // 2026-10-03 主人钦定：弹窗只待 3 秒自关（见 UpdateChecker.presentThenAutoClose）。
+                    Button("立即更新") { updateChecker.dismissUpdate(); updateChecker.installLatest() }
+                    Button("稍后", role: .cancel) { updateChecker.dismissUpdate() }
                 } message: {
                     Text(updateChecker.releaseNote)
                 }

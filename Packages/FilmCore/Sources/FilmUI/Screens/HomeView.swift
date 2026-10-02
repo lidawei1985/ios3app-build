@@ -707,11 +707,12 @@ struct HeroCarousel: View {
         .clipped()
         .animation(.easeInOut(duration: 0.45), value: index)
         .contentShape(Rectangle())
-        // 2026-10-03（主人）：「主视觉海报不要按钮，要点海报出详情页播放」。
-        // 上一版在海报上挂了「播放 / 详情」两颗按钮（主人不要）；能力不删，**全部并到点击上**：
-        // 点海报 = 弹详情页 + 立刻起播（详情卡托底，退出播放器即回到详情页）。
-        // 痕迹仍记 `hero.play`，端上 `taptrace` 可回读核验入口确实吃到点击。
-        .onTapGesture { open(from: "hero.play", autoplay: true) }
+        // 2026-10-03（主人钦定，撤回上一版）：
+        //   「点完主视觉海报直接就播放了，都不用进详情页点播放了！这不允许！」
+        // ⇒ 点海报 **只进详情页**，绝不带 autoplay；起播必须由用户在详情页里自己点「播放」。
+        // 上一版 `autoplay: true`（点海报=详情页+立刻起播）是错的，已撤。
+        // 痕迹仍记 `hero`，端上 `taptrace` 可回读核验入口确实吃到点击。
+        .onTapGesture { open(from: "hero") }
         // 横滑换页（原分页 TabView 的能力，自己实现）：simultaneous 不抢纵向滚动手势。
         .simultaneousGesture(
             DragGesture(minimumDistance: 20).onEnded { v in
