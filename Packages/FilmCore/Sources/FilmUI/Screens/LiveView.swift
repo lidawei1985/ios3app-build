@@ -65,6 +65,12 @@ public struct LiveView: View {
     @State private var refilledStations: Set<String> = []
     /// 正在补源的台名（UI 提示用，避免重复发起）。
     @State private var refillingStation: String?
+    /// 面板巡检结果：**台名归一 key** → 本机实测活的线数（nil = 还没检）。
+    /// 用台名而不是下标做 key：远端保鲜会整体换表，下标会指向**另一个台**（v44.2 踩过）。
+    /// 主人要的「坏了缺了得能知道哪个不出图了」就落在这里 —— 打开面板就能看见，不用一个个点进去试。
+    @State private var health: [String: Int] = [:]
+    @State private var healthPending: [Int] = []
+    @State private var healthTesting: Int?
     /// 表代号：远端保鲜**整体换表**时 +1。
     /// 为什么需要它：`index` 只是数组下标，换表后同一个 int 指向**另一个台**
     /// （v44.2 实测：自体检回来时读 `stations[myIndex].name`，打到日志里成了「黄花城水长城03」，
@@ -382,46 +388,90 @@ public struct LiveView: View {
     @discardableResult
     private func refillIfPossible(reason: String) -> Bool {
         guard stations.indices.contains(index) else { return false }
-        let st = stations[index]
-        let key = LivePool.normalize(st.name)
+        return refillStation(index, name: stations[index].name, reason: reason, quiet: false)
+    }
+
+    /// 补源的实际执行体（**当前台播不出** 与 **面板巡检发现无信号** 共用这一套）。
+    /// `quiet = true`（巡检触发）时不改任何界面/画面 —— 用户可能正在看别的台，
+    /// 补源是后台维护动作，不能把画面抢走。
+    @discardableResult
+    private func refillStation(_ i: Int, name: String, reason: String, quiet: Bool) -> Bool {
+        guard stations.indices.contains(i), stations[i].name == name else { return false }
+        let key = LivePool.normalize(name)
         guard !refilledStations.contains(key), refillingStation == nil else { return false }
-        let excluding = Set(st.lines.map(\.absoluteString))
-        let cands = LivePool.candidates(for: st.name, excluding: excluding, limit: 6)
+        let excluding = Set(stations[i].lines.map(\.absoluteString))
+        let cands = LivePool.candidates(for: name, excluding: excluding, limit: 6)
         guard !cands.isEmpty else {
-            LiveDiag.write("补源无候选 \(st.name)（池里没有这台 / 候选都已在表内）")
+            LiveDiag.write("补源无候选 \(name)（池里没有这台 / 候选都已在表内）")
             return false
         }
         refilledStations.insert(key)
         refillingStation = key
-        let myIndex = index
-        let myName = st.name
-        buffering = false
-        statusText = "本台线路都在恢复中 · 正在自找备用源…"
-        LiveDiag.write("补源开始 \(myName) 候选 \(cands.count) 条（表内 \(st.lines.count) 条已试完，原因=\(reason)）")
+        if !quiet {
+            buffering = false
+            statusText = "本台线路都在恢复中 · 正在自找备用源…"
+        }
+        LiveDiag.write("补源开始 \(name) 候选 \(cands.count) 条（表内 \(stations[i].lines.count) 条已试完，原因=\(reason)）")
         Task { @MainActor in
             let res = await LiveCollector.shared.probe(cands)
-            let alive = cands.compactMap { u -> (URL, Int)? in
+            let aliveList = cands.compactMap { u -> (URL, Int)? in
                 guard let r = res[u.absoluteString], r.ok else { return nil }
                 return (u, r.listMs + r.segMs)
             }.sorted { $0.1 < $1.1 }
             if refillingStation == key { refillingStation = nil }
-            // 体检期间用户可能已经换台/换线 —— 不是同一台就别乱动画面。
-            guard stations.indices.contains(myIndex), stations[myIndex].name == myName else { return }
-            guard let best = alive.first else {
-                LiveDiag.write("补源失败 \(myName) 候选 \(cands.count) 条全坏 → 跨台兜底")
+            // 体检期间用户可能已经换台/换线、或换了表 —— 不是同一台就别乱动。
+            guard stations.indices.contains(i), stations[i].name == name else { return }
+            guard let best = aliveList.first else {
+                LiveDiag.write("补源失败 \(name) 候选 \(cands.count) 条全坏")
                 refilledStations.remove(key)          // 放行：池子/网络变了还能再试
-                finishAbandoned(myName, reason: "补源失败", hopChannel: true)
+                if !quiet { finishAbandoned(name, reason: "补源失败", hopChannel: true) }
                 return
             }
-            stations[myIndex].lines.append(best.0)
-            LiveRefill.add(station: myName, url: best.0)
-            lineTries = 0
-            hopTries = 0
-            LiveDiag.write("补源成功 \(myName) 补入第 \(stations[myIndex].lines.count) 条 " +
-                           "候选 \(cands.count) 条中活 \(alive.count) 条 实测\(best.1)ms url=\(best.0.absoluteString)")
-            tuneRaw(myIndex, stations[myIndex].lines.count - 1)
+            stations[i].lines.append(best.0)
+            LiveRefill.add(station: name, url: best.0)
+            health[LivePool.normalize(name)] = aliveList.count   // 面板立刻反映「这台已被救活」
+            LiveDiag.write("补源成功\(quiet ? "(巡检)" : "") \(name) 补入第 \(stations[i].lines.count) 条 " +
+                           "候选 \(cands.count) 条中活 \(aliveList.count) 条 实测\(best.1)ms url=\(best.0.absoluteString)")
+            if !quiet {
+                lineTries = 0
+                hopTries = 0
+                tuneRaw(i, stations[i].lines.count - 1)
+            }
         }
         return true
+    }
+
+    // MARK: - 面板巡检（「哪个台不出图了得能知道」——不用用户一个个点进去试）
+
+    /// 打开频道面板时，对**看到的那台**做一次本机真测（最多 3 条线），把结果标在列表上。
+    /// **串行**执行：一次只测一台，免得把正在播的流的带宽抢光。
+    /// 实测全坏的台 → 当场触发一次补源（quiet 模式，不打断正在看的画面）。
+    private func checkStation(_ st: LiveStation) {
+        let key = LivePool.normalize(st.name)
+        guard !key.isEmpty, health[key] == nil else { return }
+        guard !healthPending.contains(key), healthTesting != key else { return }
+        healthPending.append(key)
+        pumpHealth()
+    }
+
+    private func pumpHealth() {
+        guard healthTesting == nil, !healthPending.isEmpty else { return }
+        let key = healthPending.removeFirst()
+        guard let i = stations.firstIndex(where: { LivePool.normalize($0.name) == key }) else {
+            pumpHealth(); return
+        }
+        let st = stations[i]
+        let mine = Array(st.lines.prefix(3))
+        healthTesting = key
+        Task { @MainActor in
+            let res = await LiveCollector.shared.probe(mine)
+            let alive = mine.filter { res[$0.absoluteString]?.ok == true }.count
+            health[key] = alive
+            healthTesting = nil
+            LiveDiag.write("面板巡检 \(st.name) 活线 \(alive)/\(mine.count)")
+            if alive == 0 { refillStation(i, name: st.name, reason: "面板巡检无信号", quiet: true) }
+            pumpHealth()
+        }
     }
 
     private func step(_ delta: Int) {
@@ -602,6 +652,7 @@ public struct LiveView: View {
         let cur = currentURL
         fresh = withRefilled(fresh)          // 自愈补进来的线在这张表里也要在
         tableGen &+= 1                       // ★ 换表：异步任务（自体检）据此作废自己的结果
+        health.removeAll()                   // 面板巡检结果按台名存，换表后重新检
         stations = fresh
         LiveDiag.write("远端保鲜生效：台 \(fresh.count)")
         // 新表已含**正在播的这条 URL** 时不动画面：保鲜是后台行为，
@@ -703,6 +754,18 @@ public struct LiveView: View {
                     Image(systemName: "dot.radiowaves.left.and.right")
                         .font(.caption2).foregroundStyle(Color.orange)
                 }
+                // ★ 本机实测信号（v45.2）：面板打开即自动巡检测试，坏台当场自愈补源
+                if let a = health[st.index] {
+                    HStack(spacing: 3) {
+                        Circle().fill(a == 0 ? Color.red : Color.green)
+                            .frame(width: 6, height: 6)
+                        Text(a == 0 ? "无信号" : "活\(a)")
+                            .font(.caption2)
+                            .foregroundStyle(a == 0 ? Color.red.opacity(0.95) : Color.green.opacity(0.95))
+                    }
+                } else if healthTesting == st.index || healthPending.contains(st.index) {
+                    Text("测…").font(.caption2).foregroundStyle(.white.opacity(0.35))
+                }
                 Text("\(st.lines.count)线").font(.caption2).foregroundStyle(.white.opacity(0.4))
             }
             .padding(.horizontal, 10).padding(.vertical, 9)
@@ -710,6 +773,7 @@ public struct LiveView: View {
         }
         .buttonStyle(.plain)
         .id(st.index)
+        .onAppear { checkStation(st) }
     }
 }
 

@@ -146,3 +146,54 @@ jobs:
             artifact/*.ipa.enc
             artifact/art.key.json
           retention-days: 7
+
+      # gh-pages 的 update.json = App「发现新版本」自动更新的数据源。
+      #
+      # 为什么必须补这一段（2026-10-03 实测定位）：**中转仓这条流水线原先没有它**，
+      # 而日常构建全走中转仓 → update.json 长期停在上一次「私有仓构建」时的指纹。
+      # 后果不是"少个提示"，而是：用户装上**最新包**后，App 每次冷启都误报「发现新版本」，
+      # 弹窗把首页盖住、底部 tab 点不动 → **进不去直播**（本次任务就是被它挡住的）。
+      #
+      # 实现口径：**只走 Contents API 覆盖 update.json 一个文件**，
+      # 绝不用 `git push -f gh-pages`（那会把同分支上的 gh-pages 安装页一起冲掉）。
+      - name: Publish update.json (App 更新数据源)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          tok = os.environ["GH_TOKEN"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          stamp = open("/tmp/build_stamp.txt").read().strip()
+          msg = os.popen("git log -1 --pretty=%s").read().strip() or "relay build"
+          def api(method, path, body=None):
+              req = urllib.request.Request(
+                  "https://api.github.com" + path,
+                  data=json.dumps(body).encode() if body is not None else None,
+                  headers={"Authorization": "token " + tok,
+                           "Accept": "application/vnd.github+json",
+                           "User-Agent": "ci"}, method=method)
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  raw = r.read().decode()
+              return json.loads(raw) if raw.strip() else {}
+          sha = None
+          try:
+              sha = api("GET", "/repos/%s/contents/update.json?ref=gh-pages" % repo).get("sha")
+          except Exception as e:
+              print("no existing update.json:", e)
+          content = {
+              "stamp": stamp,
+              "note": msg,
+              "builtAt": os.popen("date -u +%FT%TZ").read().strip(),
+              "apps": {"xingmu": {"asset": "XingmuISO.ipa"},
+                       "xinwu": {"asset": "XinwuISO.ipa"}},
+          }
+          body = {"message": "pages: " + stamp,
+                  "content": base64.b64encode((json.dumps(content, indent=2) + "\n").encode()).decode(),
+                  "branch": "gh-pages"}
+          if sha:
+              body["sha"] = sha
+          api("PUT", "/repos/%s/contents/update.json" % repo, body)
+          print("update.json published: stamp=%s" % stamp)
+          PY
