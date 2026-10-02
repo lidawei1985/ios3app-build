@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>星幕 · 心屋 安装（手机上就能装 · 免费）</title>
+<style>
+  :root{--tx:#e6edf3;--tx2:#9aa7b8;--acc:#4c8dff;--ok:#3fb950;--warn:#f0a02a}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:linear-gradient(165deg,#141d2c,#0b0f16 75%);color:var(--tx);
+       font:15px/1.7 -apple-system,"PingFang SC",sans-serif;min-height:100vh;padding:0 0 36px}
+  .hd{text-align:center;padding:24px 16px 4px}
+  .hd h1{margin:0;font-size:20px}
+  .hd p{margin:5px 0 0;font-size:12.5px;color:var(--tx2)}
+  .wrap{max-width:430px;margin:0 auto;padding:0 14px}
+  .step{margin-top:16px;padding:15px 16px;border-radius:15px;
+        background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.12)}
+  .step h2{margin:0 0 4px;font-size:15.5px;font-weight:700}
+  .step h2 .n{display:inline-grid;place-items:center;width:21px;height:21px;border-radius:50%;
+        background:var(--acc);color:#fff;font-size:12.5px;margin-right:7px;vertical-align:1px}
+  .step .sub{font-size:12px;color:var(--tx2);margin:0 0 12px}
+  .btn{display:block;width:100%;padding:13px;border-radius:12px;border:0;cursor:pointer;
+       background:var(--acc);color:#fff;font-weight:700;font-size:15.5px;text-align:center;text-decoration:none}
+  .btn:active{transform:scale(.98)}
+  .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.28);color:var(--tx);
+             font-weight:500;font-size:13.5px;margin-top:8px;padding:10px}
+  .row{display:flex;align-items:center;gap:11px;margin:14px 0 10px}
+  .ic{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-size:20px;flex:none}
+  .ic.x{background:linear-gradient(135deg,#e0353f,#8b1a24)}
+  .ic.h{background:linear-gradient(135deg,#f0a02a,#c96a10)}
+  .ic.l{background:linear-gradient(135deg,#4c8dff,#2a5fc0)}
+  .nm{font-size:16.5px;font-weight:700}
+  .mt{font-size:11.5px;color:var(--tx2)}
+  .note{font-size:12.5px;color:var(--tx2);line-height:1.85;margin:10px 0 0}
+  .note b{color:var(--tx)}
+  .kbd{background:rgba(255,255,255,.14);padding:1px 6px;border-radius:4px;font-size:11.5px;color:#fff}
+  .tip{margin-top:11px;padding:10px 12px;border-radius:9px;font-size:12.5px;line-height:1.8;
+       background:rgba(240,160,42,.13);border-left:3px solid var(--warn);color:#f3d7a8}
+  .tip b{color:#fff}
+  .tip.ok{background:rgba(63,185,80,.12);border-left-color:var(--ok);color:#b6e8bf}
+  details{margin-top:14px;padding:11px 13px;border-radius:11px;font-size:12.5px;color:var(--tx2);
+          background:rgba(255,255,255,.05)}
+  summary{color:var(--tx);font-weight:600;cursor:pointer}
+  .qrbox{text-align:center;margin:26px 0 0}
+  #qr,#qr2{display:inline-block;background:#fff;padding:9px;border-radius:12px}
+  .cap{font-size:11.5px;color:var(--tx2);margin-top:8px}
+  .bar{text-align:center;font-size:12px;padding:10px;margin-top:14px;border-radius:10px;
+       background:rgba(63,185,80,.14);color:#b6e8bf}
+  ol{margin:8px 0 0;padding-left:19px;font-size:12.5px;line-height:1.95;color:var(--tx2)}
+  ol b{color:var(--tx)}
+  .pc{display:none;text-align:center;padding:30px 16px}
+  .pc h2{font-size:17px;margin:0 0 6px}
+  .pc p{font-size:13px;color:var(--tx2);margin:0}
+</style>
+</head>
+<body>
+<div class="hd">
+  <h1>星幕 · 心屋</h1>
+  <p>全程在 iPhone 上装 · 不用电脑 · 不用花钱</p>
+</div>
+
+<!-- ===== 手机端 ===== -->
+<div class="wrap" id="m">
+
+  <div class="step">
+    <h2><span class="n">1</span>装两个小工具（只此一次）</h2>
+    <p class="sub">一个来自 App Store，一个在 Safari 里点一下</p>
+
+    <div class="row">
+      <span class="ic l">🔒</span>
+      <div><div class="nm">LocalDevVPN</div><div class="mt">App Store 官方免费 · 免电脑签名要用它</div></div>
+    </div>
+    <a class="btn" href="https://apps.apple.com/us/app/localdevvpn/id6755608044">在 App Store 装 LocalDevVPN</a>
+
+    <div class="row">
+      <span class="ic l">🛠️</span>
+      <div><div class="nm">SideInstaller</div><div class="mt">开源免费 · 在手机上装出 SideStore + 容器</div></div>
+    </div>
+    <a class="btn" href="https://sideinstaller.com/">用 Safari 打开官网，点一下装上</a>
+    <a class="btn ghost" href="https://github.com/lidawei1985/ios3app-build/releases/download/latest/SideInstaller.ipa">备用：直接下载安装包（9 MB）</a>
+
+    <ol>
+      <li>打开 <b>SideInstaller</b> → 登录你的 <b>Apple ID</b>（免费账号就行）</li>
+      <li>点 <b>Install SideStore + LiveContainer</b>，等它装完</li>
+      <li>打开 <b>LocalDevVPN</b> 连上</li>
+    </ol>
+    <div class="tip ok">
+      Apple ID 只在你手机本地用，<b>不会上传到我们这里</b>，也不花钱。
+    </div>
+  </div>
+
+  <div class="step">
+    <h2><span class="n">2</span>装 星幕 / 心屋</h2>
+    <p class="sub">容器装好后回到本页，点一下就装</p>
+
+    <div class="row"><span class="ic x">🎬</span><div><div class="nm">星幕</div><div class="mt">海量影视 · 版本 <span id="s-x">…</span></div></div></div>
+    <a class="btn" id="lc-x" href="#">安装 星幕</a>
+
+    <div class="row"><span class="ic h">🧸</span><div><div class="nm">心屋</div><div class="mt">孩子的小影院 · 版本 <span id="s-h">…</span></div></div></div>
+    <a class="btn" id="lc-h" href="#">安装 心屋</a>
+
+    <div class="tip">
+      点了没反应 = 第 1 步还没装好，回去做完再来。<br>
+      弹出「打开 LiveContainer？」→ 点 <b>打开</b> → 里面点 <b>Install</b>。
+    </div>
+  </div>
+
+  <div class="step">
+    <h2><span class="n">3</span>信任一次（30 秒）</h2>
+    <p class="note" style="margin-top:0">
+      第一次打开提示「未受信任」：<span class="kbd">设置 → 通用 → VPN 与设备管理</span> → 点你 Apple ID 那一行 → <b>信任</b>。<br>
+      （iOS 18+ 也可能在 <span class="kbd">设置 → 隐私与安全性</span> 最下面）
+    </p>
+    <div class="tip ok">
+      <b>以后</b>：SideStore 每 7 天<b>自动续签</b>，你不用管；我们出新版本，App 弹窗点 <b>立即更新</b> 即可，数据不丢。
+    </div>
+  </div>
+
+  <div class="bar">✅ 当前版本 <span id="stamp">…</span> · 客 App 免签名，随时可装</div>
+
+  <details>
+    <summary>为什么能免费？</summary>
+    <p style="margin:8px 0 0;line-height:1.9">
+      星幕/心屋跑在 <b>LiveContainer</b> 容器里，<b>自己不需要签名</b>，借容器签名运行。<br>
+      容器由 <b>SideStore 用你自己的免费 Apple ID 在手机上签</b>（7 天一次，自动续），所以不用买 688 的开发者号，也不用连电脑。
+    </p>
+  </details>
+
+  <details>
+    <summary>装不上？看这里</summary>
+    <p style="margin:8px 0 0;line-height:1.9">
+      <b>Apple ID 登录失败</b>：开了双重认证要去 appleid.apple.com 生成<b>应用专用密码</b>填进去。<br>
+      <b>SideInstaller 卡住</b>：先把 LocalDevVPN 连上，重开 App 再试。<br>
+      <b>打开就闪退</b>：信任那一步没做，回第 3 步。<br>
+      <b>图标提示「已过期」</b>：打开 SideStore 刷新一下就好，<b>别删 App</b>（删了数据会没）。
+    </p>
+  </details>
+
+  <div class="qrbox"><div id="qr"></div><div class="cap">把本页发给朋友 · 扫码直达</div></div>
+</div>
+
+<!-- ===== 电脑端 ===== -->
+<div class="pc" id="pc">
+  <h2>请用 iPhone 打开本页</h2>
+  <p>下面的安装全程在手机上完成，不需要电脑</p>
+  <div class="qrbox"><div id="qr2"></div><div class="cap">手机相机扫码打开</div></div>
+  <details style="text-align:left;max-width:430px;margin:22px auto 0">
+    <summary>一定要在电脑上弄（备用）</summary>
+    <p style="margin:8px 0 0;line-height:1.9">
+      Windows：下 <a href="https://github.com/lidawei1985/ios3app-build/releases/download/latest/iloader-windows-x64.exe" style="color:#4c8dff">iloader 一键工具</a>，双击 → 填 Apple ID → 手机与电脑连同一 WiFi 装容器。<br>
+      容器本体：<a href="https://github.com/lidawei1985/ios3app-build/releases/download/latest/LiveContainer%2BSideStore.ipa" style="color:#4c8dff">LiveContainer+SideStore.ipa</a>
+    </p>
+  </details>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+const REL = "https://github.com/lidawei1985/ios3app-build/releases/download/latest/";
+// LiveContainer URL Scheme：宿主已签名，客 App 免签名，随时可更新
+document.getElementById("lc-x").href = "livecontainer://install?url=" + encodeURIComponent(REL + "XingmuISO.ipa");
+document.getElementById("lc-h").href = "livecontainer://install?url=" + encodeURIComponent(REL + "XinwuISO.ipa");
+
+const isiOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+              (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+document.getElementById("m").style.display  = isiOS ? "block" : "none";
+document.getElementById("pc").style.display = isiOS ? "none"  : "block";
+
+fetch("update.json", {cache:"no-store"}).then(r=>r.json()).then(j=>{
+  const s = j.stamp || "?";
+  document.getElementById("s-x").textContent = s;
+  document.getElementById("s-h").textContent = s;
+  document.getElementById("stamp").textContent = s;
+}).catch(()=>{ document.getElementById("stamp").textContent = "未知"; });
+
+new QRCode(document.getElementById(isiOS ? "qr" : "qr2"), {
+  text: window.location.href, width: 150, height: 150,
+  colorDark: "#111", colorLight: "#fff", correctLevel: QRCode.CorrectLevel.M
+});
+</script>
+</body>
+</html>
