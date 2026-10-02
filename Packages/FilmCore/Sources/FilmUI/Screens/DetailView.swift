@@ -116,26 +116,65 @@ public struct DetailView: View {
             .padding(.bottom, 40)
         }
         .background(heroTintBackground.ignoresSafeArea())
-        // 详情卡形态：无导航栏，右上浮层「收藏 + 关闭」（原型同款）。
+        // ★★ 2026-10-03 主人：「详情页要能返回能关闭」「关闭点好几次关不掉」——**根因与修法**：
+        //   旧写法把「收藏 + 关闭」浮在**贴 sheet 顶边 10pt** 的位置，而这张卡是
+        //   `.presentationDetents([.fraction(0.88)])` 的 sheet —— 顶边那一条正是系统的
+        //   **下拉关闭手势区**，命中点落在手势区边界上 → 系统把 tap 当拖拽吞掉，
+        //   于是「有时能关、多数要点好几次」（实测：页中间的「续播」一击即中，
+        //   同页顶部浮层连点三次毫无反应，证明不是坐标问题而是这一层被手势区吃了）。
+        //   修法三条：
+        //     ① 命中区**实心放大到 44×44**（HIG 最小可点尺寸）+ `contentShape`，
+        //        不再只有 17pt 的字形吃触摸；
+        //     ② 往下挪出抓取区（top 10 → 22）+ 左上角补一个 44×44 的**返回**，
+        //        与直播页同口径（左返回 / 右关闭），「能返回能关闭」两条路都通；
+        //     ③ 保留系统下拉关闭与拖拽把手作第三条退路。
+        .overlay(alignment: .topLeading) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)          // 实心命中区（不是字形）
+                    .contentShape(Rectangle())
+                    .filmGlass(cornerRadius: 999)
+                    .overlay(Circle().stroke(.white.opacity(0.16), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .shadow(color: .black.opacity(0.45), radius: 3, y: 1)
+            .padding(.leading, 12)
+            .padding(.top, 22)                             // 挪出 sheet 抓取区
+        }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 22) {
+            HStack(spacing: 10) {
                 Button {
                     library.toggleFavorite(item)
                 } label: {
                     Image(systemName: library.isFavorite(item) ? "heart.fill" : "heart")
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(library.isFavorite(item) ? theme.accent : .white)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                        .filmGlass(cornerRadius: 999)
+                        .overlay(Circle().stroke(.white.opacity(0.16), lineWidth: 1))
                 }
+                .buttonStyle(.plain)
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                        .filmGlass(cornerRadius: 999)
+                        .overlay(Circle().stroke(.white.opacity(0.16), lineWidth: 1))
                 }
+                .buttonStyle(.plain)
             }
-            .font(.system(size: 17, weight: .semibold))
             .shadow(color: .black.opacity(0.45), radius: 3, y: 1)
-            .padding(.trailing, 16)
-            .padding(.top, 10)
+            .padding(.trailing, 12)
+            .padding(.top, 22)                             // 挪出 sheet 抓取区
         }
         .fullScreenCover(isPresented: $showPlayer) {
             PlayerScreen(item: item, startAtResume: startAtResume,
