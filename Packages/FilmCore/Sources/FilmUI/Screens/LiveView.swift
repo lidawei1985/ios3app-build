@@ -365,8 +365,15 @@ public struct LiveView: View {
 
     private func tune(to i: Int, pos: Int = 0) {
         guard stations.indices.contains(i) else { return }
-        // 换台（不是同台换线）→ 试线记录与跨台计数都重来。
-        if i != index { triedURLs.removeAll(); hopTries = 0 }
+        // 换台（不是同台换线）→ 试线记录重来。
+        // ★★ 2026-10-03 真机 bug 收口：**这里绝对不许清 hopTries**。
+        //   旧写法 `if i != index { triedURLs.removeAll(); hopTries = 0 }` 是「跨台兜底
+        //   无限循环」的根源：finishAbandoned 靠 `hopTries < 6` 封顶，而它每次兜底都调
+        //   `tune(to: nxt)`，一跳进新台 hopTries 就被清零 → 上限判据永远为假 → 台台跳过去、
+        //   台台都「正在起播」，主人看到的就是「一直加载十几分钟不播」。
+        //   （与 tuneRaw 里 `lineTries = 0` 是同一类「计数器被清零导致上限失效」的坑。）
+        //   hopTries 只在**确实是用户主动换台**时归零：step() / 频道列表点击 / 换成出画。
+        if i != index { triedURLs.removeAll() }
         let st = stations[i]
         let order = rankedLines(st).filter { !triedURLs.contains(st.lines[$0].absoluteString) }
         guard !order.isEmpty else { statusText = "本台没有可用线路"; return }
@@ -410,7 +417,13 @@ public struct LiveView: View {
         tuneAt = Date()
         linePlayed = false
         buffering = false
-        statusText = "正在起播…  \(name)"          // 新线必提示（换台黑屏时用户要知道在加载）
+        // 新线必提示（换台黑屏时用户要知道在加载）。
+        // ★ 2026-10-03：跨台兜底链上的换台要显示「自动换台 N/6」——否则用户只看到一个
+        //   一直不动的「正在起播」，分不清是卡死还是在自动找台（主人反馈的原话就是
+        //   「一直在这加载」）。hopTries 只在用户主动换台/出画时才归零（见 tune 注释）。
+        statusText = hopTries > 0
+            ? "本台线路暂不可用 · 自动换台 \(hopTries)/6…  \(name)"
+            : "正在起播…  \(name)"
         tryAudioSession()
     }
 
@@ -444,8 +457,26 @@ public struct LiveView: View {
         // 只在本台从未出过画时才跨台兜底，且上限 6 台。
         if hopChannel, !linePlayed, hopTries < 6, stations.count > 1 {
             hopTries += 1
-            let nxt = (index + 1) % stations.count
-            LiveDiag.write("本台全死(\(reason)) \(name) → 跨台兜底 #\(hopTries) → \(stations[nxt].name)")
+            // ★ 2026-10-03 真机实测改：**别跳到另一个全死的台**。
+            //   旧写法固定跳 index+1，实测在手机上会连着跳进一串「本机压根没活线」的台
+            //   （CCTV-6→7→8→9→10→11 每台只撑 2~8 秒）→ 用户看到的就是「一直在起播」。
+            //   现在：优先跳到**本机已知有活线**的台（本会话实测耗时 / 跨会话体检镜像都算）；
+            //   一个都没有时才退回 index+1（表内顺序仍有意义）。
+            var nxt = (index + 1) % stations.count
+            for k in 1..<stations.count {
+                let cand = (index + k) % stations.count
+                let st2 = stations[cand]
+                let good = st2.lines.contains { u in
+                    if probeMs[u.absoluteString] != nil { return true }
+                    if let r = LiveCollector.cached(u), r.ok,
+                       Date().timeIntervalSince(r.at) <= 6 * 3600 { return true }
+                    return LiveSourceHealth.shared.score(u) > 0
+                }
+                if good { nxt = cand; break }
+            }
+            LiveDiag.write("本台全死(\(reason)) \(name) → 跨台兜底 #\(hopTries)/6 → \(stations[nxt].name)")
+            // 让用户看见「在自动找台」，而不是盯着一个像是卡死的「正在起播」。
+            statusText = "本台暂无可用线路 · 正在试第 \(hopTries)/6 个台（\(stations[nxt].name)）"
             tune(to: nxt)
             return
         }
