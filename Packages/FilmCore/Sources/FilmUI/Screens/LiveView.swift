@@ -299,10 +299,12 @@ public struct LiveView: View {
         var ordered: [LiveChannel] = []
         if let sel = pool.first(where: { $0.key == activeSourceKey }) { ordered += sel.chs }
         for r in pool where r.key != activeSourceKey { ordered += r.chs }
-        var seenURLs = Set<String>()
+        var seenKeys = Set<String>()   // 去重键 = LiveChannel.id（名+URL），不是只按 URL
         var nameCount: [String: Int] = [:]
         var out: [LiveChannel] = []
-        for ch in ordered where seenURLs.insert(ch.url.absoluteString).inserted {
+        // 只按 URL 去重会把「共用同一路流」的整台吞掉（云端表实测 20 台）；
+        // 改按 LiveChannel.id 去重：同台多线路保留、跨源同表镜像仍被合并。
+        for ch in ordered where seenKeys.insert(ch.id).inserted {
             let base = ch.name.firstIndex(of: "·").map { String(ch.name[..<$0]) } ?? ch.name
             let clean = base.replacingOccurrences(of: " ", with: "")
             if let n = nameCount[clean] {
@@ -671,11 +673,13 @@ struct LiveChannelList: View {
             Button {
                 onPick(row.ch)
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    // 台标（与 TV 端星幕同源：包内优先 -> 远程 tvg-logo -> 序号兜底）
+                    LiveLogo(channel: row.ch, index: row.idx)
                     Text(String(format: "%02d", row.idx))
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(isNow ? theme.accent : .secondary)
-                        .frame(minWidth: 26, alignment: .leading)
+                        .frame(minWidth: 22, alignment: .leading)
                     Text(row.ch.name)
                         .font(.subheadline.weight(isNow ? .semibold : .regular))
                         .foregroundStyle(isNow ? theme.accent : .primary)
@@ -768,12 +772,10 @@ struct LivePlayerScreen: View {
     @State private var lastFrameHash: UInt64?
     @State private var stillFrameTicks = 0
     /// v40（2026-10-02 起播根因手术）：起播/重连的真实错误（AVPlayerItem.error 的
-    /// domain#code + 描述）透传到缓冲横幅与 syslog。此前只有笼统「缓冲中」，
-    /// 真机复现时拿不到一条可用判据，只能靠猜——先补上可观测性，再谈修。
+    /// domain#code + 描述）透传到缓冲横幅与 syslog，不再只给笼统「缓冲中」。
     @State private var liveStartError: String?
     /// v40（主人 2026-10-02 新需求）：直播画面比例三档循环
-    /// 0=原始（保持比例，留黑边）/ 1=裁切（填满屏幕，裁掉溢出）/ 2=拉伸（全屏变形）。
-    /// 用 @AppStorage 记住选择，跨启动不丢。
+    /// 0=原始（保持比例留黑边）/ 1=裁切（填满裁溢出）/ 2=拉伸（全屏变形）。@AppStorage 记忆。
     @AppStorage("live.aspectMode") private var aspectMode = 0
     @State private var watchdog: Task<Void, Never>?
     @State private var timeObs: Any?
@@ -794,6 +796,10 @@ struct LivePlayerScreen: View {
     /// 这里再挂一个**挂在 keyWindow 上的 UIKit 按钮**，物理免疫 hit-testing 被吃，
     /// 与 SwiftUI 那份显隐同步（同一语义：退出直播）。
     @State private var winBack: WindowBackButton?
+    /// 2026-10-01：窗口级返回键**挂载失败**时才为 true。
+    /// 有它 = topBar 把 SwiftUI 箭头画回来兜底（否则挂载失败就一个返回键都没有）。
+    /// 正常情况下它为 false，左上角只有窗口级那一个箭头 → 根治「一大一小叠加」。
+    @State private var winBackDown = false
     @ObservedObject private var switchBus = LiveSwitchBus.shared
 
     init(channels: [LiveChannel], startIndex: Int = 0,
@@ -806,7 +812,32 @@ struct LivePlayerScreen: View {
         self.onRequestExit = onRequestExit
         self.onClose = onClose
         self.onPickSource = onPickSource
-        _index = State(initialValue: channels.isEmpty ? 0 : min(max(startIndex, 0), channels.count - 1))
+        let start = channels.isEmpty ? 0 : min(max(startIndex, 0), channels.count - 1)
+        // v24 择优起播：从列表/上游进来的起始台，若第一条是地表已知的死线，
+        // 直接落到**同台的真实活线**，不再撞死线后干等 8~40 秒由看门狗换线。
+        _index = State(initialValue: Self.pickAliveIndex(channels, from: start))
+    }
+
+    /// v24 择优起播（**只在本台范围内换线，绝不跳台**）：
+    /// ① 当前这条在地表里明确存活 → 原样不动（主源恒存，不动好源）；
+    /// ② 当前这条是死线、同台另有地表明确的活线 → 落到那条（保持表内优先级）；
+    /// ③ 地表没数据 / 本台无明确活线 → 原样不动，交给运行期真探活兜底。
+    /// 表里「不在」= 未知，绝不据此判死，绝不替换源。
+    static func pickAliveIndex(_ channels: [LiveChannel], from idx: Int) -> Int {
+        let h = LiveHealthIndex.shared
+        guard h.hasData, channels.indices.contains(idx) else { return idx }
+        if h.isAlive(channels[idx].url) { return idx }
+        let base = baseName(channels[idx].name)
+        let same = channels.indices.filter { baseName(channels[$0].name) == base }
+        if let hit = same.first(where: { h.isAlive(channels[$0].url) }) { return hit }
+        return idx
+    }
+
+    /// 台名归一（去「·备N」后缀 + 去空格）：同台多线路判定用。
+    static func baseName(_ name: String) -> String {
+        var n = name
+        if let dot = n.firstIndex(of: "·") { n = String(n[..<dot]) }
+        return n.replacingOccurrences(of: " ", with: "")
     }
 
     private var current: LiveChannel? {
@@ -872,7 +903,7 @@ struct LivePlayerScreen: View {
                 }
             }
 
-            if showList || controlsPeek {
+            if backVisible {
                 topBar
             }
 
@@ -924,7 +955,7 @@ struct LivePlayerScreen: View {
 
         }
         .onAppear {
-            startPlay()
+            startPlaySmart()
             startWatchdog()
             // 60包：进直播先闪现 3 秒控制层（返回键 + 台名），让用户一眼看到「返回在哪」；随后自动收起。
             controlsPeek = true
@@ -932,12 +963,16 @@ struct LivePlayerScreen: View {
             // 61包：窗口级返回键兜底（与 SwiftUI 那份同显隐、同动作）
             installWindowBack()
         }
-        .onChange(of: showList) { v in
-            winBack?.setVisible(v || controlsPeek)
-        }
-        .onChange(of: controlsPeek) { v in
-            winBack?.setVisible(v || showList)
-        }
+        .onChange(of: showList) { _ in syncWinBack() }
+        .onChange(of: controlsPeek) { _ in syncWinBack() }
+        // 2026-10-01（用户：「如果出现这种情况想退出都不行」）：
+        // 缓冲/重连/起播/失败这些「画面不可控」的状态，返回键**必须可用**。
+        // 旧口径只看 showList||controlsPeek —— 控制层 3 秒收起后窗口级返回键也一起消失，
+        // 那时唯一可见的「返回」是 stallBanner 里的 SwiftUI 按钮，正是会被 LiveContainer
+        // 吞掉 tap 的那一类 → 卡住就真退不出。现在这些状态一律把窗口级按钮显出来。
+        .onChange(of: stallBanner) { _ in syncWinBack() }
+        .onChange(of: tuning) { _ in syncWinBack() }
+        .onChange(of: failed) { _ in syncWinBack() }
         .onDisappear {
             stopPlay()
             watchdog?.cancel()
@@ -980,9 +1015,28 @@ struct LivePlayerScreen: View {
     /// 动作与 SwiftUI 那份完全一致（退出直播）；装完按当前显隐状态对齐。
     private func installWindowBack() {
         guard winBack == nil else { return }
-        let b = WindowBackButton.install { exitAction() }
-        b.setVisible(showList || controlsPeek, animated: false)
+        winBackDown = false
+        // onGiveUp：窗口级按钮 24×50ms 重试后仍挂不上 → 把 SwiftUI 箭头放回来兜底。
+        let b = WindowBackButton.install(onGiveUp: { winBackDown = true }) { exitAction() }
         winBack = b
+        syncWinBack()
+    }
+
+    /// 窗口级返回键显隐的**唯一出口**（2026-10-01 用户：「如果出现这种情况想退出都不行」）。
+    /// 旧口径只看 `showList || controlsPeek` —— 控制层 3 秒收起后窗口级按钮也一起隐形，
+    /// 那时屏上唯一可见的「返回」是 stallBanner / failureOverlay 里的 SwiftUI 按钮，
+    /// 而 SwiftUI 按钮在 LiveContainer 里偶发被全屏手势层吞掉 tap（50/58 包老毛病）
+    /// → **卡住时就真退不出**。现口径：只要画面处于「不可控状态」
+    /// （缓冲 stallBanner / 起播换台 tuning / 彻底失败 failed）或控制层可见，返回键一律常驻。
+    private func syncWinBack() {
+        winBack?.setVisible(backVisible, animated: false)
+    }
+
+    /// 「返回键该不该在屏上」的**唯一口径**（2026-10-01）：
+    /// = 控制层可见（列表/3 秒闪现）**或** 画面处于不可控状态（缓冲/起播换台/彻底失败）。
+    /// topBar（含 SwiftUI 兜底箭头）与窗口级按钮共用它，保证两者永远同显隐。
+    private var backVisible: Bool {
+        showList || controlsPeek || stallBanner || tuning || failed
     }
 
     /// 返回键统一语义（两份按钮共用）= 退出直播（收列表用「点一下画面」，或列表状态点左侧空白）。
@@ -998,17 +1052,32 @@ struct LivePlayerScreen: View {
                 // 58包：返回键并回控制层（SwiftUI 普通按钮）——窗口级 WindowBackButton 在 LC
                 // 里「有时不在/点不动」是老大难（50 包已在播放页根治），直播页同理论。
                 // 语义固定 = 退出直播（收列表交给「点一下画面」手势，不再一按就收列表）。
-                Button {
-                    exitAction()
-                } label: {
-                    Image(systemName: "chevron.left").font(.title3.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.75), radius: 4, y: 1)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                // 2026-10-01（用户：「返回的那个按钮是一大一小叠加在一起的」）：
+                // 窗口级 WindowBackButton 与这份 SwiftUI 箭头同显隐、同位置（都在左上 safeArea+10/+6）
+                // → 两个箭头错位叠在一起，就是「一大一小」。
+                // winBack 物理免疫 LC 吞 tap（更可靠），所以只要窗口级按钮**在**（winBack != nil）
+                // 且**没挂载失败**（!winBackDown），这里就只留 44pt 占位、不画箭头：
+                // 视觉只剩一个返回键，点击也统一走 winBack。
+                // 仅当：① 还没装（winBack == nil）或 ② 窗口级按钮 24×50ms 重试后仍挂不上
+                // （winBackDown == true）→ 才把 SwiftUI 箭头画回来当兜底，避免「一个都不剩」。
+                Group {
+                    if winBack == nil || winBackDown {
+                        Button {
+                            exitAction()
+                        } label: {
+                            Image(systemName: "chevron.left").font(.title3.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.75), radius: 4, y: 1)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)     // 61包：防父级手势吃掉 tap（列表开着时返回键必须点得动）
+                        .accessibilityLabel("返回")
+                    } else {
+                        // 占位：让窗口级按钮落在同一位置，标题不被挤动
+                        Color.clear.frame(width: 44, height: 44)
+                    }
                 }
-                .buttonStyle(.plain)     // 61包：防父级手势吃掉 tap（列表开着时返回键必须点得动）
-                .accessibilityLabel("返回")
                 VStack(alignment: .leading, spacing: 2) {
                     Text(current?.name ?? "直播").font(.subheadline.weight(.medium))
                         .foregroundStyle(.white).lineLimit(1)
@@ -1102,8 +1171,11 @@ struct LivePlayerScreen: View {
             showList = false
             return
         }
-        index = idx
-        pinned = channels[idx]   // 60包：换台同步更新 pinned（表刷新仍不改台）
+        // v24 择优起播：用户点的这一台，若第一条是地表已知死线，直接落到同台活线
+        // （换台立刻出画，不必先黑屏缓冲、等看门狗换线）。只在本台内换线，绝不跳台。
+        let resolved = Self.pickAliveIndex(channels, from: idx)
+        index = resolved
+        pinned = channels[resolved]   // 60包：换台同步更新 pinned（表刷新仍不改台）
         failed = false
         switchedAt = Date()      // v17：幻灯片检测豁免窗口从换线时刻起算
         slideTries = 0
@@ -1115,12 +1187,51 @@ struct LivePlayerScreen: View {
         //    否则旧流的分片下载与解码会和新的抢带宽，新台起播被拖慢；
         // ② 立刻开始拉新流（不等列表收起、不等动画）。
         stopPlay()
-        startPlay()
+        startPlaySmart()
         // ③ 列表在**新流开播的同时**收起：换台生效是毫秒级，用户不会再怀疑"点了没反应"。
         showList = false
     }
 
     // MARK: - 播放与自动换源
+
+    /// v24 择优起播（主人硬诉求「我要看上直播」）：
+    /// 离线地表（`live_health.json`）只是**先验**，不是结论 —— 用户所在网络（运营商）
+    /// 能达的源与出包探针环境未必一致。真正确定的只有「此刻实测」。
+    ///   ① 当前线在地表里明确活 → 直接起播（绝大多数情况零延迟，不动好源）；
+    ///   ② 不确定/已知死 → **并发探活本台全部线路**（~2 秒出结果），首个真出流的立即起播；
+    ///      严格只在本台内换线，绝不跳台、绝不改任何源；
+    ///   ③ 全不可达 → 照常按当前线起播，交给看门狗（不无限转圈）。
+    private func startPlaySmart() {
+        guard let ch = current else { return }
+        if LiveHealthIndex.shared.isAlive(ch.url) { startPlay(); return }
+        let base = normalized(ch.name)
+        let same = channels.indices.filter { normalized(channels[$0].name) == base }
+        guard same.count > 1 else { startPlay(); return }   // 单线路没得挑
+        stopPlay()
+        tuning = true
+        Task { @MainActor in
+            let winner = await raceBestLine(same)
+            guard !closed else { return }
+            if let w = winner, w != index { switchTo(w) } else { startPlay() }
+        }
+    }
+
+    /// 并发探活：本台线路里谁先真出流就用谁（全败返回 nil）。
+    /// 串行探 6 条要 12~18 秒；并发封顶 2.2 秒，起播等待从「十几秒」压到「两秒内」。
+    private func raceBestLine(_ idxs: [Int]) async -> Int? {
+        await withTaskGroup(of: (Int, Bool).self) { group in
+            for i in idxs {
+                group.addTask { @MainActor in
+                    let ok = await self.probeLine(self.channels[i].url, timeout: 2.2)
+                    return (i, ok)
+                }
+            }
+            for await (i, ok) in group {
+                if ok { group.cancelAll(); return i }
+            }
+            return nil
+        }
+    }
 
     private func startPlay() {
         guard let ch = current else { return }
@@ -1432,7 +1543,16 @@ struct LivePlayerScreen: View {
         let curPos = channels.indices.contains(index) && normalized(channels[index].name) == k
             ? index : (channels.firstIndex(where: { $0.id == ch.id }) ?? pos)
         let at = lineIdx.firstIndex(of: curPos) ?? pos
-        let next = lineIdx[(at + 1) % lineIdx.count]
+        // v24：优先落到「地表明确的活线」——从当前往后环形扫，命中活线就用它；
+        // 没有地表数据/本台无明确活线 → 退回原「下一条」行为。
+        let h = LiveHealthIndex.shared
+        var next = lineIdx[(at + 1) % lineIdx.count]
+        if h.hasData {
+            for step in 1..<lineIdx.count {
+                let cand = lineIdx[(at + step) % lineIdx.count]
+                if h.isAlive(channels[cand].url) { next = cand; break }
+            }
+        }
         lastProgressAt = Date()
         reconnectTries = 0
         switchTo(next)
@@ -1472,11 +1592,7 @@ struct LivePlayerScreen: View {
         stepChannel(1)
     }
 
-    private func normalized(_ name: String) -> String {
-        var n = name
-        if let dot = n.firstIndex(of: "·") { n = String(n[..<dot]) }
-        return n.replacingOccurrences(of: " ", with: "")
-    }
+    private func normalized(_ name: String) -> String { Self.baseName(name) }
 
     /// v19 静帧指纹：对像素帧跨行抽样 ~2K 点做 FNV 哈希（CPU 开销趋近 0）。
     /// 静态占位卡（时段禁播）各帧解码结果一致 → 哈希相同；真实直播画面必然变化。

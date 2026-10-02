@@ -88,6 +88,8 @@ public actor TVBoxSiteClient {
 
     public let site: TVBoxSite
     private let session: URLSession
+    /// 搜索专用短会话（见 init 注释：78 源实测，慢源能把整批拖死 → 搜索必须短超时）
+    private let searchSession: URLSession
 
     public init(site: TVBoxSite) {
         self.site = site
@@ -98,9 +100,17 @@ public actor TVBoxSiteClient {
         cfg.timeoutIntervalForRequest = 30
         cfg.timeoutIntervalForResource = 60
         session = URLSession(configuration: cfg)
+        // 2026-10-02「搜索好慢」实测 78 源同一关键词：中位 2.1s，但**最慢 38.6s**，
+        // 且 6 个源超过 22s。搜索是**交互操作**，等 30s 的源毫无意义——
+        // 搜的关键词在任何源都能搜到，慢源的结果对用户没有增量价值，只会拖住整屏。
+        // 故搜索单独走 8s/12s 的短会话；分类/详情仍用上面的长会话（那里慢一点可以忍）。
+        let s = URLSessionConfiguration.default
+        s.timeoutIntervalForRequest = 8
+        s.timeoutIntervalForResource = 12
+        searchSession = URLSession(configuration: s)
     }
 
-    private func api(_ query: [String: String]) async -> Data? {
+    private func api(_ query: [String: String], via sess: URLSession? = nil) async -> Data? {
         guard var comps = URLComponents(string: site.api), comps.scheme != nil else { return nil }
         var items = comps.queryItems ?? []
         for (k, v) in query { items.append(URLQueryItem(name: k, value: v)) }
@@ -109,7 +119,7 @@ public actor TVBoxSiteClient {
         var req = URLRequest(url: url)
         // TVBox 原版以 okhttp UA 出请求；部分 CMS 对空/默认 UA 返回空体
         req.setValue("okhttp/4.10.0", forHTTPHeaderField: "User-Agent")
-        if let (data, resp) = try? await session.data(for: req),
+        if let (data, resp) = try? await (sess ?? session).data(for: req),
            (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
             // GBK 源归一化为 UTF-8（FilmJSON 解码只认 UTF-8；TVBox 原版自动转码）
             return Self.normalizeUTF8(data) ?? data
@@ -291,9 +301,13 @@ public actor TVBoxSiteClient {
 
     /// 搜索（ac=detail&wd=）。空结果≠源坏（可能真没这片），只有网络层失败才记熔断。
     public func search(_ keyword: String) async -> [FeedItem] {
-        guard let data = await api(["ac": "detail", "wd": keyword]),
+        // 走短会话（8s）：慢源不再拖住整屏搜索，见 init 注释里的实测数据
+        guard let data = await api(["ac": "detail", "wd": keyword], via: searchSession),
               let rsp = decodeCMS(data) else {
-            SourceHealth.shared.record(site.key, ok: false)
+            // 空结果≠源坏（可能真没这片），只有网络层失败才记熔断。
+            // 但**被预算取消**不算失败（见 GlobalSiteSearch 的 budget：到点就 cancelAll），
+            // 否则每轮搜完都会把"还没轮到"的源误判成坏源、沉底后再也浮不上来。
+            if !Task.isCancelled { SourceHealth.shared.record(site.key, ok: false) }
             return []
         }
         SourceHealth.shared.record(site.key, ok: true)

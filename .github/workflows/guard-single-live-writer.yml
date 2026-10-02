@@ -1,0 +1,67 @@
+name: guard-single-live-writer
+
+# ⛔ 直播表「唯一作者」守卫（2026-10-01 建立：从根源焊死，防复活）
+#
+# 背景（主人 2026-10-01 指令：「这个问题能不能彻底解决 还有被启动的可能！那就从根源解决掉」）：
+#   `v1/live/normal.m3u` 的【唯一作者】= TV 侧 filmcollector-pages-xingmu 仓的 live-build.yml
+#   （每 6h、名册驱动、继承现表「只补不换」；见该文件头部注释）。
+#   iOS 侧历史上存在过一个 live-refresh.yml（每 6h 全量重排重写同一路径），
+#   两个写入者互相覆盖 → 用户实测「好源也换、一直替换」= 坑 P-2026-09-30-G。
+#   2026-10-01 已把 iOS 侧残留全部清出仓库（备份在 F:/IOS3APP/_bak_live_refresh_20261001）。
+#
+# 本守卫作用：任何一次 push / PR，只要把 live-refresh.yml（或任何试图写 normal.m3u 的
+#   第二个 workflow）带回本仓，CI 立刻变红，阻止复发。
+#
+# 为什么长在这里：本仓每次推送 = 整仓重建（远端历史被重置），守卫必须放在
+#   「推送源」里才会随之进包生效 —— 直接放远端会被下一次推仓冲掉。
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+      - "tools/live/**"
+      - "ios_ctrl/live_refresh*"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "tools/live/**"
+      - "ios_ctrl/live_refresh*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 禁止第二个直播表写入者
+        run: |
+          set -eu
+          fail=0
+
+          # ① 明令禁止的文件名：出现即红
+          for f in .github/workflows/live-refresh.yml \
+                   .github/workflows/live-refresh.yaml \
+                   .github/workflows/live_refresh.yml; do
+            if [ -f "$f" ]; then
+              echo "::error::检测到被明令禁止的 $f —— 直播表 normal.m3u 的唯一作者是 TV 侧 live-build（filmcollector-pages-xingmu）。iOS 侧禁止再启用第二个写入者：两个写入者每 6h 互相覆盖，会重演「好源也换」（P-2026-09-30-G）。"
+              fail=1
+            fi
+          done
+
+          # ② 扫全部 workflow：除本守卫外，任何引用 normal.m3u 的都算潜在第二写入者
+          hits="$(grep -rl 'normal\.m3u' .github/workflows 2>/dev/null | grep -v 'guard-single-live-writer' || true)"
+          if [ -n "$hits" ]; then
+            echo "::error::以下 workflow 引用了 normal.m3u（疑似第二个直播表写入者）："
+            echo "$hits"
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::守卫拦截：直播表「唯一作者」契约见 docs/DATA_CONTRACT.md"
+            exit 1
+          fi
+          echo "✅ guard 通过：本仓无第二个直播表写入者。"

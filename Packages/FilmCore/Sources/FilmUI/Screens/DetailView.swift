@@ -12,7 +12,8 @@ public struct DetailView: View {
     /// 从相关推荐连点两部片时 SwiftUI 可能复用同一个 DetailView 实例，
     /// @State 不会重新初始化 → 详情页仍显示上一部（用户报「相关推荐点进去不是推荐的这个」）。
     /// 保留入参 + onChange 兜底重同步，根除实例复用导致的错片。
-    private let incoming: FeedItem
+    /// 2026-10-02 改 var：let 在视图复用时 SwiftUI 不会把新入参刷进旧实例，onChange 失效。
+    private var incoming: FeedItem
     @EnvironmentObject private var library: UserLibrary
     @EnvironmentObject private var store: CatalogStore
     @EnvironmentObject private var router: DetailRouter
@@ -90,7 +91,7 @@ public struct DetailView: View {
                                 ForEach(related) { rel in
                                     // 相关推荐也走详情卡弹层：router.item 换片 → sheet 内容 .id 重建
                                     //（@State 必重新初始化，根除「点相关推荐进的不是这个」的实例复用 BUG）。
-                                    Button { router.open(rel) } label: {
+                                    Button { router.open(rel, from: "相关推荐") } label: {
                                         VStack(alignment: .leading, spacing: 5) {
                                             PosterImage(urlString: rel.bestPosterURL?.absoluteString)
                                                 .frame(width: 108, height: 160)
@@ -373,8 +374,9 @@ public struct DetailView: View {
 
     private func stageImage() -> some View {
         GeometryReader { geo in
+            // 10-01 P0：详情页头图同样是门面大图，原图档（不降采样）
             PosterImage(urlString: (item.bestBackdropURL ?? item.bestPosterURL)?.absoluteString,
-                        cornerRadius: 0, contentMode: .fill)
+                        cornerRadius: 0, contentMode: .fill, maxSide: PosterLoader.heroMaxSide)
                 .scaleEffect(1.26)                       // 原型 transform:scale(1.26)
                 .saturation(1.06).brightness(-0.08)      // 原型 filter:saturate(1.06) brightness(.92)
                 // 2026-09-24 23:22 用户指令（与主页同）：顶部对齐不裁头，裁切全落底部融合区
@@ -506,7 +508,15 @@ public struct DetailView: View {
         HStack(spacing: 12) {
             Button {
                 if item.isPlayable {
-                    startAtResume = library.historyEntry(for: item)?.progressSeconds ?? 0 > 30
+                    let hist = library.historyEntry(for: item)
+                    startAtResume = (hist?.progressSeconds ?? 0) > 30
+                    // 2026-10-01（主人两报「续播没生效 / 又从头播放」）：
+                    // 历史里存着**上次看的是第几集**（lineIndex），但此前进播放器一律
+                    // `pendingLine = 0`（默认）→ 剧集续播永远回第 1 集、进度条也对不上号。
+                    // 这里按历史回填起始集，续播才是「上次那一集 + 上次那个点」。
+                    if let li = hist?.lineIndex, li >= 0, li < allSourceLines.count {
+                        pendingLine = li
+                    }
                     showPlayer = true
                 } else if canRefreshPlay {
                     // 兜底：补拉成功就地开播，失败 toast 提示（不再永久灰死）

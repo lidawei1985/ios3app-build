@@ -170,7 +170,8 @@ public final class HeroTintStore: ObservableObject {
     public func palette(for urlString: String?) async -> HeroPalette {
         guard let key = urlString, !key.isEmpty else { return .fallback }
         if let hit = cache[key] { return hit }
-        guard let img = await PosterLoader.shared.image(for: key, thumbPriority: false),
+        // 取色只需很小的一张（10-01 P0 分档后：这里显式要小档，别去跟主视觉抢原图内存）
+        guard let img = await PosterLoader.shared.image(for: key, thumbPriority: false, maxSide: 200),
               let p = HeroPalette.extract(from: img) else { return .fallback }
         cache[key] = p
         return p

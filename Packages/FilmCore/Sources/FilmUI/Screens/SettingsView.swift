@@ -650,9 +650,32 @@ private struct StatusPickerSheet: View {
         // 2026-09-30 用户「不能出现黑色的框」根修：旧写法在玻璃底下先铺一层
         // theme.background.opacity(0.72)（≈72% 不透明深黑）—— 玻璃再透也只剩深灰＝黑框。
         // 改为纯玻璃（薄材质+受光面渐变+发丝边），背景从底下透上来跟着变色。
-        .background(FilmGlassBackground(cornerRadius: 18))
+        //
+        // 2026-10-01 主人：「还有一个地方没玻璃化 就是那个生效线路选择面板还是灰色的」
+        //   —— 就是这里（`StatusField.line` = 「选择生效线路」）。上面写「纯玻璃」，
+        //   但**传的是默认档 `.regular` = thinMaterial**，而材质会把底下彩色底**去色**
+        //   → 渲染出来仍是一块中性灰（与「点播源」格子、`SiteBrowseView` 格子同一个根因）。
+        //   那两处早已按 `FilmGlassWeight.clear` 修掉（见 SettingsView:227 / SiteBrowseView:373），
+        //   唯独本面板漏改。这里补齐同一口径：**不挂材质**、只叠极淡均匀白，底色原样透出。
+        .background(FilmGlassBackground(cornerRadius: 18, tint: 0.06,
+                                        strokeOpacity: 0.10, weight: .clear))
         .presentationDetents([.medium, .large])
-        .presentationBackground(.clear)
+        // 2026-10-02 三修（主人：「生效线路面板**透明了、看不清楚**」）：
+        //   上一刀只把面板自身改成 `.clear`（不挂材质 → 不去色、不发灰），却漏了
+        //   **sheet 背后**还是 `.presentationBackground(.clear)` = 全透。
+        //   面板自身又是「只叠 0.06 白」的纯透明档 → 底下**没有实底**，
+        //   设置页的一级页内容直接穿透上来，两层字叠在一起 = 看不清。
+        //   同一个坑 `SiteBrowseView` 10-01 已经踩过并修好（那里报的是「变成纯透明的了」），
+        //   正解照搬：presentationBackground 垫 `TintBackgroundView`——它**自带不透明底**
+        //   （HeroTint.swift:209 的 #0A0A0D），且与页面同一取色源（HeroTintStore）→
+        //   既盖住穿透，面板又照旧跟着海报变色，不会退回"灰块/黑框"。
+        .presentationBackground {
+            ZStack {
+                TintBackgroundView()
+                Color.white.opacity(0.05)   // 微提亮助读（与 SiteBrowseView 同口径）
+            }
+            .ignoresSafeArea()
+        }
     }
 
     @ViewBuilder

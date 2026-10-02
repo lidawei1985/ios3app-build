@@ -8,7 +8,7 @@
 为什么单独有这个脚本：CI 每次跑要十几分钟还得出包，改一行安装页不值得跑一遍。
 坑（2026-10-01）：gh api 的 contents 接口必须带 sha 才能覆盖已有文件，否则 422。
 """
-import base64, json, subprocess, sys
+import base64, json, os, subprocess, sys, tempfile
 
 REPO = "lidawei1985/ios3app-build"
 BRANCH = "gh-pages"
@@ -29,12 +29,23 @@ def remote_sha(path):
 
 def put(path, data: bytes, msg):
     sha = remote_sha(path)
-    args = ["-X", "PUT", f"repos/{REPO}/contents/{path}",
-            "-f", f"message={msg}", "-f", f"branch={BRANCH}",
-            "-f", "content=" + base64.b64encode(data).decode()]
+    # 坑（2026-10-01）：不能把 base64 直接拼进命令行 —— Windows 命令行上限 ~32KB，
+    # Linux 单参数上限 128KB，大文件（feed JSON 几百 KB）必炸 WinError 206。
+    # 解法：先写临时文件，用 gh 的 `-f content=@文件` 让它自己读。
+    # 再一个坑：-f/--field 走表单编码，base64 里的 "+" 会被当成空格 → GitHub 报
+    # "content is not valid Base64"。所以整个请求体用 JSON 文件 + --input 发。
+    payload = {"message": msg, "branch": BRANCH,
+               "content": base64.b64encode(data).decode()}
     if sha:
-        args += ["-f", f"sha={sha}"]
-    r = gh(args, timeout=180)
+        payload["sha"] = sha
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    try:
+        r = gh(["-X", "PUT", f"repos/{REPO}/contents/{path}", "--input", tmp],
+               timeout=180)
+    finally:
+        os.unlink(tmp)
     if r.returncode != 0:
         print("FAIL", path, r.stderr[:300])
         return False

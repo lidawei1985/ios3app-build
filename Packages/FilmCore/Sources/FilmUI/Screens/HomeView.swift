@@ -459,8 +459,8 @@ public struct HomeView: View {
                 .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
-                    ForEach(Array(library.history.prefix(20).enumerated()), id: \.element.id) { _, entry in
-                        Button { router.open(entry.item) } label: {
+                    ForEach(Array(library.history.prefix(20).enumerated()), id: \.element.id) { i, entry in
+                        Button { router.open(entry.item, from: "continue#\(i)") } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 PosterImage(urlString: entry.item.bestPosterURL?.absoluteString)
                                     .frame(width: 108, height: 160)
@@ -529,7 +529,9 @@ struct HeroSlide: View {
     /// frame 仍高 1.30h：多出的 0.30h 给底部渐隐留出素材纵深（渐隐发生在容器内最后 60%）。
     private func poster() -> some View {
         GeometryReader { geo in
-            PosterImage(urlString: item.bestPosterURL?.absoluteString, cornerRadius: 0, contentMode: .fill)
+            // 10-01 P0：主视觉=门面，走**原图档**（maxSide: 0 不降采样），此前被统一压到 600px 变糊。
+            PosterImage(urlString: item.bestPosterURL?.absoluteString, cornerRadius: 0,
+                        contentMode: .fill, maxSide: PosterLoader.heroMaxSide)
                 .frame(width: geo.size.width, height: geo.size.height * 1.30, alignment: .top)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
                 .clipped()
@@ -667,23 +669,59 @@ struct HeroCarousel: View {
     /// 切到别的 tab 就停轮播（见 `homeTabActive` 声明处注释）。
     @Environment(\.homeTabActive) private var tabActive
 
+    /// 点击「上膛」闸（2026-10-02「点 1 得 2」根治）。
+    ///
+    /// 光把点击提到 TabView 外层还不够：轮播每 5 秒自动翻页，换页动画 0.45 秒。
+    /// 手指按在第 1 张、翻页动画把第 2 张推到眼前、手指抬起 → 落点变成第 2 张，
+    /// 用户看到的就是「我点的明明是 1，打开的却是 2」。
+    /// 做法：**换页后 0.6 秒内不吃点击**（覆盖整段动画），过了再上膛。
+    /// 宁可这一下没反应，也绝不能开错片 —— 开错片比不响应严重得多。
+    @State private var tapArmed = true
+    @State private var armWork: Task<Void, Never>?
+
+    private func disarmTaps() {
+        tapArmed = false
+        armWork?.cancel()
+        armWork = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)   // 0.6s > 换页动画 0.45s
+            tapArmed = true
+        }
+    }
+
     var body: some View {
+        // 2026-10-02 主人「点的是 1 却错位点到 2 上」——**点击不再挂在 TabView 内部**：
+        // 分页式 TabView 会同时渲染相邻页，并由 UIScrollView 接管触摸判定；页与页在换页
+        // （5 秒自动翻页 / 左右键切换）期间 hit-test 会落到**邻页**那个 Button 上 →
+        // 用户看到的是第 1 张，打开的是第 2 张。这是 SwiftUI TabView(.page) 的已知行为。
+        // 正解：TabView 内只画画面（不可点），点击层**提到 TabView 之上**，
+        // 落点由 `items[index]`（当前选中页）唯一决定 = 屏幕上真正显示的那一张。
         TabView(selection: $index) {
             ForEach(Array(items.enumerated()), id: \.offset) { i, item in
-                Button { router.open(item) } label: {
-                    HeroSlide(item: item, logoName: logoName, height: height,
-                              palette: palette, pageIndex: i, pageCount: items.count)
-                }
-                .buttonStyle(.plain)
-                .tag(i)
+                HeroSlide(item: item, logoName: logoName, height: height,
+                          palette: palette, pageIndex: i, pageCount: items.count)
+                    // 画面本身不吃点击（标题层已 allowsHitTesting(false)，这里保持一致）
+                    .allowsHitTesting(false)
+                    .tag(i)
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .frame(height: height)
+        .overlay {
+            Button {
+                // tapArmed 见声明处注释：换页动画期间不吃点击，避免开错片
+                guard tapArmed, items.indices.contains(index) else { return }
+                router.open(items[index], from: "hero#\(index)")
+            } label: { Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity) }
+            .buttonStyle(.plain)
+        }
         .overlay(alignment: .leading) { arrow("chevron.left") { step(-1) } }
         .overlay(alignment: .trailing) { arrow("chevron.right") { step(1) } }
         .task { await loadPalette() }
-        .onChange(of: index) { _, _ in Task { await loadPalette() } }
+        // 无论自动翻页还是左右键换页，只要换了页就先下闸 0.6 秒（见 `tapArmed` 注释）
+        .onChange(of: index) { _, _ in
+            disarmTaps()
+            Task { await loadPalette() }
+        }
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
             guard tabActive, items.count > 1 else { return }
             withAnimation(.easeInOut(duration: 0.45)) {

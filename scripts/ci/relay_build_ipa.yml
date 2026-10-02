@@ -113,6 +113,18 @@ jobs:
               exit 1
             fi
 
+            # 台标内置资源必须真进 app bundle（2026-10-01：iOS 端曾因解析层丢 tvg-logo 而全端无台标；
+            # 复用 TV 端同源台标库 332 张，随包后离线也有。星幕才有直播，心屋不检。）
+            if [ "$scheme" = "XingmuISO" ]; then
+              echo "===== $scheme logo bundle check ====="
+              lcount=$(find "$app" \( -path "*/LiveLogo/0*.png" -o -name "0*.png" \) 2>/dev/null | wc -l | tr -d ' ')
+              echo "logo images in bundle: $lcount"
+              if [ "$lcount" -lt 300 ]; then
+                echo "::error::$scheme 台标图仅 $lcount 张（要求 >=300；LiveLogo 未打进 bundle 或资源丢失）"
+                exit 1
+              fi
+            fi
+
             mkdir -p "artifact/$scheme/Payload"
             cp -R "$app" "artifact/$scheme/Payload/"
             (cd "artifact/$scheme" && zip -qry "../$scheme.ipa" Payload)

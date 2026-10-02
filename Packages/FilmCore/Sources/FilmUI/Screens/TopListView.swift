@@ -69,7 +69,7 @@ public struct TopListView: View {
                             .padding(.horizontal, 16).padding(.top, 8)
                     }
                     ForEach(Array(rows.prefix(30).enumerated()), id: \.element.id) { idx, it in
-                        Button { router.open(it) } label: {
+                        Button { router.open(it, from: "榜单") } label: {
                             HStack(spacing: 12) {
                                 Text("\(idx + 1)")
                                     .font(.title3.weight(.heavy).monospacedDigit())

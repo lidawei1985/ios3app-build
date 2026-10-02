@@ -19,6 +19,25 @@
 - `v1/feed/{mode}/pN.json`：`{ok, mode, offset, total, version, items[]}` — 每片 500 条
 - `v1/live/normal.m3u` / `v1/live/adult.m3u`：直播列表（心屋不消费）
 
+## 直播表「唯一作者」契约（2026-10-01 焊死 · 坑 P-2026-09-30-G）
+
+`v1/live/normal.m3u` 的**唯一作者** = TV 侧 `filmcollector-pages-xingmu` 仓的
+`.github/workflows/live-build.yml`（每 6h、名册 `roster.json` 332 台驱动、
+`--inherit-remote` 继承现表、只补不换）。
+
+**铁律：iOS 侧禁止再启用任何第二个写入者。**
+- ⛔ 禁止把 `live-refresh.yml` 放回本仓——历史上的那个刷新器（`tools/live/live_refresh.py`）
+  默认写出路径就是 `v1/live/normal.m3u`，每 6h 全量重排重写；与 live-build **同一个目标**，
+  两边每 6h 互相覆盖，端上表现为「**好源也换、一直替换**」。
+- ✅ 本仓由 `.github/workflows/guard-single-live-writer.yml` 守卫：一旦检出
+  `live-refresh.yml`（或任何引用 `normal.m3u` 的 workflow），CI 立刻 FAIL。
+- 守卫为什么长在仓库里、不放远端：本仓每次推送 = **整仓重建**（远端历史被重置），
+  守卫必须随推送源进包才能常驻生效。
+- 历史残留清出记录：备份在 `F:/IOS3APP/_bak_live_refresh_20261001`
+  （含 `live-refresh.yml`、`live_refresh.py`、`live_refresh_xingmu.py`、`fix-live` 分支 bundle）。
+
+iOS 侧若确需自有的直播表，**必须走独立路径**（例如 `v1/live/ios.m3u`），**不得复用 `normal.m3u`**。
+
 ## item 契约（FeedItem）
 
 ```

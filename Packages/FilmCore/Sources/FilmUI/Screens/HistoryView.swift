@@ -41,7 +41,7 @@ public struct HistoryView: View {
     private var historyList: some View {
         List {
             ForEach(library.history) { entry in
-                Button { router.open(entry.item) } label: {
+                Button { router.open(entry.item, from: "历史") } label: {
                     HistoryRow(entry: entry)
                 }
                 .buttonStyle(.plain)

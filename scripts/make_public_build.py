@@ -102,14 +102,40 @@ def export():
     Windows 盘符里的冒号会被 tar 当成「远程主机」语法，报
     `tar: F:\\...: Cannot open: No such file or directory`。改用 Python tarfile。
     """
-    if os.path.isdir(WORK):
-        shutil.rmtree(WORK, ignore_errors=True)
-    os.makedirs(WORK, exist_ok=True)
+    reuse = "--clean" not in sys.argv
+    fresh = True
+    if reuse and os.path.isdir(os.path.join(WORK, ".git")):
+        fresh = False          # 复用旧仓 → 下面只推**增量**
+    else:
+        if os.path.isdir(WORK):
+            shutil.rmtree(WORK, ignore_errors=True)
+        os.makedirs(WORK, exist_ok=True)
     r = subprocess.run(["git", "archive", "HEAD"], cwd=ROOT, capture_output=True)
     if r.returncode != 0:
         raise SystemExit("git archive 失败：%s" % r.stderr.decode("utf-8", "replace"))
+    names = set()
     with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tf:
+        for m in tf.getmembers():
+            if m.isfile():
+                names.add(m.name.replace("/", os.sep))
         tf.extractall(WORK, filter="data")
+    if not fresh:
+        # 旧仓里"新快照已没有"的文件必须从磁盘删掉 —— 否则 `git add -A` 看不到删除，
+        # 这些僵尸文件会一直被推上公开仓（复用模式下最容易踩的坑）。
+        keep = {".gitignore"}          # stage() 每次重写，别当成僵尸删掉
+        gone = 0
+        for f in sh("git ls-files", cwd=WORK).stdout.splitlines():
+            f = f.strip().replace("/", os.sep)
+            if not f or f in keep or f in names:
+                continue
+            p = os.path.join(WORK, f)
+            if os.path.isfile(p):
+                os.remove(p)
+                gone += 1
+        if gone:
+            print("  [reuse ] 清理旧仓残留 %d 个文件" % gone)
+        else:
+            print("  [reuse ] 复用旧仓，只推增量")
     return WORK
 
 
@@ -286,6 +312,11 @@ def push(work, repo):
 
 
 def main():
+    import time as _t
+
+    def mark(label, t0):
+        print("      ⏱ %-10s %.1fs" % (label, _t.time() - t0))
+
     go = "--go" in sys.argv
     repo = REPO
     if "--repo" in sys.argv:
@@ -293,8 +324,11 @@ def main():
     print("=" * 62)
     print("公开构建中转仓  %s  (go=%s)" % (repo, go))
     print("=" * 62)
+    _t0 = _t.time()
     work = export()
     print("[1/3] 导出 HEAD → %s" % work)
+    mark("导出", _t0)
+    _t1 = _t.time()
     sanitize(work)
     print("[2/3] 安全门")
     if not security_gate(work):
@@ -302,11 +336,16 @@ def main():
     if not workflow_guard(work):
         raise SystemExit(2)
     total, changed, size = stage(work)
+    mark("安全门+暂存", _t1)
     print("[3/3] 待推：%d 个文件 / %.1f MB（本次变更 %d 个）" % (total, size, changed))
     if not go:
         print("\n（干跑结束。加 --go 才真推）")
         return
-    if not push(work, repo):
+    _t2 = _t.time()
+    ok = push(work, repo)
+    mark("推送", _t2)
+    print("      ⏱ %-10s %.1fs" % ("合计", _t.time() - _t0))
+    if not ok:
         raise SystemExit(3)
 
 

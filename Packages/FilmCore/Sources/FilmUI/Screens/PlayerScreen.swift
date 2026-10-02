@@ -86,6 +86,11 @@ public struct PlayerScreen: View {
 
     @State private var showControls = true
     @State private var locked = false
+    /// 2026-10-01 主人钦定：手势**第一次用要给提示**（「要不都不知道怎么用是什么」）。
+    /// 只弹一次（AppStorage 记住），点任意处或 9 秒后自动消失。
+    @AppStorage("filmui.gestureHintShown.v1") private var gestureHintShown = false
+    @State private var showGestureHint = false
+    @State private var gestureHintTask: Task<Void, Never>?
     @State private var showLinePanel = false
     @State private var showEpisodePanel = false
     // 51包：原画面比例面板已删（比例改为底栏点一下循环切换 cycleAspect）
@@ -182,6 +187,14 @@ public struct PlayerScreen: View {
             Color.black.ignoresSafeArea()
             PlayerContainerView(model: model, onTap: { loc, tapCount in
                 // v24：这是**唯一**的触摸通道（SwiftUI 手势层已删，见上）。
+                // 2026-10-01 手势提示：提示层允许触摸穿透（allowsHitTesting(false)），
+                // 所以「点任意处关提示」也走这条通道 —— 关闭后本次点击**不再**顺带 toggle 控制层。
+                if showGestureHint {
+                    dismissGestureHint()
+                    showControls = true
+                    scheduleHide()
+                    return
+                }
                 guard !locked else { return }   // 锁定时只认解锁按钮
                 if tapCount == 2 {
                     doubleTapSeek(centerX: loc.x)
@@ -270,12 +283,12 @@ public struct PlayerScreen: View {
             // 锁定/解锁**同一个键原地切换**；锁定态下该键**不受控制层显隐影响**
             // —— 否则锁上以后控制层一隐藏就再也解不开（"锁死了"）。
             if locked {
-                // 锁定态：横屏左中解锁键；竖屏右上解锁键（爱优腾位）。
-                if isLandscape { lockControl } else { lockControl(topRight: true) }
+                // 锁定态：解锁键**原地**（右侧垂直居中）切换，不换位置不乱跳
+                lockControl
             } else if showControls {
-                // 2026-09-30：锁屏键分方向 —— 竖屏在顶栏右上（爱优腾同款），
-                // 横屏保持左侧垂直居中；竖屏不再额外渲染左中锁键（找不到+易误触）。
-                if isLandscape { lockControl }
+                // 2026-10-01 主人「横竖屏锁还不一样 / 应该都放右侧」：
+                // 锁屏键不再按方向分两套（横屏左中、竖屏右上），统一**右侧垂直居中**。
+                lockControl
                 topBar
                 bottomBar
                 // 48包（用户：「暂停快进怎么没了 要隐藏也没说不要暂停快进」）：
@@ -311,6 +324,9 @@ public struct PlayerScreen: View {
             }
 
             if model.failed, !model.isPlaying { failureOverlay }   // 46包硬门禁：画面还在走就不许弹失败
+
+            // 首次使用手势提示（放最上层；触摸穿透到底层 UIKit 识别器，见 overlay 内注释）
+            if showGestureHint { gestureHintOverlay }
             if model.switchingLine {
                 // 2026-09-23（用户：「暂停以后超大个黑框基本满屏了」+「那个框的闪动不正常一闪一闪的」）：
                 // 原写法 = LoadingView 本身撑满全屏 + 再叠一层满屏黑 0.6 →
@@ -351,12 +367,39 @@ public struct PlayerScreen: View {
             model.start(resume: startAtResume)
             if savedRate != 1.0 { model.setRate(savedRate) }
             sliderVolume = Double(PlayerVolumeController.current())
-            setLandscape(true)
+            // 2026-10-01 主人钦定（「锁屏时正常不是应该不在切换横竖屏吗」）：
+            // 进播放**不再无条件强转横屏** —— 以前 onAppear 一律 setLandscape(true)，
+            // requestGeometryUpdate 会连系统方向锁定一起顶掉（用户锁了屏照样被转成横屏）。
+            // 现在：进来保持当前方向；想横屏 = 自己点底栏「全屏」（主动行为，与锁定无关）。
             scheduleHide()
+            // 首次进入播放 → 弹一次手势说明（9 秒自动收，点任意处立刻收）
+            if !gestureHintShown {
+                showGestureHint = true
+                hideTask?.cancel()
+                gestureHintTask?.cancel()
+                gestureHintTask = Task {
+                    try? await Task.sleep(nanoseconds: 9_000_000_000)
+                    if !Task.isCancelled {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            showGestureHint = false
+                            gestureHintShown = true
+                        }
+                    }
+                }
+            }
             activateAudioSessionIfNeeded()
             // v13 音量提示条：KVO 监听系统音量（物理音量键）——MPVolumeView 锚点抑制了系统 HUD
-            volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { _, _ in
-                Task { @MainActor in showVolumeHUD(Double(PlayerVolumeController.current())) }
+            // 2026-10-01 根修（主人：「音量键不流畅且不同步」「最小不显示静音」「你看爱奇艺优酷腾讯这些」）：
+            // 旧实现把 KVO 的 `change.newValue` **丢掉**，改回 `PlayerVolumeController.current()`
+            // ——而那条路优先读 MPVolumeView 内置的 UISlider.value，**它的更新滞后于系统音量**
+            // （KVO 先到、slider 后刷）。于是每次读数都停在**上一格**：
+            //   ① 端上看着「按了键条子才动一下 / 跟不上手」= 不同步、不流畅；
+            //   ② 一直按到最小，读数也停在**倒数第二格**，`v <= 0.001` 永远不成立
+            //      → 静音图标（speaker.slash）永远不出现 = 「最小不显示静音」。
+            // 正解：直接用系统在这次变化里给的真值 newValue —— 这就是音量本身，无需回读。
+            volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { _, change in
+                guard let v = change.newValue else { return }
+                Task { @MainActor in showVolumeHUD(Double(v)) }
             }
             // 46包：撤掉「Build 20260922-xx」闪现——小白用户看不懂还截图问「这是啥玩意」；
             // 包版本核验走 LC 内二进制探针，不再打扰播放画面。
@@ -364,6 +407,10 @@ public struct PlayerScreen: View {
         .onDisappear {
             gone = true
             model.stop()
+            // 2026-10-01 四修：退出播放**必须先解方向锁**，否则 AppDelegate 一直照锁回答
+            // （旧写法 locked=true 时 setLandscape 直接 return，锁会跟着带回主界面）。
+            OrientationLock.shared.set(nil)
+            locked = false
             setLandscape(false)
             volumeObserver?.invalidate()
             volumeObserver = nil
@@ -454,23 +501,8 @@ public struct PlayerScreen: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
                 Spacer()
-                // 2026-09-30 用户「锁屏呢？横屏正常竖屏不行」：竖屏锁屏 = 爱优腾同款放**右上角**
-                //（横屏保持左侧垂直居中，见 playerBody 分支；竖屏不再渲染左中锁键）。
-                if !isLandscape {
-                    Button {
-                        locked.toggle()
-                        showControls = true
-                        scheduleHide()
-                    } label: {
-                        Image(systemName: locked ? "lock.fill" : "lock.open.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-                            .frame(width: 40, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel(locked ? "解锁" : "锁定")
-                }
+                // 2026-10-01：顶栏的锁屏键**删除** —— 锁键已统一到右侧边缘垂直居中
+                //（横竖屏同一个位置，见 `lockControl`），顶栏再留一个就是「同一功能两处」。
                 // 2026-09-30 用户「你好好看看爱优腾怎么做的」：
                 // 投屏 / 分享 放**右上角**（爱优腾同款），底栏只留与播放直接相关的键。
                 RoutePickerView().frame(width: 30, height: 32)
@@ -1063,33 +1095,28 @@ public struct PlayerScreen: View {
         }
     }
 
-    /// 锁屏键（2026-09-30 用户「还有那个锁屏应该在哪大小」）。
+    /// 锁屏键（2026-09-30 用户「还有那个锁屏应该在哪大小」；2026-10-01 主人「应该都放右侧」）。
     ///
-    /// **位置**：屏幕**左侧边缘、垂直居中** —— 爱优腾同款。理由：横屏时这是左手拇指的
-    /// 自然落点，比顶栏右上角好按得多；而且锁定前后是**同一个键**（用户 2026-09-30 早先
-    /// 也提过「点完锁屏怎么还跑左面去了保持原地」——原地切换才不"跳"）。
+    /// **位置**：屏幕**右侧边缘、垂直居中** —— 横屏竖屏**同一种排法**（不再按方向分两套）。
+    /// 锁定前后是**同一个键原地切换**（用户早先也提过「点完锁屏怎么还跑别处去了」——原地才不"跳"）。
+    /// 左边缘保持干净（那是亮度拖动的落点区，见 handleDragChanged）。
     ///
     /// **大小**：38pt 玻璃圆 + 16pt 图标（约等于底栏图标量级）。再大就抢画面、
-    /// 再小在横屏远看按不准；点击区用 `contentShape` 补到 38×38 实心。
-    @ViewBuilder private var lockControl: some View { lockControl(topRight: false) }
-
-    /// 锁屏键浮层：默认**左侧垂直居中**（横屏爱优腾位）；topRight=true = **右上角**（竖屏爱优腾位）。
-    private func lockControl(topRight: Bool) -> some View {
+    /// 再小横屏远看按不准；点击区用 `contentShape` 补到 38×38 实心。
+    private var lockControl: some View {
         VStack {
-            if topRight {
-                HStack { Spacer(); lockButton.padding(.trailing, 14) }
-                Spacer()
-            } else {
-                Spacer()
-                HStack { lockButton.padding(.leading, 14); Spacer() }
-                Spacer()
-            }
+            Spacer()
+            HStack { Spacer(); lockButton.padding(.trailing, 14) }
+            Spacer()
         }
     }
 
     private var lockButton: some View {
         Button {
             locked.toggle()
+            // 2026-10-01 主人「点了锁屏还是切横竖屏」：锁定＝连屏幕方向一起锁，
+            // 不只是挡手势。锁 → 把当前方向钉死；解锁 → 交还系统并按真实宽高立刻收口。
+            if locked { lockOrientationToCurrent() } else { unlockOrientation() }
             showControls = true
             scheduleHide()
         } label: {
@@ -1101,6 +1128,62 @@ public struct PlayerScreen: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel(locked ? "解锁" : "锁定")
+    }
+
+    /// 首次使用手势提示（2026-10-01 主人钦定「这些手势是不是该有个第一次使用提示」）。
+    ///
+    /// 只弹一次（AppStorage 记账）：点任意处关（走 UIKit 单击通道，见 playerBody 的 onTap），
+    /// 或 9 秒自动收。整层 `allowsHitTesting(false)` —— 触摸**必须**穿透到底层
+    /// `AVPlayerViewController.view` 的 UIKit 识别器（v24：LiveContainer 里 SwiftUI 手势会被吞），
+    /// 由 onTap 统一处理关闭，所以这里绝不能自己吃点击。
+    private var gestureHintOverlay: some View {
+        VStack(spacing: 10) {
+            Text("手势说明")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 7) {
+                gestureHintRow("hand.tap.fill", "单击屏幕", "显示 / 隐藏控制栏")
+                gestureHintRow("gobackward.10", "双击左半屏", "快退 10 秒")
+                gestureHintRow("goforward.10", "双击右半屏", "快进 10 秒")
+                gestureHintRow("forward.fill", "长按屏幕", "2 倍速（松手恢复）")
+                gestureHintRow("sun.max.fill", "左半屏上下滑", "调亮度")
+                gestureHintRow("speaker.wave.3.fill", "右半屏上下滑", "调音量")
+                gestureHintRow("arrow.left.and.right", "左右滑", "拖动进度")
+                gestureHintRow("arrow.up.arrow.down", "右边缘上下滑", "上一集 / 下一集")
+                gestureHintRow("xmark.circle", "屏幕最上方下滑", "退出播放")
+            }
+            Text("点任意处关闭 · 只显示这一次")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(.top, 2)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .playerGlass(cornerRadius: 16, tint: 0.22)
+        .frame(maxWidth: 330)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func gestureHintRow(_ icon: String, _ title: String, _ desc: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 20)
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+            Spacer(minLength: 8)
+            Text(desc).font(.caption).foregroundStyle(.white.opacity(0.8))
+        }
+    }
+
+    private func dismissGestureHint() {
+        gestureHintTask?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) {
+            showGestureHint = false
+            gestureHintShown = true
+        }
     }
 
     private var failureOverlay: some View {
@@ -1139,34 +1222,24 @@ public struct PlayerScreen: View {
     private func tapScreen() {
         // 长按加速松手后 0.35s 内的"单击"是长按的尾巴，忽略
         if Date().timeIntervalSince(lastBoostEnd) < 0.35 { return }
+
+        // 2026-10-01 主人钦定「爱优腾不都是这样的吗」：**点一下出、再点一下收**，
+        // 无条件 toggle —— 不再有"1.2 秒内连点被吞"这类宽限（上一版把人的连点节奏
+        // 当成误触挡掉了，用户感知就是"点了没反应 / 时灵时不灵"）。
+        // 双击由 Coordinator 在 0.28s 时间窗里自行判定（不是两次单击），
+        // 所以这里纯 toggle 不会和「双击快进」打架。
+        withAnimation(.easeOut(duration: 0.18)) { showControls.toggle() }
+        showRateSelector = false
+        showVolumeSlider = false
         if showControls {
-            // 2026-10-01 真机实测取证（pymobiledevice3 注入触摸 + 时间戳连拍，非猜测）：
-            //   单击**确实能**唤出控制层 —— 点完 +2.5s 的帧里底栏白像素占比 0.0378（可见），
-            //   +4.9s 的帧回到 0.0000（已被 3.4s 自动隐藏收走）。所以「唤不出」不是触摸不通。
-            //   真凶＝「点一下开 / 再点一下关」的 toggle 撞上人连点的节奏：
-            //   实测间隔 1.0s 连点两下 → 结束后控制层消失（奇数下可见、偶数下归零）。
-            //   上一轮 0.35s 宽限太窄，人的连点间隔典型在 0.4~1.5s，正好全落在 toggle 上。
-            // 束法（保留钦定的"再点一下收起"）：宽限放宽到 1.2s，且宽限内**也刷新计时**，
-            //   连点必然保持可见；想真收起 = 单点后 ≥1.2s 再点，或等 3.4s 自动隐藏。
-            if Date().timeIntervalSince(lastShowAt) < 1.2 {
-                lastShowAt = Date()
-                if model.isPlaying { scheduleHide() }
-                return
-            }
-            showControls = false      // 已显示且稳定 ≥1.2s → 视为"再点一下收起"
-            showRateSelector = false
-            showVolumeSlider = false
-            hideTask?.cancel()
-        } else {
-            showControls = true
             lastShowAt = Date()
-            showRateSelector = false
-            showVolumeSlider = false
             if model.isPlaying {
-                scheduleHide()
+                scheduleHide()        // 播放中：3.4s 后自动收起（大牌同款）
             } else {
-                hideTask?.cancel()    // 暂停态保持常显
+                hideTask?.cancel()    // 暂停态保持常显（能看清继续按钮）
             }
+        } else {
+            hideTask?.cancel()
         }
     }
 
@@ -1438,11 +1511,26 @@ public struct PlayerScreen: View {
     }
 
     private func setLandscape(_ on: Bool) {
+        // 锁定态下不切方向（爱优腾同款：锁了就是锁了，转屏也没反应）。
+        if locked { showSeekToast("已锁定，先解锁再切横竖屏"); return }
         isLandscape = on
         let mask: UIInterfaceOrientationMask = on ? .landscapeRight : .portrait
         if let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).first {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+        }
+        // 2026-10-01：这条旋转请求**可能被拒**（系统方向锁定 / LiveContainer 限制）。
+        // 旧写法乐观置位后不再收口 →「状态=横屏 / 屏幕=竖屏」→ 横屏排版塞进竖屏窗口
+        // （顶栏分享被挤出屏、锁屏键被裁、进度条压成 0 宽只留一颗白球）。
+        // 转不转得动都按**真实窗口宽高**收口一次。
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            let size = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first(where: { $0.isKeyWindow })?.bounds.size
+                ?? UIScreen.main.bounds.size
+            syncLandscape(size)
         }
     }
 
@@ -1450,10 +1538,41 @@ public struct PlayerScreen: View {
     /// 旋转请求可能被宿主（LiveContainer）/ 系统竖屏锁定挡掉 —— 那时状态若仍是"横屏"，
     /// 横屏排版就会被塞进竖屏窗口，出现「顶栏分享被挤出屏、锁屏键在左边缘被裁、
     /// 进度条压成 0 宽只剩一颗白球」这些溢出。以真实宽高为准即可两头都对。
+    ///
+    /// 2026-10-01 追加（主人「点了锁屏还是切横竖屏」）：
+    /// **锁定态下直接冻结** —— 不跟着窗口宽高改 `isLandscape`。
+    /// 原实现只让 `locked` 挡住手势（`guard !locked else { return }`），方向照切不误，
+    /// 于是"锁了屏一转手机还是变横屏"。爱优腾的锁定＝连方向一起锁，这里补齐。
     private func syncLandscape(_ size: CGSize) {
+        guard !locked else { return }          // ← 锁定态：布局方向冻结在锁定那一刻
         guard size.width > 0, size.height > 0 else { return }
         let land = size.width > size.height
         if land != isLandscape { isLandscape = land }
+    }
+
+    /// 锁定态：把当前方向**钉死**（竖就只许竖、横就只许横）。
+    ///
+    /// 2026-10-01 四修（主人：「锁屏横竖屏锁不住啊 横屏锁屏正常是不是不会出现竖屏现象」）：
+    /// 前三修只调 `requestGeometryUpdate` —— 那只是**请求**，被系统竖屏锁 / 宿主忽略就没用。
+    /// 现在写进 `OrientationLock`（AppDelegate 用它回答 `supportedInterfaceOrientationsFor`），
+    /// 系统**每次要转屏都会先问这里** → 锁横屏后物理转动不再翻成竖屏。
+    /// 方向以**真实窗口宽高**判定（`isLandscape` 可能被冻结过，不可信）。
+    private func lockOrientationToCurrent() {
+        let size = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })?.bounds.size ?? UIScreen.main.bounds.size
+        OrientationLock.shared.set(size.width > size.height ? .landscape : .portrait)
+    }
+
+    /// 解锁：把方向交还给系统（除倒置外的全方向），并按真实宽高立刻收口一次。
+    private func unlockOrientation() {
+        OrientationLock.shared.set(nil)
+        let size = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })?.bounds.size ?? UIScreen.main.bounds.size
+        syncLandscape(size)
     }
 
     static func format(_ seconds: Double) -> String {
@@ -1670,6 +1789,8 @@ public final class PlayerViewModel: NSObject, ObservableObject {
     public private(set) var resumeSeconds: Double = 0
     /// 待执行的续播定点（AVPlayerItem readyToPlay 后再 seek；立即 seek 会被丢弃 → 表现为"从头播"）
     private var pendingResume: Double = 0
+    /// 续播定点是否正在进行（防 KVO 与周期观察两路重入叠探）
+    private var resumeSeekInFlight = false
     private var lastRecorded = 0.0
     private var lastProgressSeconds = 0.0
     private var lastProgressAt = Date()
@@ -1709,8 +1830,22 @@ public final class PlayerViewModel: NSObject, ObservableObject {
         if let entry = UserLibrary.shared.historyEntry(for: item), resume {
             resumeSeconds = entry.progressSeconds
         }
+        // 2026-10-01 取证（主人两报「续播没生效」）：决策全链落痕，可从手机容器拉出来核。
+        // resume=gate（详情页给的续播意图）；resumeSeconds=实取到的历史秒数。
+        traceResume("start gate=\(resume) entry=\(UserLibrary.shared.historyEntry(for: item)?.progressSeconds ?? -1) use=\(resumeSeconds) line=\(initialLine)")
         // 起始集：详情页选集进入时直落该集；越界兜底回第1候选
         play(line: initialLine < allLines.count ? initialLine : 0)
+    }
+
+    /// 续播痕迹（写 UserDefaults，随 App 容器落盘 → 探针脚本可拉取核验）。
+    private func traceResume(_ msg: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        UserDefaults.standard.set("\(stamp) \(msg)", forKey: "resume.lastTrace")
+        var log = UserDefaults.standard.stringArray(forKey: "resume.traceLog") ?? []
+        log.append("\(stamp) \(msg)")
+        if log.count > 40 { log.removeFirst(log.count - 40) }
+        UserDefaults.standard.set(log, forKey: "resume.traceLog")
+        filmLog.info("resume: \(msg)")
     }
 
     public func stop() {
@@ -1738,7 +1873,10 @@ public final class PlayerViewModel: NSObject, ObservableObject {
     public func switchToLine(_ line: Int) {
         let count = allLines.count
         guard count > 1, line != currentLine, line >= 0, line < count else { return }
-        resumeSeconds = player.flatMap { $0.currentTime().seconds.isFinite ? $0.currentTime().seconds : 0 } ?? resumeSeconds
+        // 2026-10-01 三修：续播定点未落地时保持原点位（别被 currentTime=0 冲掉）。
+        resumeSeconds = pendingResume > 0
+            ? pendingResume
+            : (player.flatMap { $0.currentTime().seconds.isFinite ? $0.currentTime().seconds : 0 } ?? resumeSeconds)
         switchingLine = true
         currentLine = line
         failed = false
@@ -1854,11 +1992,10 @@ public final class PlayerViewModel: NSObject, ObservableObject {
         let p = AVPlayer(url: url)
         p.allowsExternalPlayback = true
         if rate != 1.0 { p.rate = Float(rate) }
-        if resumeSeconds > 0 {
-            // 2026-09-30 续播修复：不再在这里立刻 seek（此时 item 未 ready，会被丢），
-            // 只记下待定点，由 item readyToPlay 回调执行（见 registerObservers）。
-            pendingResume = resumeSeconds
-        }
+        // 2026-10-01 三修：显式赋值（旧写法只在 >0 时覆盖）——否则上一次遗留的
+        // `pendingResume` 会在「切集从头播」时被误用，把新一集跳到旧一集的点位上。
+        pendingResume = resumeSeconds > 0 ? resumeSeconds : 0
+        resumeSeekInFlight = false
         player = p
         registerObservers()          // 每个新 AVPlayer 都要重挂（重试/切线路后失败态才可感知）
         isBuffering = true
@@ -1885,20 +2022,27 @@ public final class PlayerViewModel: NSObject, ObservableObject {
         // AVPlayerItem 级错误观察：源站挂掉/流失效在这里报 failed，
         // AVPlayer.status 永远保持 readyToPlay —— 只看它会"缓冲中"卡到天荒地老
         if let currentItem = player.currentItem {
-            observers.append(currentItem.observe(\.status, options: [.new]) { [weak self] it, _ in
+            // 2026-10-01 三修（主人仍报「续播没生效」）：`options` 加 **`.initial`**。
+            // 只用 `.new` 时，若 item 在**观察挂上之前**就已经 readyToPlay（缓存的 playlist
+            // / 快速 CDN），这条回调**永远不会触发** → 续播定点从没执行过 → 每次都从头。
+            // `.initial` 让观察一挂上就用**当前值**回调一次，把这个窗口彻底堵死。
+            observers.append(currentItem.observe(\.status, options: [.new, .initial]) { [weak self] it, _ in
                 Task { @MainActor in
                     guard let self else { return }
                     // 2026-09-30 用户报「详情里显示上次播放时间，进去却从头播」：
                     // 根因＝`AVPlayer(url:)` 之后**立刻** seek，此刻 item 尚未 readyToPlay，
                     // 这一刀会被丢弃（或被随后起播的 0 覆盖）→ 看到的就是"从头开始"。
                     // 正解＝把续播点位记在 `pendingResume`，等 **item 真正 readyToPlay** 再定点。
+                    //
+                    // 2026-10-01 二修（主人：「上次播放进度怎么又不能了 又从头播放了」）：
+                    // 「等 readyToPlay 再 seek」这个方向是对的，但那一版**容差给了 `.zero`**。
+                    // 远端 HLS 上精确 seek 要求该时刻所在分片已经就绪；没就绪时 AVPlayer 会
+                    // **丢弃这一刀**（或被紧接着的起播 0 覆盖）→ 端上仍是「详情页写着续播 mm:ss，
+                    // 进去还是从头」。正解三条：① 容差交回系统（±0.5s，HLS 容忍到邻近可 seek 点即可）；
+                    // ② **以 seek 完成回调为准**，finished=false 就重试（最多 3 次）；
+                    // ③ 确认落点后才清 `pendingResume`，不再"先清后做"（清了但没跳成就彻底丢了）。
                     if it.status == .readyToPlay, self.pendingResume > 0 {
-                        let t = self.pendingResume
-                        self.pendingResume = 0
-                        it.seek(to: CMTime(seconds: t, preferredTimescale: 600),
-                                toleranceBefore: .zero, toleranceAfter: .zero)
-                        self.currentTime = t
-                        filmLog.info("player: 续播定点完成 -> \(Int(t))s")
+                        self.seekToResume(it, seconds: self.pendingResume, attempt: 0)
                     }
                     guard it.status == .failed else { return }
                     filmLog.error("player: item FAILED err=\(it.error?.localizedDescription ?? "nil") url=\(it.asset as? AVURLAsset != nil ? "ok" : "?")")
@@ -1959,6 +2103,12 @@ public final class PlayerViewModel: NSObject, ObservableObject {
                     self.lastRecorded = sec
                     self.recordProgress()
                 }
+                // 2026-10-01 三修兜底：万一 KVO 那一路没赶上（挂观察前就已 ready / 被系统吞），
+                // 只要还欠着一次续播定点、且 item 已就绪，这里每 0.5s 补一次，直到落地。
+                if self.pendingResume > 0, !self.resumeSeekInFlight,
+                   let it = self.player?.currentItem, it.status == .readyToPlay {
+                    self.seekToResume(it, seconds: self.pendingResume, attempt: 0)
+                }
             }
         }
     }
@@ -1969,7 +2119,10 @@ public final class PlayerViewModel: NSObject, ObservableObject {
         if reconnectTries < 2 {
             reconnectTries += 1
             filmLog.info("player: stall → 原地重连 x\(self.reconnectTries) line=\(self.currentLine)")
-            resumeSeconds = max(currentTime, 0)
+            // 2026-10-01 三修：续播定点尚未落地时**不许把点位冲成 0** ——
+            // 旧写法取 currentTime（此时还在 0）→ resumeSeconds=0 → 重连后 pendingResume=0
+            // → 续播彻底丢失。欠着定点就一直欠着。
+            resumeSeconds = pendingResume > 0 ? pendingResume : max(currentTime, 0)
             play(line: currentLine)   // 同一线路重拉（reconnectTries>0 → 不重置 startedAt 宽限）
             return
         }
@@ -1980,6 +2133,39 @@ public final class PlayerViewModel: NSObject, ObservableObject {
             return
         }
         switchToNextLine()
+    }
+
+    /// 续播定点（2026-10-01）：有容差 + 以完成回调为准 + 重试。
+    /// 为什么不能只发一刀就算了：远端 HLS 的 seek 在目标分片未就绪时会返回 `finished == false`
+    /// 并**原地不动**；旧实现既不看回调、也不重试，于是「续播」在慢源上一次都没生效过。
+    private func seekToResume(_ item: AVPlayerItem, seconds t: Double, attempt: Int) {
+        guard !resumeSeekInFlight else { return }     // 防周期观察重入叠探
+        resumeSeekInFlight = true
+        traceResume("seek start t=\(Int(t)) attempt=\(attempt + 1) status=\(item.status.rawValue)")
+        item.seek(to: CMTime(seconds: t, preferredTimescale: 600),
+                  toleranceBefore: CMTime(seconds: 0.5, preferredTimescale: 600),
+                  toleranceAfter: CMTime(seconds: 0.5, preferredTimescale: 600)) { [weak self] finished in
+            Task { @MainActor in
+                guard let self else { return }
+                if finished {
+                    self.pendingResume = 0
+                    self.resumeSeekInFlight = false
+                    self.currentTime = t
+                    self.traceResume("seek DONE -> \(Int(t))s（第 \(attempt + 1) 次）")
+                    filmLog.info("player: 续播定点完成 -> \(Int(t))s（第 \(attempt + 1) 次）")
+                } else if attempt < 2 {
+                    self.resumeSeekInFlight = false
+                    self.traceResume("seek retry \(attempt + 2) -> \(Int(t))s")
+                    filmLog.info("player: 续播 seek 未完成，重试第 \(attempt + 2) 次 -> \(Int(t))s")
+                    self.seekToResume(item, seconds: t, attempt: attempt + 1)
+                } else {
+                    self.pendingResume = 0
+                    self.resumeSeekInFlight = false
+                    self.traceResume("seek GIVEUP -> \(Int(t))s")
+                    filmLog.error("player: 续播 seek 三次均未完成，放弃 -> \(Int(t))s")
+                }
+            }
+        }
     }
 
     private func recordProgress() {

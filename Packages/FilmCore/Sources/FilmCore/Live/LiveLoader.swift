@@ -6,16 +6,21 @@ private let liveLog = Logger(subsystem: "filmthree", category: "live")
 /// M3U 直播列表解析（星幕 normal.m3u / 夜航 adult.m3u；心屋无直播）。
 /// 只做协议翻译：extinf 名称 + 频道 URL。心屋侧调用方根本不会拉取。
 public struct LiveChannel: Identifiable, Hashable {
-    public let id: String       // url 的稳定哈希
+    public let id: String       // 行唯一键（名+URL；同台多线路各自独立，同 URL 不同台不再互吞）
     public let name: String
     public let url: URL
     public let group: String    // group-title 分组（央视/卫视/地方频道…），抽屉换台按此分组
+    public let logo: URL?       // tvg-logo 台标（云端表 619/619 条均带；原实现直接丢弃 → 全端无台标）
+    public let chno: Int?       // tvg-chno 固定频道号（roster 恒定，供稳定排序/对位）
 
-    public init(id: String, name: String, url: URL, group: String = "") {
+    public init(id: String, name: String, url: URL, group: String = "",
+                logo: URL? = nil, chno: Int? = nil) {
         self.id = id
         self.name = name
         self.url = url
         self.group = group
+        self.logo = logo
+        self.chno = chno
     }
 }
 
@@ -26,6 +31,8 @@ public enum M3UParser {
         var out: [LiveChannel] = []
         var pendingName: String?
         var pendingGroup = ""
+        var pendingLogo: URL?
+        var pendingChno: Int?
         var txtGroup = ""   // TVBox txt 当前分组（组名,#genre# 之后生效）
         var seen = Set<String>()
         for rawLine in text.split(separator: "\n") {
@@ -42,7 +49,10 @@ public enum M3UParser {
             if line.hasPrefix("#EXTINF") {
                 pendingName = line.split(separator: ",", maxSplits: 1).last.map(String.init)?
                     .trimmingCharacters(in: .whitespaces) ?? "未命名频道"
-                pendingGroup = extractGroupTitle(line)
+                pendingGroup = extractAttr(line, "group-title") ?? ""
+                // 台标 / 固定频道号：与 TV 端共用同一张表，属性一直都在，只是 iOS 侧原先没解析。
+                pendingLogo = extractAttr(line, "tvg-logo").flatMap { URL(string: $0) }
+                pendingChno = extractAttr(line, "tvg-chno").flatMap { Int($0) }
             } else if !line.hasPrefix("#") {
                 // TVBox txt 频道行：名称,url1#url2（URL 段必须含 "://"，防止误吞普通 M3U URL 行）
                 if let urls = txtChannelURLs(line) {
@@ -50,14 +60,23 @@ public enum M3UParser {
                         .trimmingCharacters(in: .whitespaces) ?? ""
                     appendTXTChannel(name, urls, group: txtGroup, to: &out, seen: &seen)
                 } else if let url = URL(string: line), url.scheme != nil {
-                    if seen.insert(line).inserted {
-                        out.append(LiveChannel(id: line,
-                                               name: pendingName ?? url.host ?? "频道",
+                    let nm = pendingName ?? url.host ?? "频道"
+                    // 去重键 = 名 + URL（不是只按 URL）：云端表实测 24 条「同一路流被两个台名引用」
+                    // （涉及 20 个台：亳州农村频道/绍兴公共频道/萧山综合…），只按 URL 去重会把整台吞掉；
+                    // 同一张表的多个镜像因 (名,URL) 全同，仍会被正确合并。
+                    let dedupKey = nm + "\u{1}" + line
+                    if seen.insert(dedupKey).inserted {
+                        out.append(LiveChannel(id: dedupKey,
+                                               name: nm,
                                                url: url,
-                                               group: pendingGroup))
+                                               group: pendingGroup,
+                                               logo: pendingLogo,
+                                               chno: pendingChno))
                     }
                     pendingName = nil
                     pendingGroup = ""
+                    pendingLogo = nil
+                    pendingChno = nil
                 }
             }
         }
@@ -86,12 +105,26 @@ public enum M3UParser {
         }
     }
 
-    /// 抓取 group-title="xxx"（用户自定义 M3U 与 live_engine 产物均带此属性）。
-    private static func extractGroupTitle(_ extinf: String) -> String {
-        guard let range = extinf.range(of: "group-title=\"") else { return "" }
+    /// 抓取任意 `key="xxx"` 属性（group-title / tvg-logo / tvg-chno …；
+    /// 用户自定义 M3U 与 live 云端产物均带这些属性）。
+    private static func extractAttr(_ extinf: String, _ key: String) -> String? {
+        guard let range = extinf.range(of: "\(key)=\"") else { return nil }
         let tail = extinf[range.upperBound...]
-        guard let end = tail.firstIndex(of: "\"") else { return "" }
+        guard let end = tail.firstIndex(of: "\"") else { return nil }
         return String(tail[..<end])
+    }
+}
+
+/// 台标工具：把 tvg-logo 的 URL 映射成「包内台标文件名键」。
+/// 约定：云端表台标形如 `…/filmcollector-logos@main/0001.png`（0001 = roster chno 四位补零）；
+/// 端侧包内同放 `0001.png`（随包，离线/取网失败也能显），故键 = 文件名主干。
+public enum LiveLogos {
+    public static func key(for logo: URL?) -> String? {
+        guard let logo else { return nil }
+        let fn = logo.lastPathComponent          // 0001.png
+        guard fn.hasSuffix(".png") else { return nil }
+        let stem = String(fn.dropLast(4))        // 0001
+        return (!stem.isEmpty && stem.allSatisfy { $0.isNumber }) ? stem : nil
     }
 }
 

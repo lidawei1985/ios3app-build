@@ -70,16 +70,35 @@ public struct PosterCard: View {
     }
 }
 
+/// 按 dedupId 保序去重。
+///
+/// 2026-10-02「点 1 得 2」结构性加固：`ForEach` 的身份就是 `dedupId`，
+/// 一旦列表里出现**重复身份**（同一部片来自不同源、历史里存了两条……），
+/// SwiftUI 的 diff 会复用/串台，格子看到的是 A、点下去跑的却可能是同 id 的 B。
+/// 去重后身份唯一，这一整类病连根拔掉。
+private func dedupKeepOrder(_ items: [FeedItem]) -> [FeedItem] {
+    var seen = Set<String>()
+    var out: [FeedItem] = []
+    out.reserveCapacity(items.count)
+    for it in items where seen.insert(it.dedupId).inserted { out.append(it) }
+    return out
+}
+
 /// 横向海报货架（首页推荐栏；滚动顺畅 + 懒加载）。
 public struct PosterRail: View {
     let title: String
     let items: [FeedItem]
+    /// 点击痕迹标注（2026-10-02「点 1 得 2」取证：定位是哪个货架）
+    var traceTag: String = ""
     @EnvironmentObject private var router: DetailRouter
     @Environment(\.filmTheme) private var theme
 
-    public init(title: String, items: [FeedItem]) {
-        self.title = title; self.items = items
+    public init(title: String, items: [FeedItem], traceTag: String = "") {
+        self.title = title; self.items = items; self.traceTag = traceTag
     }
+
+    /// 去重后的真实渲染列表（身份唯一，见 `dedupKeepOrder`）
+    private var shown: [FeedItem] { dedupKeepOrder(items) }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -88,10 +107,16 @@ public struct PosterRail: View {
                 .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
+                // 2026-10-02「点 1 得 2」再修：ForEach 身份用 dedupId（经 dedupKeepOrder
+                // 去重后已唯一），比下标更稳；下标身份会让 SwiftUI 把同一格视图复用给
+                // 不同 item，Button action 闭包可能还抓着旧 item。
                 LazyHStack(spacing: 10) {
-                    ForEach(items.prefix(30)) { item in
+                    // 2026-10-02「点 1 得 2」再修：ForEach 身份用 dedupId（经 dedupKeepOrder
+                    // 去重后已唯一），比下标更稳；下标身份会让 SwiftUI 把同一格视图复用给
+                    // 不同 item，Button action 闭包可能还抓着旧 item。
+                    ForEach(Array(shown.prefix(30).enumerated()), id: \.element.dedupId) { i, item in
                         // 详情卡弹层（2026-09-25 钦定）：底部圆角卡片，不再整页推入
-                        Button { router.open(item) } label: {
+                        Button { router.open(item, from: "\(traceTag.isEmpty ? title : traceTag)#\(i)") } label: {
                             PosterCard(item: item)
                                 .frame(width: 104)
                         }
@@ -111,17 +136,25 @@ public struct PosterGrid: View {
     let items: [FeedItem]
     var columns: Int = 3
     var badges: [String: String] = [:]
+    /// 点击痕迹标注（2026-10-02「点 1 得 2」取证：区分自有片库 / 内置源结果）
+    var traceTag: String = ""
     @EnvironmentObject private var router: DetailRouter
 
-    public init(items: [FeedItem], columns: Int = 3, badges: [String: String] = [:]) {
+    public init(items: [FeedItem], columns: Int = 3, badges: [String: String] = [:],
+                traceTag: String = "") {
         self.items = items; self.columns = columns; self.badges = badges
+        self.traceTag = traceTag
     }
+
+    /// 去重后的真实渲染列表（身份唯一，见 `dedupKeepOrder`）
+    private var shown: [FeedItem] { dedupKeepOrder(items) }
 
     public var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: columns), spacing: 16) {
-            ForEach(items) { item in
+            // 2026-10-02「点 1 得 2」再修：身份用 dedupId（去重后唯一），比下标更稳。
+            ForEach(Array(shown.enumerated()), id: \.element.dedupId) { i, item in
                 // 详情卡弹层（同 PosterRail）
-                Button { router.open(item) } label: {
+                Button { router.open(item, from: "\(traceTag.isEmpty ? "grid" : traceTag)#\(i)") } label: {
                     PosterCard(item: item, badge: badges[item.dedupId])
                 }
                 .buttonStyle(.plain)

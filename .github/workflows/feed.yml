@@ -1,0 +1,41 @@
+# 网页版数据定时更新：抓片源 → 生成静态 JSON → 推到 Pages
+#
+# 为什么这么做（关键）：
+#   片源接口不返回 Access-Control-Allow-Origin，浏览器直连会被 CORS 拦死。
+#   与其架一个反代服务器（要账号、要运维、会挂），不如由 Actions 定时抓成静态文件，
+#   网页从同源读 JSON —— 不需要任何服务器，也不需要签名证书。
+#
+# 触发：每 6 小时 + 手动
+name: feed
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 抓片源生成静态数据
+        run: python scripts/web/build_feed.py --out pages/feed --pages 3 --workers 10
+
+      - name: 推到 gh-pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/deploy_pages.py \
+            pages/feed/index.json:feed/index.json \
+            pages/feed/feifan.json:feed/feifan.json \
+            pages/feed/liangzi.json:feed/liangzi.json \
+            pages/feed/tianya.json:feed/tianya.json \
+            pages/feed/wujin.json:feed/wujin.json

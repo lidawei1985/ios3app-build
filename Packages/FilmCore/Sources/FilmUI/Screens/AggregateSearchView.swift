@@ -59,7 +59,7 @@ public struct AggregateSearchView: View {
                 if let items = buckets[s.id], !items.isEmpty {
                     Section("\(s.name)（\(items.count)）") {
                         ForEach(items.prefix(30)) { item in
-                            Button { router.open(item) } label: {
+                            Button { router.open(item, from: "聚合搜索") } label: {
                                 row(item)
                             }
                             .buttonStyle(.plain)

@@ -82,14 +82,14 @@ public struct SearchView: View {
             ScrollView {
                 if !results.isEmpty {
                     sectionDivider("自有片库")
-                    PosterGrid(items: results, columns: 3)
+                    PosterGrid(items: results, columns: 3, traceTag: "自有片库")
                         .padding(.bottom, 6)
                 }
                 if !tvResults.isEmpty {
                     // 三端通用的「源上直接搜」（2026-09-22：搜不到本地就穿透到源，用户：
                     // 「别不三级蜜桃成熟时我搜索是不是得能看到找到」）
                     sectionDivider("内置源结果 · 可直接播")
-                    PosterGrid(items: tvResults, columns: 3)
+                    PosterGrid(items: tvResults, columns: 3, traceTag: "内置源")
                         .padding(.bottom, 6)
                 }
             }

@@ -45,8 +45,95 @@ import os
 ///           起播 3s 无进展即换源（原 5s）；
 ///        ④ **返回键**：恢复**窗口级 UIKit 返回键**（物理免疫被全屏手势层吞掉 tap），
 ///           列表打开时关掉全屏点屏手势层（它正是吃掉返回键点击的元凶）。
+///   22 = 直播页返回键两病根治（用户：「返回的那个按钮是一大一小叠加在一起的」
+///        +「点不了 基本就是卡死的状态…如果出现这种情况想退出都不行」）
+///        —— ① **一大一小叠加**：窗口级 UIKit 箭头与 topBar 里的 SwiftUI 箭头同显隐、同位置，
+///           两个箭头错位叠画 → 现只要窗口级按钮**在位且未挂载失败**，topBar 只留 44pt 占位不画箭头，
+///           视觉只有一个返回键，点击统一走窗口级（物理免疫 LC 吞 tap）；
+///           ② **卡住退不出**：旧口径返回键显隐只看 `showList || controlsPeek`，控制层 3 秒收起后
+///           窗口级按钮一起隐形，屏上唯一可见的「返回」是会被 LC 吞 tap 的 SwiftUI 按钮 → 现引入
+///           唯一口径 `backVisible`（控制层可见 **或** 缓冲/起播换台/彻底失败），这些状态下返回键常驻；
+///           ③ 窗口级按钮新增「挂载失败回调（onGiveUp）」，24×50ms 重试仍挂不上时把 SwiftUI 箭头
+///           放回来兜底 —— 否则「有窗口级按钮就不画箭头」会退化成「一个返回键都没有」。
+///   23 = 播放器两病（主人：「音量键不流畅且不同步 / 最小不显示静音」+「上次播放进度又不能了 又从头播放了」）
+///        —— ① **音量条不同步**：KVO 拿到 `change.newValue` 却丢掉，回读 MPVolumeView 内置 UISlider.value，
+///           而那个 slider **滞后于系统音量** → 每次读数停在上一格（端上＝按键跟不上手），
+///           到最小也停在倒数第二格 → `v <= 0.001` 不成立 → **静音图标永不出现**。
+///           改法：直接用 newValue（系统真值）。
+///        ② **续播又从头播**：09-30 版「等 readyToPlay 再 seek」方向对，但容差给了 `.zero`
+///           —— 远端 HLS 目标分片未就绪时该次 seek 返回 finished=false 且原地不动，旧实现不看回调
+///           → 在慢源上「续播」一次都没生效。改法：±0.5s 容差 + 以完成回调为准 + 最多重试 3 次 + 确认后才清 pendingResume。
+///   24 = 四事一并（主人：「锁屏横竖屏锁不住」「直播还是不好用 我要看上直播」「续播也没生效」「主视觉混进不清的海报」）
+///        —— ① **方向锁真锁住**：`requestGeometryUpdate` 只是"请求"，被系统竖屏锁/宿主静默忽略；
+///           改走 AppDelegate `supportedInterfaceOrientationsFor`（系统每次转屏必问的唯一口子）
+///           + 全局 `OrientationLock` 单一真源 + `setNeedsUpdateOfSupportedInterfaceOrientations` 强制重问；
+///           退出播放**先解锁**（旧写法 locked 时 setLandscape 直接 return，锁被带回主界面）。
+///        ② **直播择优起播**：离线地表 `live_health.json`（三级真出流实测 318/619 条活线）——
+///           热门台几乎只有 1 条活线且**不在第 1 位**（CCTV-1/湖南卫视＝第 3 条才活，广东卫视 6 条全死）；
+///           起播前：当前线在地表活 → 直接播；不确定 → **并发探活本台全部线路**（2.2s 封顶，首个出流者用），
+///           把"撞死线干等 8~40 秒"压到"两秒内"。只在本台内换线，绝不跳台、绝不改源。
+///        ③ **续播补全**：KVO `options` 补 `.initial`（挂观察前已 readyToPlay 就永不回调 → 定点从没跑过）；
+///           周期观察每 0.5s 兜底补定点；`handlePlaybackFailure`/`switchToLine` 在定点未落地时
+///           **不许把点位冲成 0**；`play()` 显式清 pendingResume（防切集误用旧点位）；
+///           DetailView 按历史 `lineIndex` 回填起始集（剧集续播不再回第 1 集）；决策全链写 `resume.traceLog` 可取证。
+///        ⑤ **生效线路面板去灰**（主人：「生效线路选择面板还是灰色的」）：
+///           `StatusPickerSheet`（标题就是「选择生效线路」）用的是默认档 `.regular = thinMaterial`，
+///           而材质会把底下彩色底**去色** → 渲染成中性灰。已玻璃化的点播源格（SettingsView:227）
+///           与源格子（SiteBrowseView:373）早已换 `.clear`，唯独这处漏改 → 补齐同一口径。
+///        ⑥ **「点 1 得到 2」取证 + 主视觉确定化**：给 `DetailRouter.open` 加**点击痕迹**
+///           （写 `taptrace.log`，可从手机容器拉回）——痕迹=片2 → 命中测试送错；痕迹=片1 → 弹层没换。
+///           两种病修法不同，不许靠猜。主视觉点击从 `TabView` 内部提到外层 overlay：分页 TabView
+///           会同时渲染相邻页、由 UIScrollView 接管触摸判定，换页期间 hit-test 会落到邻页按钮
+///           → 看到第 1 张却开第 2 张。现以 `items[index]`（当前选中页）唯一决定落点。
+///        ⑦ **直播保鲜防退化**（本机实测）：干跑一次 `live_build_fast.py`，2515 条候选只体检出
+///           328 条活线 → 成表 311 台，而线上现表 597 台（CCTV-1~17 全在）；旧闸门只卡
+///           「活表<300 不推」，328>300 会放行 → 一推就少掉一半台。闸门改为**与现表对比**（<90% 判退化不推）。
+///   26 = 三事（主人：「点 1 得 2 三处都犯」「直播要能一直用、不用人维护」「下载 24 分钟太慢」）
+///        ① **「点 1 得 2」三处结构性加固**（不再靠猜，按两类可能病因一起堵）：
+///           · **身份串台**：`PosterRail`/`PosterGrid` 先按 `dedupId` 保序去重，且 `ForEach` 的 id
+///             从 `dedupId` 改成**下标**（下标天然唯一）——同一部片来自不同源会产生重复身份，
+///             SwiftUI diff 复用时"看到 A、点到 B"，这一整类病连根拔掉。
+///           · **弹层不换内容**：`.id(item.dedupId)` 从 `DetailView` 提到 `NavigationStack` **最外层**，
+///             换片必重建整棵树（原先只加在内层，外层壳子仍可能被复用、拿旧内容顶上来）。
+///           · **轮播换页竞态**：主视觉 5 秒自动翻页、换页动画 0.45 秒；手指按在第 1 张、
+///             翻页把第 2 张推到眼前再抬手 → 开错片。加**换页后 0.6 秒不吃点击**的上膛闸
+///             （宁可这一下没反应，也绝不能开错片）。
+///           · 取证补**展示痕迹** `taptrace.present`：tap=片1 & present=片2 → 弹层没换；
+///             tap=片2 & present=片2 → 命中测试送错。两种病一次定案。
+///        ② **直播保鲜改「合并提优」，不再「重建替换」**：旧流程探不到活线就**整台丢掉**，
+///           一轮下来 597 台只剩 311 台 = 自己把表刷坏，所以闸门只能一直拦、保鲜实际是停摆的。
+///           新流程：活线排前面当主源 → 原表这台剩下的线路排在后面当备线 →
+///           本轮完全没探活的台**整台原样保留**。台数只增不减，才谈得上"不用人维护"。
+///        ③ **产物下载提速 21 倍**：GitHub artifact 302 到 Azure Blob **按单条连接限速**
+///           （实测单流 37 KB/s → 52MB 要 24.7 分钟）。新 `dl_art_fast.py` 并发分片 + 逐片重试
+///           + 尺寸/CRC 双校验，实测 **53MB / 69 秒 = 784 KB/s**；失败自动退回旧的 `dl_art35_v2.py`。
+///   27 = **搜索提速 8.8 倍**（主人：「搜索好慢 你自己试试搜索时的速度有点说不过去」）
+///        实测 78 个内置源同搜一个词：中位 2.0s、但**最慢 38~50s**，≥22s 的有 6 个。
+///        病灶不在带宽而在**结构**：旧实现 `batchSize=12` 分 7 批，而批内必须**等最慢那个源**
+///        才回调 → 慢源被重复计 7 次，6 个真实词实测总耗时 **49.5~90.5s（平均 70.1s）**。
+///        三刀：① **不再分批**，全量一次并发（各源之间毫无依赖，分批纯属自己拖自己）；
+///        ② **边收边上屏**，`group.next()` 回一个就上屏一个 → 首屏 = 最快那个源（0.42s）；
+///        ③ 搜索单独走 **8s 短会话**（分类/详情仍 30s），并有 6s 交互预算，到点 `cancelAll()`
+///        不再为长尾源干等（被预算取消**不记熔断**，否则每轮都会把"还没轮到"的源误沉底）。
+///        改后总耗时 **8.0s**，首屏 0.42s。
+///   28 = **生效线路面板「透明看不清」三修**（主人：「生效线路选择面板透明了！看不清楚」）
+///        上一刀（v25）只把面板自身改成 `.clear`（不挂材质 → 不去色、不发灰），
+///        却漏了 **sheet 背后**仍是 `.presentationBackground(.clear)` = 全透，
+///        而面板自身又是「只叠 0.06 白」的纯透明档 → **底下没有实底**，
+///        设置页一级页的内容直接穿透上来，两层字叠一起就看不清了。
+///        同坑 `SiteBrowseView` 10-01 已踩过并修好（当时报的是「变成纯透明的了」），
+///        这次照搬同一口径：`presentationBackground` 垫 `TintBackgroundView`（自带不透明底
+///        #0A0A0D，且与页面同取色源）→ 盖住穿透、面板照旧跟海报变色，不退回灰块/黑框。
+///        教训：改"玻璃"不能只改面板自己那一层，**浮层的底在哪一层要一并看**。
+///   29 = **继续观看「点 1 得 2」根修**（主人：「点海报还是点 1 打开 2」）
+///        真机点击痕迹 + 可视化复现：.sheet(item:) 在 sheet 已展开时换片会复用同一
+///        sheet 视图实例，DetailView 的 @State 停在旧条目，导致视觉上旧详情卡被顶上来。
+///        `DetailRouter.open` 改为「先关再开」，强制 sheet 重新创建、@State 重新初始化；
+///        同时 `PosterRail`/`PosterGrid` 的 ForEach id 从「下标」改回「dedupId」（经
+///        `dedupKeepOrder` 去重后已天然唯一），杜绝 LazyHStack 视图复用时 Button action
+///        闭包捕获旧 item 的隐患。
 public enum AppBuildInfo {
-    public static let mark = "v21"
+    public static let mark = "v29"
     /// 2026-09-30 根治「版本号假信号」：mark 此前停在 20260923-67 不随批次走（用户会看到旧号）。
     /// 展示值 = mark + CI 注入的构建指纹（`FeedSecret.buildStamp` = git 短 sha，每批必变）。
     /// 本地无 CI 注入时（占位符）只显示 mark。
@@ -67,22 +154,29 @@ final class WindowBackButton {
 
     private var button: UIButton?
     private let action: () -> Void
+    /// 挂载**彻底失败**（24×50ms 重试全用尽）时的回调（2026-10-01）。
+    /// 起因：UI 层要「有窗口级按钮就不再画 SwiftUI 箭头」来治「一大一小叠加」，
+    /// 但那样一旦窗口级按钮挂不上，就会变成**一个返回键都没有**。有了本回调，
+    /// 调用方可在挂载失败时把 SwiftUI 箭头放回来兜底，两头都不落空。
+    private let onGiveUp: (() -> Void)?
+    private var didGiveUp = false
     /// 期望可见性（安装是异步的：调用方可能在按钮进窗口前就调 setVisible，
     /// 先记下意图，`attach` 成功后立即对齐，否则会「明明设了可见却一直不出现」）。
     private var desiredVisible: Bool = true
 
-    /// 以尾闭包创建并安装（等价 install(anchor:action:)）。
-    init(action: @escaping () -> Void) {
+    /// 创建并安装到 keyWindow（锚点视图所在窗口优先）。自动重试等待进窗口层级。
+    init(anchor: UIView? = nil, action: @escaping () -> Void, onGiveUp: (() -> Void)? = nil) {
         self.action = action
-        self.attachWithRetry(anchor: nil, attempts: 24)
+        self.onGiveUp = onGiveUp
+        self.attachWithRetry(anchor: anchor, attempts: 24)
     }
 
     /// 安装到 keyWindow（锚点视图所在窗口优先）。自动重试等待进窗口层级。
     @discardableResult
-    static func install(anchor: UIView? = nil, action: @escaping () -> Void) -> WindowBackButton {
-        let helper = WindowBackButton(action: action)
-        helper.attachWithRetry(anchor: anchor, attempts: 24)
-        return helper
+    static func install(anchor: UIView? = nil,
+                        onGiveUp: (() -> Void)? = nil,
+                        action: @escaping () -> Void) -> WindowBackButton {
+        WindowBackButton(anchor: anchor, action: action, onGiveUp: onGiveUp)
     }
 
     /// 重试安装：24 × 50ms（≈1.2s 窗口就绪窗口期）。
@@ -91,6 +185,11 @@ final class WindowBackButton {
     private func attachWithRetry(anchor: UIView?, attempts: Int) {
         guard attempts > 0 else {
             filmLog.error("back-button: no window to attach")
+            // 只在主线程回调一次（本函数除首次同步调用外，递归全在 main 队列上）。
+            if !didGiveUp {
+                didGiveUp = true
+                onGiveUp?()
+            }
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
