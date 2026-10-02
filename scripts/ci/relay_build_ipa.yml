@@ -10,6 +10,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 「Publish update.json」那步要 PUT `/repos/<repo>/contents/update.json`（写 gh-pages 分支）。
+# 2026-10-03 实测：不显式声明时这份 GITHUB_TOKEN 是**只读**的 → 该步 HTTP 403 Forbidden
+# （整轮明明编译成功，却因为这一步把 run 判成 failure，白等一次构建）。
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -157,6 +163,9 @@ jobs:
       # 实现口径：**只走 Contents API 覆盖 update.json 一个文件**，
       # 绝不用 `git push -f gh-pages`（那会把同分支上的 gh-pages 安装页一起冲掉）。
       - name: Publish update.json (App 更新数据源)
+        # 产物（加密 IPA）在上一步已上传完，这一步只是"顺手更新版本号数据源"。
+        # 所以它失败**绝不允许拖垮整批**：403/网络抖一下只记一条提示，产物照样能取。
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
