@@ -1223,7 +1223,10 @@ struct LivePlayerScreen: View {
         // 台名先取好再进任务组：外层 `for await` 循环不保证继承 MainActor，
         // 在那里读 `self.current`（MainActor 隔离的计算属性）会撞并发检查。
         let chName = current?.name ?? "?"
-        await withTaskGroup(of: (Int, Bool).self) { group in
+        // ⚠️ `returning: Int?.self` 必须显式写：只用 `withTaskGroup(of:)` 时，
+        // Swift 会从闭包里第一个 `return i` 把 GroupResult 推断成 **Int**，
+        // 末尾 `return nil` 直接编译失败（CI: `'nil' is not compatible with closure result type 'Int'`）。
+        return await withTaskGroup(of: (Int, Bool).self, returning: Int?.self) { group in
             for i in idxs {
                 group.addTask { @MainActor in
                     let ok = await self.probeLine(self.channels[i].url, timeout: 2.2)
