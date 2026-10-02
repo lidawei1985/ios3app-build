@@ -198,7 +198,8 @@ public struct LiveView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(st.name).font(.subheadline.weight(.medium))
                             .foregroundStyle(.white).lineLimit(1)
-                        Text("\(st.group) · 线路 \(linePos + 1)/\(st.lines.count)")
+                        // 固定频道号跟台名一起露出来（「#6 CCTV-5+」这种），用户一眼知道自己在哪一号。
+                        Text("\(st.chno.map { "#\($0) " } ?? "")\(st.group) · 线路 \(linePos + 1)/\(st.lines.count)")
                             .font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
                     }
                 }
@@ -832,10 +833,14 @@ public struct LiveView: View {
         } label: {
             HStack(spacing: 8) {
                 LiveLogoBadge(url: st.logo, name: st.name, size: 26)
-                Text(String(format: "%02d", st.index + 1))
+                // **固定频道号**（2026-10-03 主人：这些是固定的，也是按号的频道号）：
+                // 名册台显示表内 `tvg-chno`（01~80）；非名册台显示「—」——
+                // 旧写法显示的是数组位次，换表/排序一变号就变，不是「固定号」。
+                Text(st.chno.map { String(format: "%02d", $0) } ?? "—")
                     .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(isNow ? Color.orange : .white.opacity(0.4))
-                    .frame(minWidth: 20, alignment: .leading)
+                    .foregroundStyle(isNow ? Color.orange
+                                           : (st.chno == nil ? .white.opacity(0.22) : .white.opacity(0.62)))
+                    .frame(minWidth: 22, alignment: .leading)
                 Text(st.name).font(.subheadline.weight(isNow ? .semibold : .regular))
                     .foregroundStyle(isNow ? Color.orange : .white).lineLimit(1)
                 Spacer(minLength: 2)
@@ -874,17 +879,23 @@ struct LiveStation: Identifiable {
     let name: String        // 去掉「·备N」后的台名
     let group: String
     let logo: URL?
+    /// **固定频道号**（表内 `tvg-chno`；2026-10-03 主人钦定名册，央视1~17 / 卫视 / 地面 / 教育购物）。
+    /// nil = 不在固定名册里 → 排在名册之后，顺序沿用表内原序。
+    /// 说明：`LiveChannel.chno` 一直都在解析，但**这里原先把它丢了** —— 于是「按号」从来没生效过。
+    let chno: Int?
     /// **可变**：端上自愈补源会往这里追加「当场实测能播」的线（v45），
     /// 所以它不是 `let` —— 表内线路全坏时这台要能被补活，而不是被划掉。
     var lines: [URL]
 
     /// 把 m3u 行表合成「台」：表内同台线路相邻，按名字前缀（去掉 ·备N）归并。
+    /// 归一后**按固定频道号重排**：名册台（有 chno）按号在前，其余保持表内原序在后。
     static func build(from raw: [LiveChannel]) -> [LiveStation] {
         var out: [LiveStation] = []
         var currentKey = ""
         var bufName = ""
         var bufGroup = ""
         var bufLogo: URL?
+        var bufChno: Int?
         var bufLines: [URL] = []
 
         func flush() {
@@ -892,9 +903,10 @@ struct LiveStation: Identifiable {
             out.append(LiveStation(id: "st.\(out.count).\(bufName)",
                                    index: out.count,
                                    name: bufName, group: bufGroup.isEmpty ? "其他" : bufGroup,
-                                   logo: bufLogo, lines: bufLines))
+                                   logo: bufLogo, chno: bufChno, lines: bufLines))
             bufLines = []
             bufLogo = nil
+            bufChno = nil
         }
 
         for ch in raw {
@@ -906,10 +918,23 @@ struct LiveStation: Identifiable {
                 bufGroup = ch.group
             }
             if bufLogo == nil { bufLogo = ch.logo }
+            if bufChno == nil { bufChno = ch.chno }
             if !bufLines.contains(ch.url) { bufLines.append(ch.url) }
         }
         flush()
-        return out
+        // 名册台按固定频道号排前；其余保持表内原序（用 index 兜底做全序，避免 sort 不稳定）。
+        out.sort { a, b in
+            switch (a.chno, b.chno) {
+            case let (x?, y?): return x != y ? x < y : a.index < b.index
+            case (.some, .none): return true
+            case (.none, .some): return false
+            case (.none, .none): return a.index < b.index
+            }
+        }
+        return out.enumerated().map { i, st in
+            LiveStation(id: st.id, index: i, name: st.name, group: st.group,
+                        logo: st.logo, chno: st.chno, lines: st.lines)
+        }
     }
 
     /// 台名归一：去掉「·备1 / -2 / ②」等备用标记，同名归一台。
