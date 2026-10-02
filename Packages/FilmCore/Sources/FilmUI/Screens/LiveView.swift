@@ -69,8 +69,11 @@ public struct LiveView: View {
     /// 用台名而不是下标做 key：远端保鲜会整体换表，下标会指向**另一个台**（v44.2 踩过）。
     /// 主人要的「坏了缺了得能知道哪个不出图了」就落在这里 —— 打开面板就能看见，不用一个个点进去试。
     @State private var health: [String: Int] = [:]
-    @State private var healthPending: [Int] = []
-    @State private var healthTesting: Int?
+    // 队列与在测标记同样按**台名归一 key**（v46 补齐）：换表后下标会指向别的台，
+    // 而这三者必须同口径 —— 上一轮只改了 `health` 的 key 类型，漏了这两个，
+    // 于是 `healthPending.contains(key)`（[Int].contains(String)）编译不过、白等一轮 CI。
+    @State private var healthPending: [String] = []
+    @State private var healthTesting: String?
     /// 表代号：远端保鲜**整体换表**时 +1。
     /// 为什么需要它：`index` 只是数组下标，换表后同一个 int 指向**另一个台**
     /// （v44.2 实测：自体检回来时读 `stations[myIndex].name`，打到日志里成了「黄花城水长城03」，
