@@ -12,6 +12,11 @@ public struct SearchView: View {
     @State private var badges: [String: String] = [:]
     @State private var tvResults: [FeedItem] = []      // 电视剧网络源结果（星幕专属，公网 CMS）
     @State private var searching = false
+    /// 网源搜索是否仍在进行（2026-10-03「搜索加速」观感修复）。
+    /// 原来只用一个 `searching`，且它在**本地**搜完就归 false —— 本地没命中时界面会先闪一下
+    /// 「没有找到「XXX」」空态，0.5s 后网源结果（onBatch）才补上来，观感是"搜不出来→突然又有了"，
+    /// 用户对这段的体感就是"搜索慢"。现在网搜期间单独置位：空态只在**所有源都回完仍无结果**时出现。
+    @State private var tvSearching = false
     @State private var recent: [String] = []
     /// 搜索联想候选（大牌做法：输入中就出候选，点一下即搜）
     @State private var suggestions: [Suggestion] = []
@@ -38,7 +43,7 @@ public struct SearchView: View {
                     .submitLabel(.search)
                     .onSubmit { commitSearch() }
                 if !query.isEmpty {
-                    Button { query = ""; results = []; badges = [:]; tvResults = [] } label: {
+                    Button { query = ""; results = []; badges = [:]; tvResults = []; tvSearching = false } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                     }
                 }
@@ -70,7 +75,10 @@ public struct SearchView: View {
 
     @ViewBuilder
     private var content: some View {
-        if searching && results.isEmpty && tvResults.isEmpty {
+        // 还在搜（本地 或 网源）且两边都还没出东西 → 加载态。
+        // 关键：把网搜算进来，空态才不会在网源结果到达前抢先冒出来（见 `tvSearching` 注释）。
+        let busy = (searching || tvSearching) && !query.isEmpty
+        if busy && results.isEmpty && tvResults.isEmpty {
             LoadingView(text: "搜索中…")
         } else if query.isEmpty {
             EmptyStateView(icon: "magnifyingglass", title: "搜你想看的",
@@ -91,6 +99,17 @@ public struct SearchView: View {
                     sectionDivider("内置源结果 · 可直接播")
                     PosterGrid(items: tvResults, columns: 3, traceTag: "内置源")
                         .padding(.bottom, 6)
+                }
+                // 已经看到结果了、但仍有源在回：给一条**不阻塞**的细提示。
+                // 不再用整屏加载态去挡用户（结果 0.5s 就出来了，没必要等 6s 预算跑完）。
+                if tvSearching {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.mini)
+                        Text("还在搜更多源…").font(.caption2)
+                    }
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
                 }
             }
         }
@@ -250,6 +269,8 @@ public struct SearchView: View {
     /// 此前每次键入都在主线程全量过滤几千条片库，且旧任务不取消、堆积后越打越卡。
     private func debounceSearch() {
         searching = !query.isEmpty
+        // 清空输入 / 继续打字都要同步网搜位：清空→关，继续打→保持开（由新一轮 startTVSearch 接管）
+        tvSearching = !query.isEmpty
         searchTask?.cancel()
         tvSearchTask?.cancel()
         let q = query
@@ -304,8 +325,13 @@ public struct SearchView: View {
     private func startTVSearch(_ raw: String) {
         let mode = store.profile.mode
         let q = raw.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { tvResults = []; return }
+        guard !q.isEmpty else { tvResults = []; tvSearching = false; return }
+        tvSearching = true
         tvSearchTask = Task {
+            // 复位网搜位：取消 / 过期 / 正常结束**每条退出路径**都要复位，
+            // 否则「还在搜更多源…」会一直挂着不放（用户会以为搜索卡死）。
+            // 只在仍是当前关键词时才复位，避免把新一次搜索刚置上的位误关。
+            defer { Task { @MainActor in if q == self.query { self.tvSearching = false } } }
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled, q == self.query else { return }
             // 2026-10-01 用户钦定「全部带搜索都搜全部源内容」：不再 prefix(14) 截流，
@@ -320,7 +346,6 @@ public struct SearchView: View {
             await MainActor.run {
                 guard q == self.query else { return }   // 用户已继续输入：过期结果丢弃
                 self.tvResults = Array(hits.prefix(36))
-                self.searching = false
             }
         }
     }

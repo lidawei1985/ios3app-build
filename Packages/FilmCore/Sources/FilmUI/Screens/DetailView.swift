@@ -250,7 +250,7 @@ public struct DetailView: View {
         guard !vodId.isEmpty else { return }
         refreshingPlay = true
         defer { refreshingPlay = false }
-        guard let fresh = await TVBoxSiteClient(site: site).detail(vodId: vodId),
+        guard let fresh = await TVBoxSiteClient.shared(for: site).detail(vodId: vodId),
               fresh.isPlayable else { return }
         liveItem = fresh
     }
@@ -277,7 +277,7 @@ public struct DetailView: View {
         refreshingPlay = true
         defer { refreshingPlay = false }
         for site in DefaultSites.tvDramaSources {
-            let c = TVBoxSiteClient(site: site)
+            let c = TVBoxSiteClient.shared(for: site)
             let hits = await c.search(item.title)
             guard !hits.isEmpty else { continue }
             // 先精确；不中再退一步「归一化后互相包含 且 长度接近」——
@@ -348,7 +348,7 @@ public struct DetailView: View {
         }
         var collected: [URL] = []
         for site in pool {
-            let c = TVBoxSiteClient(site: site)
+            let c = TVBoxSiteClient.shared(for: site)
             let hits = await c.search(item.title)
             if let match = hits.first(where: { normalizedTitle($0.title) == target }) {
                 for u in match.playCandidates where !collected.contains(u) {

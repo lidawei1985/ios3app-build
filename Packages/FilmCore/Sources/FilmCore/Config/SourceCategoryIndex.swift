@@ -91,7 +91,7 @@ public final class SourceCategoryIndex: ObservableObject {
         await withTaskGroup(of: SiteCatBatch.self, body: { group in
             for site in sites {
                 group.addTask { () -> SiteCatBatch in
-                    let cats = await TVBoxSiteClient(site: site).categories()
+                    let cats = await TVBoxSiteClient.shared(for: site).categories()
                     return SiteCatBatch(key: site.key, name: site.name, cats: cats)
                 }
             }

@@ -104,7 +104,7 @@ public struct AggregateSearchView: View {
             let cap = min(8, max(sites.count, 1))
             while inflight < cap, idx < sites.count {
                 let s = sites[idx]; idx += 1; inflight += 1
-                group.addTask { (s, await TVBoxSiteClient(site: s).search(kw)) }
+                group.addTask { (s, await TVBoxSiteClient.shared(for: s).search(kw)) }
             }
             for await (s, items) in group {
                 inflight -= 1
@@ -112,7 +112,7 @@ public struct AggregateSearchView: View {
                 doneCount += 1
                 if idx < sites.count {
                     let next = sites[idx]; idx += 1; inflight += 1
-                    group.addTask { (next, await TVBoxSiteClient(site: next).search(kw)) }
+                    group.addTask { (next, await TVBoxSiteClient.shared(for: next).search(kw)) }
                 }
             }
         }

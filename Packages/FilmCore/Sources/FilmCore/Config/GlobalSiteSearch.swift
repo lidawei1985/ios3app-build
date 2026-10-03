@@ -50,7 +50,7 @@ public enum GlobalSiteSearch {
                 group.addTask {
                     // 只捕获不可变量（site/q/mode/perSourceLimit），可变状态一律留在 group 体内——
                     // 并发闭包里改共享状态既不安全，Swift 严格并发下也过不了编译
-                    let c = TVBoxSiteClient(site: site)
+                    let c = TVBoxSiteClient.shared(for: site)
                     let r = await c.search(q).filter {
                         NavPolicy.allowsItem(title: $0.title,
                                              sourceCategory: $0.aggregateCategoryName,

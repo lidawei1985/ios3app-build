@@ -124,7 +124,7 @@ struct RefSection: View {
     /// 已知坑（34包取证）——ac=list 的 vod_pic 全空，图只在 ac=detail 返回，不补=整段空海报。
     private func load() async {
         guard let site else { loading = false; return }
-        let client = TVBoxSiteClient(site: site)
+        let client = TVBoxSiteClient.shared(for: site)
         let pg = await client.listPage(categoryId: ref.catID, page: 1)
         var got = pg.items
         if !got.isEmpty {

@@ -382,7 +382,8 @@ private struct PublicTVSeriesView: View {
     @State private var autoRetryKey = ""
 
     private var currentSite: TVBoxSite { DefaultSites.tvDramaSources[min(sourceIndex, DefaultSites.tvDramaSources.count - 1)] }
-    private var client: TVBoxSiteClient { TVBoxSiteClient(site: currentSite) }
+    /// 同 SiteBrowseView：计算属性每读一次建一个客户端（2 个 URLSession）→ 改走复用池。
+    private var client: TVBoxSiteClient { TVBoxSiteClient.shared(for: currentSite) }
     private var retryKey: String { "\(sourceIndex)|\(selectedCategory?.id ?? "_")" }
 
     var body: some View {
@@ -544,7 +545,7 @@ private struct PublicTVSeriesView: View {
         selectedCategory = nil
 
         for (idx, site) in DefaultSites.tvDramaSources.enumerated() {
-            let c = TVBoxSiteClient(site: site)
+            let c = TVBoxSiteClient.shared(for: site)
             let cats = (await c.categories()).filter { DefaultSites.isAllowedCategory($0.name) }
             guard !cats.isEmpty else { continue }
             let first = await mergedFirstPage(client: c, cats: cats)

@@ -110,6 +110,30 @@ public actor TVBoxSiteClient {
         searchSession = URLSession(configuration: s)
     }
 
+    // MARK: - 客户端复用（2026-10-03「搜索加速 / 内置源加载加速」根修）
+
+    /// 进程内按 `site.key` 复用客户端。**别再 new 了，走这里。**
+    ///
+    /// 为什么这是「搜索慢 / 进源慢」里肉眼可见的那一截（实机口径）：
+    ///  ① 每个 `TVBoxSiteClient` 的 `init` 会新建**两个** `URLSession`（长会话 + 搜索短会话）；
+    ///  ② 搜索是**每个源一个客户端**：60~78 源 → 每次搜索新建 120~156 个 URLSession；
+    ///     `SiteBrowseView` / `TVSeriesView` 更狠，把客户端写成**计算属性**
+    ///     `{ TVBoxSiteClient(site: site) }` —— 每读一次就再建两个，一次页面加载能建十几个；
+    ///  ③ URLSession 一丢，它内部的 **HTTP keep-alive 连接池随之作废** → 每次搜索/翻页都要
+    ///     重做 DNS + TCP + TLS 握手。慢的从来不只是源站，还有这一整套"重新认识服务器"。
+    ///
+    /// 复用后：同一源跨搜索、跨翻页、跨进详情页都共用同一条连接池 → 第二次开始明显更快。
+    ///
+    /// 不变式（为什么复用不会串数据）：客户端里唯一的可变业务状态是 `picCache`（海报补图缓存），
+    /// 复用恰好是我们想要的（少拉一次图）；其余全是只读的 `site` 与会话。
+    ///
+    /// 池子放在**文件作用域** 的 `private enum` 里（而不是 actor 内部）：
+    /// 与 `SpiderDrpyHost` / `LiveDiag` 同款写法，避开「actor 的静态存储属性」在不同
+    /// Swift 版本下的语义歧义——本仓 `swift-tools-version: 5.9`，不赌编译器。
+    public static func shared(for site: TVBoxSite) -> TVBoxSiteClient {
+        TVBoxClientPool.shared(for: site)
+    }
+
     private func api(_ query: [String: String], via sess: URLSession? = nil) async -> Data? {
         guard var comps = URLComponents(string: site.api), comps.scheme != nil else { return nil }
         var items = comps.queryItems ?? []
@@ -522,5 +546,28 @@ final class CMSXMLDelegate: NSObject, XMLParserDelegate {
         default:
             if inVideo { video[el] = v }
         }
+    }
+}
+
+// MARK: - 点播源客户端池（2026-10-03「内置源加载加速 / 搜索加速」）
+
+/// 进程内按 `site.key` 复用 `TVBoxSiteClient`，目的是**别把 URLSession 的连接池丢掉**。
+///
+/// 放在文件作用域的 `private enum` 里（本仓既有写法，见 `SpiderDrpyHost` / `LiveDiag`）：
+/// 静态存储属性写在这里语义最稳，不受 actor / 泛型等上下文差异影响。
+///
+/// 线程安全：全部访问走 `lock`；`shared(for:)` 本身只做一次字典查表 + 必要时构造，
+/// 临界区极短，不会成为热点。返回的 `TVBoxSiteClient` 是 actor，自身并发安全。
+private enum TVBoxClientPool {
+    private static var pool: [String: TVBoxSiteClient] = [:]
+    private static let lock = NSLock()
+
+    static func shared(for site: TVBoxSite) -> TVBoxSiteClient {
+        lock.lock()
+        defer { lock.unlock() }
+        if let c = pool[site.key] { return c }
+        let c = TVBoxSiteClient(site: site)
+        pool[site.key] = c
+        return c
     }
 }

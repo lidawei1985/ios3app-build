@@ -39,7 +39,12 @@ public struct SiteBrowseView: View {
     /// 空态自动重试护栏：同一「源+分类」只自动重试一次（35包，防死循环转圈）
     @State private var autoRetryKey = ""
 
-    private var client: TVBoxSiteClient { TVBoxSiteClient(site: site) }
+    /// 2026-10-03「内置源加载加速」根修：这里原来是 `{ TVBoxSiteClient(site: site) }` ——
+    /// **计算属性**，每读一次就新建一个客户端（而每个客户端会建 2 个 URLSession）。
+    /// 一次页面加载（bootstrap → categories → listPage → enrich → 翻页）会读它十几次
+    /// → 建二十几个 URLSession，每次搜索/翻页的连接池都被丢掉重来。
+    /// 改走进程内按 `site.key` 复用的 `shared(for:)`：连接池跨翻页/跨进页面存活。
+    private var client: TVBoxSiteClient { TVBoxSiteClient.shared(for: site) }
     private var retryKey: String { "\(site.key)|\(selectedBucket?.title ?? selectedCategory?.id ?? "_")" }
 
     /// 当前产品模式（星幕 normal / 心屋 child / 夜航 adult）——源浏览的端隔离闸门用它。
@@ -699,14 +704,18 @@ public struct SiteBrowseView: View {
             loadError = "这是 Spider 爬虫源（\(site.api)），需要内置执行引擎才能出内容，移植开发中。点右上「选择线路」换一条可用线路。"
             return
         }
-        if categories.isEmpty {
-            categories = await client.categories()
-        }
+        // 2026-10-03「内置源加载加速」：分类与第一页原来**串行**取 →
+        // 首屏耗时 = RTT(分类) + RTT(第一页)（实测中位源各 ~1s，慢源 2~3s）。
+        // 两者互不依赖（第一页取的是不带分类的「全站最新」），改为并发发出 →
+        // 首屏耗时降到 max(RTT1, RTT2)，冷启动大约砍一半。
+        // 语义不变：分类仅在本地为空时才需要走网络。
+        let needCats = categories.isEmpty
+        async let firstAsync = client.listPage(categoryId: nil, page: 1)
+        if needCats { categories = await client.categories() }
+        let first = await firstAsync
         selectedBucket = nil
         selectedCategory = nil
         subCategory = nil
-        // 第一页：不带分类（全站最新）
-        let first = await client.listPage(categoryId: nil, page: 1)
         items = scopedItems(first.items)
         page = 1
         pageCount = first.pageCount
