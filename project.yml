@@ -30,14 +30,18 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tv.filmcollector.iso.xingmu
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     info:
       path: Apps/Xingmu/Info.plist
       properties:
         CFBundleDisplayName: 星幕ISO移动版
-        UILaunchScreen: {}
+        # 2026-10-03 启动动画：系统启动屏底色 = Assets/LaunchBackground（#0B0E14），
+        # 与 App 内过场 `LaunchSplash` 首帧同色 → 冷启动全程零白闪。
+        # 旧值 `{}` 是系统默认（白/黑），会与过场之间闪一下。（旧 build setting
+        # INFOPLIST_KEY_UILaunchScreen_Generation 已移除，避免两处口径打架。）
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [audio]
         NSAppTransportSecurity:
@@ -55,14 +59,15 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tv.filmcollector.iso.xinwu
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     info:
       path: Apps/Xinwu/Info.plist
       properties:
         CFBundleDisplayName: 心屋ISO移动版
-        UILaunchScreen: {}
+        # 启动动画：与星幕同口径（见上）
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [audio]
         NSAppTransportSecurity:

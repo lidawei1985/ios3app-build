@@ -31,24 +31,27 @@ struct XinwuApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MainTabView(profile: .xinwu)
-                .environmentObject(store)
-                .environmentObject(library)
-                .environmentObject(tvbox)
-                .environment(\.filmTheme, theme)
-                .task { await store.boot() }
-                .task {
-                    // 2026-10-01 主人钦定「自动更新」：启动静默查一次，有新版弹窗
-                    UpdateChecker.shared.assetName = "XinwuISO.ipa"
-                    await UpdateChecker.shared.check(silent: true)
-                }
-                .alert("发现新版本", isPresented: $updateChecker.showUpdate) {
-                    // 2026-10-03 主人钦定：弹窗只待 3 秒自关（见 UpdateChecker.presentThenAutoClose）。
-                    Button("立即更新") { updateChecker.dismissUpdate(); updateChecker.installLatest() }
-                    Button("稍后", role: .cancel) { updateChecker.dismissUpdate() }
-                } message: {
-                    Text(updateChecker.releaseNote)
-                }
+            // 2026-10-03 启动动画：与星幕同口径（见 XingmuApp 注释）
+            LaunchSplashGate(profile: .xinwu) {
+                MainTabView(profile: .xinwu)
+                    .environmentObject(store)
+                    .environmentObject(library)
+                    .environmentObject(tvbox)
+                    .environment(\.filmTheme, theme)
+                    .task { await store.boot() }
+                    .task {
+                        // 2026-10-01 主人钦定「自动更新」：启动静默查一次，有新版弹窗
+                        UpdateChecker.shared.assetName = "XinwuISO.ipa"
+                        await UpdateChecker.shared.check(silent: true)
+                    }
+                    .alert("发现新版本", isPresented: $updateChecker.showUpdate) {
+                        // 2026-10-03 主人钦定：弹窗只待 3 秒自关（见 UpdateChecker.presentThenAutoClose）。
+                        Button("立即更新") { updateChecker.dismissUpdate(); updateChecker.installLatest() }
+                        Button("稍后", role: .cancel) { updateChecker.dismissUpdate() }
+                    } message: {
+                        Text(updateChecker.releaseNote)
+                    }
+            }
         }
     }
 

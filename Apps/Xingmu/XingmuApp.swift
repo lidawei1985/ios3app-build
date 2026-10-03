@@ -31,24 +31,28 @@ struct XingmuApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MainTabView(profile: .xingmu)
-                .environmentObject(store)
-                .environmentObject(library)
-                .environmentObject(tvbox)
-                .environment(\.filmTheme, theme)
-                .task { await store.boot() }
-                .task {
-                    // 2026-10-01 主人钦定「自动更新」：启动静默查一次，有新版弹窗
-                    UpdateChecker.shared.assetName = "XingmuISO.ipa"
-                    await UpdateChecker.shared.check(silent: true)
-                }
-                .alert("发现新版本", isPresented: $updateChecker.showUpdate) {
-                    // 2026-10-03 主人钦定：弹窗只待 3 秒自关（见 UpdateChecker.presentThenAutoClose）。
-                    Button("立即更新") { updateChecker.dismissUpdate(); updateChecker.installLatest() }
-                    Button("稍后", role: .cancel) { updateChecker.dismissUpdate() }
-                } message: {
-                    Text(updateChecker.releaseNote)
-                }
+            // 2026-10-03 启动动画：过场包在**最外层**（TabView 外面）→ TabView 只布局一次。
+            // 过场期间 boot/更新检查照常跑（互不等待），过场到点自动淡出揭幕。
+            LaunchSplashGate(profile: .xingmu) {
+                MainTabView(profile: .xingmu)
+                    .environmentObject(store)
+                    .environmentObject(library)
+                    .environmentObject(tvbox)
+                    .environment(\.filmTheme, theme)
+                    .task { await store.boot() }
+                    .task {
+                        // 2026-10-01 主人钦定「自动更新」：启动静默查一次，有新版弹窗
+                        UpdateChecker.shared.assetName = "XingmuISO.ipa"
+                        await UpdateChecker.shared.check(silent: true)
+                    }
+                    .alert("发现新版本", isPresented: $updateChecker.showUpdate) {
+                        // 2026-10-03 主人钦定：弹窗只待 3 秒自关（见 UpdateChecker.presentThenAutoClose）。
+                        Button("立即更新") { updateChecker.dismissUpdate(); updateChecker.installLatest() }
+                        Button("稍后", role: .cancel) { updateChecker.dismissUpdate() }
+                    } message: {
+                        Text(updateChecker.releaseNote)
+                    }
+            }
         }
     }
 
