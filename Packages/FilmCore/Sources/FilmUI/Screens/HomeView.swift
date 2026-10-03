@@ -425,18 +425,37 @@ public struct HomeView: View {
 
         // 主视觉轮播：仅电影/电视剧，排除动漫/黑名单；**优先近 3 年真热门**（否则纯按年份会
         // 让一堆没人认识的冷门新剧霸屏），不足 15 部再按年份新→旧补齐。
+        //
+        // 2026-10-03 主人钦定门面四条：「保持高清 / 最新 / **能播放** / 不使用低质量 / 保持 15 张轮换」。
+        // 「最新 + 真热度」原本就有（近 3 年 + votes≥500），本条补齐另外两条的硬约束：
+        //   · **能播放**：`isPlayable` —— 点了播不了的片不配站在门面上（原实现没查这条）；
+        //   · **不使用低质量**：海报必须「包内高清素材」或「已知高清网络图源」
+        //     （见 `PosterLoader.isHighRes`）。光有 URL 不代表高清 —— feed 里大量 CMS 图床
+        //     实测仅 270px（台账原文：「img.bfzypic.com 仅 270px，用户红线 hero≥1280 高清」）。
+        //
+        // ⚠️ 分层而**不是**一刀切过滤：从严到宽三档，永远先把 15 张凑满。「15 张轮换」是硬需求，
+        // 不能因为某端高清素材稀疏就退化成 6 张 —— 实测心屋「近 3 年 + votes≥500」的高清片
+        // 只有 6 部（星幕 507 部），若一刀切就会掉到 6 张；分层后靠年份兜底补满。
+        // 同层内排序不变：近 3 年真热门（votes 降序）→ 年份新→旧。
         let cur = Calendar.current.component(.year, from: Date())
         let heroBase = allItems.filter {
             HomePolicy.allowsOnHome($0, mode: mode) && ($0.contentType == "movie" || $0.contentType == "tv")
         }
         guard !Task.isCancelled else { return out }     // 已被更新的目录取代 → 立即让路
-        let heroRecent = heroBase.filter {
-            HomePolicy.effectiveYear($0) >= cur - 2 && HomePolicy.votes($0) >= 500
+        // 纯静态判据：只读包内高清清单 + URL 形态，可在后台线程直接调（本函数跑在 detached 里）
+        let heroHD = heroBase.filter { $0.isPlayable && PosterLoader.isHighRes($0.bestPosterURL) }
+        let heroOK = heroBase.filter { $0.isPlayable && $0.bestPosterURL != nil }
+        /// 层内排序：近 3 年真热门优先，其余按年份新→旧补齐（两段相加，由 `take` 按剧集去重）。
+        func heroRank(_ pool: [FeedItem]) -> [FeedItem] {
+            var ranked = pool.filter {
+                HomePolicy.effectiveYear($0) >= cur - 2 && HomePolicy.votes($0) >= 500
+            }.sorted { HomePolicy.votes($0) > HomePolicy.votes($1) }
+            ranked += pool.sorted { HomePolicy.effectiveYear($0) > HomePolicy.effectiveYear($1) }
+            return ranked
         }
-        var heroPool = heroRecent.sorted { HomePolicy.votes($0) > HomePolicy.votes($1) }
-        if heroPool.count < 15 {
-            heroPool += heroBase.sorted { HomePolicy.effectiveYear($0) > HomePolicy.effectiveYear($1) }
-        }
+        var heroPool = heroRank(heroHD)                       // ① 高清 + 可播（门面标准）
+        if heroPool.count < 15 { heroPool += heroRank(heroOK) }    // ② 有图 + 可播（图源未知）
+        if heroPool.count < 15 { heroPool += heroRank(heroBase) }  // ③ 保底：先凑满 15 张
         out.hero = take(heroPool, 15)
 
         // 主题货架：名字与口径由 HomePolicy 定义；不足最小条数不成排（避免空排）

@@ -13,7 +13,11 @@ public final class PosterLoader {
     private let inflight = NSLock()
     private var inflightTasks: [String: Task<Data?, Never>] = [:]
     /// 35包：主视觉 15 张打进 APK（hbn_manifest.json：海报URL→包内文件名），打开就有，不依靠网络
-    private let bundled: [String: String] = PosterLoader.loadBundledManifest()
+    /// 做成 **static let**（懒加载 + `swift_once`，天然线程安全）而不是纯实例属性：
+    /// 主视觉选片跑在后台 `Task.detached`（见 `HomeView.computeShelves`），要判「这张图有没有
+    /// 包内高清素材」，不该为了读一份不可变清单去实例化 `shared`。
+    static let bundledManifest: [String: String] = loadBundledManifest()
+    private let bundled: [String: String] = PosterLoader.bundledManifest
 
     /// 显示档位（10-01 P0「海报越来越糊」根修 + 主人钦定「主视觉=门面必须高清」）：
     /// 之前**所有图一律压到 600px** —— 海报格（120×180pt）够用，但主视觉/详情页头图是
@@ -79,6 +83,51 @@ public final class PosterLoader {
         let ext = (fn as NSString).pathExtension
         guard let p = PosterLoader.bundledResourcePath(name: name, ext: ext) else { return nil }
         return UIImage(contentsOfFile: p)
+    }
+
+    // MARK: - 主视觉高清判据（2026-10-03 主人钦定「高清 / 不使用低质量」的机器可查化）
+
+    /// 这张海报是否已有**包内高清素材**（`hbn_*.jpg`）。**静态**：只读不可变清单，可从任意线程调用
+    /// （主视觉选片跑在后台 `Task.detached` 里，不该为一次判据去碰 `shared` 实例）。
+    ///
+    /// 为什么这是「不使用低质量」的第一信号：
+    ///  主视觉要的是 ≥1280px 门面图，而 feed 里大量海报来自 CMS 源站图床
+    ///  （`img.bfzypic.com` / `img.picbf.com` / `suboimage.com` …），实测**仅 270px**
+    ///  （既有台账原文：「feed 自带图床 img.bfzypic.com 仅 270px，用户红线 hero≥1280 高清」）。
+    ///  靠域名判质量是错的——采集器正是把这些图床的图**升级成了 ≥1280 的包内素材**，
+    ///  所以唯一可靠的第一信号是「这张 URL 在包内清单里有没有」。
+    ///  有 = 天生高清 + 离线可显示（打开就有，不等网络）。
+    public static func hasBundledHD(_ url: URL?) -> Bool {
+        guard let s = url?.absoluteString, !s.isEmpty else { return false }
+        return bundledManifest[s] != nil
+    }
+
+    /// 已知高清**网络**图源（包内素材没覆盖到的那些，仍要能判高清）。
+    ///
+    /// 口径（窄而硬，宁可判不出高清也不误判）：
+    ///  · TMDB：`/t/p/original/` 原图，或 `/w<数字>/` 且宽 ≥ 780（w780 / w1280 / w1920）；
+    ///  · Amazon：`_UX<数字>_` 且宽 ≥ 1000（如 `_UX1200_`）。
+    /// 其余一律返回 false —— 未知图床不冒充高清，交由调用方落到次级排序，
+    /// 而不是在这里猜（猜错就等于把 270px 的糊图摆上主视觉，正是用户要杜绝的）。
+    public static func isKnownHDNetwork(_ url: URL?) -> Bool {
+        guard let s = url?.absoluteString.lowercased(), !s.isEmpty else { return false }
+        if s.contains("image.tmdb.org") {
+            if s.contains("/original/") { return true }
+            guard let r = s.range(of: "/w") else { return false }
+            let digits = s[r.upperBound...].prefix(4).prefix(while: { $0.isNumber })
+            return (Int(digits) ?? 0) >= 780
+        }
+        if s.contains("media-amazon.com") {
+            guard let r = s.range(of: "_ux") else { return false }
+            let digits = s[r.upperBound...].prefix(5).prefix(while: { $0.isNumber })
+            return (Int(digits) ?? 0) >= 1000
+        }
+        return false
+    }
+
+    /// 合成判据：包内高清 **或** 已知高清网络图源（主视觉门面用）。
+    public static func isHighRes(_ url: URL?) -> Bool {
+        hasBundledHD(url) || isKnownHDNetwork(url)
     }
 
     /// 落磁盘缓存（35包原则：包内 hero 直接写进磁盘缓存，网络只做后台静默更新）

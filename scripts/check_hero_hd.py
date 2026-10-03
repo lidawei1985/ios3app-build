@@ -31,9 +31,49 @@ import sys
 ROOT_DEFAULT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APPS = ["Xingmu", "Xinwu"]
 
-MIN_ENTRIES = 8
+MIN_ENTRIES = 15       # 2026-10-03 主人钦定「主视觉保持 15 张轮换」——8 → 15，低于 15 直接 FAIL
 MIN_WIDTH = 640
 MIN_BYTES = 20000
+
+# ── INV-7/8：**运行时选片口径**的源码闸门 ──────────────────────────────────────
+# 为什么必须有：包内 15 张高清只是「素材合格」，主视觉上屏的是**运行时选出来的 15 部**
+# （HomeView.computeShelves 的 out.hero）。素材合格 ≠ 上屏合格 —— 选片口径被改回
+# 「不限可播、不看图质」时，包内素材再高清也没用（feed 里 270px 图床照样进主视觉）。
+# 主人钦定四条：保持高清 / 最新 / **能播放** / 不使用低质量 / 保持 15 张轮换。
+#
+# ⚠️ 判据必须**行级锚定**，不能只查「区间里出现过某字符串」——已实测：把 isPlayable
+#    从高清层那一行删掉，它在区间别处（次级层）仍出现，粗判据照样 PASS（哑判据）。
+#    所以下面把「高清首层那一行」和「收尾那一行」整行钉死。
+HERO_SRC = os.path.join("Packages", "FilmCore", "Sources", "FilmUI", "Screens", "HomeView.swift")
+HERO_ANCHORS = [
+    ("let heroHD = heroBase.filter { $0.isPlayable && PosterLoader.isHighRes($0.bestPosterURL) }",
+     "高清首层必须同时「能播放 + 高清」（包内高清素材 或 已知高清网络图源；"
+     "少了 isPlayable 就有播不了的进门面，少了 isHighRes 就有 270px 图床进门面）"),
+    ("out.hero = take(heroPool, 15)",
+     "15 张硬需求（分层兜底后仍必须凑满 15，不得退化成更少）"),
+]
+
+
+def check_hero_source(root):
+    """INV-7/8：主视觉选片口径必须**整行**仍在源码里（防无声回退）。"""
+    p = os.path.join(root, HERO_SRC)
+    if not os.path.exists(p):
+        return ["INV-7 找不到主视觉选片源码：%s" % p]
+    src = open(p, encoding="utf-8", errors="replace").read()
+    i = src.find("let heroBase = allItems.filter")
+    j0 = src.find("out.hero = take(")
+    if i < 0 or j0 < 0:
+        return ["INV-7 主视觉选片区间定位失败（heroBase=%s out.hero=%s）" % (i >= 0, j0 >= 0)]
+    j = src.find("\n", j0)
+    seg = src[i:j if j > 0 else len(src)]
+    # 去缩进后逐行比对
+    lines = [ln.strip() for ln in seg.splitlines()]
+    bad = []
+    for anchor, why in HERO_ANCHORS:
+        if anchor not in lines:
+            bad.append("INV-8 主视觉选片缺少整行「%s」——%s" % (anchor, why))
+    return bad
+
 
 # 已知缺口（**不许拿它掩盖代码缺陷**，每条必须写明「为什么是素材不是代码」）。
 # 口径：TMDB 该片最大竖版海报就只有这么宽（已比源站 270px 提升 ≥1.8×），无法更高清。
@@ -164,6 +204,14 @@ def main():
                 print("  [%s] 无 HeroBundled" % app)
                 continue
             fails += ["[%s] %s" % (app, x) for x in check_dir(d, app, mw)]
+        # INV-7/8 只跟源码有关，与 --dir 负向对照无关
+        srcbad = check_hero_source(a.root)
+        if srcbad:
+            fails += srcbad
+            for x in srcbad:
+                print("  [选片口径] FAIL " + x)
+        else:
+            print("  [选片口径] PASS（能播放 + 高清 + 15 张，三项判据均在 HomeView 选片区间内）")
 
     print()
     if fails:

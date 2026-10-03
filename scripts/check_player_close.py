@@ -28,6 +28,10 @@
   INV-6 只关一层：必须出现 `detailHost.dismiss(animated: true)`，且不得出现 `root.dismiss`
   INV-7 呈现链结构不变量：DetailView 用 .fullScreenCover 呈现 PlayerScreen；
         HomeView 用 .sheet(item: $detailRouter.item) 呈现详情（三层形状不能变，变了本判据要同步改）
+  INV-8 直播播放器同款护栏（2026-10-03 修订）：LivePlayerScreen 只走 `onClose` 回调，
+        且 LiveView 全文不得出现历史 bug 模式（裸关根）。
+        旧写法要求「必须存在带守卫的裸关根」，但 v43 已**有意删除**直播播放器的 UIKit 兜底
+        → 旧判据常红＝哑判据，故按当前真实不变量重写（见 analyze() 内注释）。
 
 用法：
   python scripts/check_player_close.py            # 正常检查
@@ -164,15 +168,25 @@ def analyze(texts):
        cover and cover_has_player and sheet_detail,
        "cover=%s cover含PlayerScreen=%s home.sheet(item)=%s" % (cover, cover_has_player, sheet_detail))
 
-    # INV-8 直播播放器同款护栏（LivePlayerScreen.close 的 UIKit 兜底不得裸关根）
+    # INV-8 直播播放器同款护栏 —— 2026-10-03 修订。
+    #
+    # 旧判据写作「LiveView 里必须存在**带守卫的裸关根**」（guard root.presentedViewController != nil
+    # → root.dismiss）。但 v43「直播推倒重做收官」(9147e0e) **有意删掉了** LivePlayerScreen 的
+    # UIKit 兜底「保险 5」（原 2122-2134 行五重保险 → 只留 onClose），此后该判据**常红＝哑判据**
+    # （哑判据比没判据更坏：它会遮住真缺陷，还会被"改判据消红"式地糊过去）。
+    #
+    # 现按「当前真正成立、且必须守住」的不变量重写（鉴别力反而更强）：
+    #   ① 关闭契约必须是**回调**：`onClose` 有声明 + 至少 1 处调用；
+    #      —— 直播播放器唯一的呈现点是设置页 fullScreenCover，关自己用 binding 即可，
+    #         不需要、也不得再引入 UIKit 关根兜底（那正是「连带关详情页」的病灶形态）。
+    #   ② 全文件不得出现历史 bug 模式（裸关根）——与 INV-3 同口径（BUG_RE 命中 0）。
     live = strip_comments(texts[LIVE])
-    i = live.rfind("root.dismiss(animated: true)")
-    win = live[max(0, i - 800):i] if i >= 0 else ""
-    guard_ok = ("presentedViewController != nil" in win and "guard" in win
-                and "else" in win and "return" in win)
-    ck("INV-8 直播播放器兜底带『无模态层→跳过』守卫",
-       i >= 0 and guard_ok,
-       "root.dismiss=%s 守卫=%s" % (i >= 0, guard_ok))
+    declares_cb = bool(re.search(r"let\s+onClose\s*:\s*\(\)\s*->\s*Void", live))
+    uses_cb = bool(re.search(r"onClose\(\)", live))
+    bare_root = BUG_RE.findall(live) + re.findall(r"(?<![\w.])root\s*\.\s*dismiss\s*\(", live)
+    ck("INV-8 直播播放器只走 onClose 回调、无裸关根",
+       declares_cb and uses_cb and not bare_root,
+       "onClose声明=%s 调用=%s 裸关根=%d" % (declares_cb, uses_cb, len(bare_root)))
 
     return checks
 
@@ -194,17 +208,15 @@ def main():
             '.first?.keyWindow?.rootViewController?.dismiss(animated: true)', 1)
         texts[PLAYER] = src
 
-        # 变异 3：直播播放器护栏摘掉，回到裸 root.dismiss()
+        # 变异 3：给直播播放器注入历史 bug 写法（裸关根 + 摘掉 onClose 调用），INV-8 必须 FAIL
         live = texts[LIVE]
-        live = re.sub(
-            r"guard let root = [\s\S]{0,400}?root\.presentedViewController != nil else \{[\s\S]{0,200}?return\n            \}\n            root\.dismiss\(animated: true\)",
-            "let scene = UIApplication.shared.connectedScenes\n"
-            "                .compactMap({ $0 as? UIWindowScene }).first\n"
-            "            scene?.keyWindow?.rootViewController?.dismiss(animated: true)",
-            live, count=1)
+        live = live.replace(
+            "Button { onClose() } label: {",
+            "Button { UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })"
+            ".first?.keyWindow?.rootViewController?.dismiss(animated: true) } label: {", 1)
         texts[LIVE] = live
 
-        print("[负向对照] 已注入 3 处历史写法：点播两处裸 root.dismiss + 直播护栏摘除")
+        print("[负向对照] 已注入 3 处历史写法：点播两处裸 root.dismiss + 直播裸关根")
         print("           期望：INV-2/INV-3/INV-8 变 FAIL，整体 RESULT: FAIL\n")
 
     checks = analyze(texts)
