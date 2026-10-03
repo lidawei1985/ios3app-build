@@ -46,6 +46,9 @@ targets:
         UIBackgroundModes: [audio]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true     # 生产源含 http 混合流（与 Android 端 TlsCompat 同语义）
+        # 2026-10-04 修「LC不可用」：不声明这两个 scheme，canOpenURL 恒 false，
+        # 「立即更新」永远掉进 GitHub 网页兜底（国内打不开）。
+        LSApplicationQueriesSchemes: [livecontainer, livecontainer2]
         ITSAppUsesNonExemptEncryption: false
   XinwuISO:
     type: application
@@ -72,6 +75,8 @@ targets:
         UIBackgroundModes: [audio]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # 同星幕：2026-10-04 修「LC不可用」（见上）
+        LSApplicationQueriesSchemes: [livecontainer, livecontainer2]
         ITSAppUsesNonExemptEncryption: false
 schemes:
   XingmuISO:

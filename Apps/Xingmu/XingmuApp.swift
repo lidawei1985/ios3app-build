@@ -43,6 +43,7 @@ struct XingmuApp: App {
                     .task {
                         // 2026-10-01 主人钦定「自动更新」：启动静默查一次，有新版弹窗
                         UpdateChecker.shared.assetName = "XingmuISO.ipa"
+                        UpdateChecker.shared.lcScheme = "livecontainer"   // 星幕 = 第 1 容器实例
                         await UpdateChecker.shared.check(silent: true)
                     }
                     .alert("发现新版本", isPresented: $updateChecker.showUpdate) {

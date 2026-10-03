@@ -42,6 +42,7 @@ struct XinwuApp: App {
                     .task {
                         // 2026-10-01 主人钦定「自动更新」：启动静默查一次，有新版弹窗
                         UpdateChecker.shared.assetName = "XinwuISO.ipa"
+                        UpdateChecker.shared.lcScheme = "livecontainer2"  // 心屋 = 第 2 容器实例（装错容器＝片源互窜）
                         await UpdateChecker.shared.check(silent: true)
                     }
                     .alert("发现新版本", isPresented: $updateChecker.showUpdate) {
