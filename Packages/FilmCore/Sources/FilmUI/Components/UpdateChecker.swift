@@ -130,11 +130,11 @@ public final class UpdateChecker: ObservableObject {
                 .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? direct.absoluteString
             let lc = URL(string: "\(lcScheme)://install?url=\(encoded)")
             if let lc, UIApplication.shared.canOpenURL(lc) {
-                UIApplication.shared.open(lc)
+                _ = await UIApplication.shared.open(lc)
             } else {
                 // 没装 LC（或容器 scheme 未声明）：开安装指南页，页面自带镜像竞速与一键导入
                 if let web = URL(string: Self.pagesBase + "/") {
-                    UIApplication.shared.open(web)
+                    _ = await UIApplication.shared.open(web)
                 }
             }
         }
