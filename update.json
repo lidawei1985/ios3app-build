@@ -1,0 +1,9 @@
+{
+  "stamp": "bcbb0f40a636",
+  "note": "relay sync: v58 横屏修复：分类页六条/内置源页四条筛选栏在横屏(verticalSizeClass=compact)折叠成单条摘要栏+玻璃浮层；竖屏代码路径零改动（杜绝回归）",
+  "builtAt": "2026-10-03T22:43:30Z",
+  "apps": {
+    "xingmu": {"asset": "XingmuISO.ipa"},
+    "xinwu":  {"asset": "XinwuISO.ipa"}
+  }
+}
