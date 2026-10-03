@@ -11,7 +11,16 @@ public struct SiteBrowseView: View {
     @State private var showSourcePicker = false
     @State private var pickerQuery = ""
     @State private var switchingLine = false
-    /// 换配置线路后解析出的新站点池（非空即覆盖 initialSites）
+
+    // MARK: - 横屏适配（2026-10-04 主人钦定，与 CategoryBrowseView 同病同修）
+    // 病根：四条栏（siteHeader≈50 + searchBar≈52 + categoryBar 50 + subBar 38）≈190pt 钉死，
+    // 横屏内容区仅 ≈316pt → 海报墙被挤死、栏不随滚动让位（主人原话「内置源也是一样的问题」）。
+    // 修法：横屏折叠成一条摘要栏（源/分类/搜索胶囊）；竖屏代码路径一行不动（杜绝回归铁律）。
+    @Environment(\.verticalSizeClass) private var vSizeClass
+    @State private var showCatPanel = false
+    @State private var showSearchPanel = false
+    private var isLandscape: Bool { vSizeClass == .compact }
+
     @State private var refreshedSites: [TVBoxSite] = []
     @Environment(\.filmTheme) private var theme
     @State private var categories: [SiteCategory] = []
@@ -108,17 +117,30 @@ public struct SiteBrowseView: View {
     private var allSites: [TVBoxSite] { refreshedSites.isEmpty ? initialSites : refreshedSites }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            siteHeader
-            searchBar            // 35包：源内搜索入口（原 searchText/searchResults 只写了数据层，没有输入框）
-            categoryBar
-            subBar
-            content
+        Group {
+            if isLandscape {
+                // 横屏分支（2026-10-04）：四条栏折叠成一条摘要栏，分类/搜索收进浮层，换源复用现有 sourcePicker。
+                VStack(spacing: 0) {
+                    landscapeBar
+                    content
+                }
+            } else {
+                // 竖屏：原布局原样保留（杜绝回归）
+                VStack(spacing: 0) {
+                    siteHeader
+                    searchBar            // 35包：源内搜索入口（原 searchText/searchResults 只写了数据层，没有输入框）
+                    categoryBar
+                    subBar
+                    content
+                }
+            }
         }
         .background(TintBackgroundView().ignoresSafeArea())
         .navigationTitle(site.name)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSourcePicker) { sourcePicker }
+        .sheet(isPresented: $showCatPanel) { landscapeCatPanel }
+        .sheet(isPresented: $showSearchPanel) { landscapeSearchPanel }
         .task {
             rememberLastSite()   // TVBox「首页站源 / 下次进入」语义：记住上次浏览的源
             await bootstrap()
@@ -881,5 +903,250 @@ public struct SiteBrowseView: View {
                 return it
             }
         }
+    }
+
+    // MARK: - 横屏（2026-10-04）：摘要栏 + 分类浮层 + 搜索浮层
+    // 与 CategoryBrowseView 同病同修：四条栏（≈190pt）折叠成一条摘要栏，海报墙拿回整屏。
+
+    /// 当前分类胶囊显示文本（大类 + 二级）。
+    private var landscapeCatLabel: String {
+        if let b = selectedBucket {
+            if let s = subCategory { return "\(b.title) · \(s.name)" }
+            return b.title
+        }
+        return "全部"
+    }
+
+    /// 横屏摘要栏：源胶囊（复用 sourcePicker）+ 分类胶囊 + 搜索胶囊 + 总量/页码。
+    private var landscapeBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button { showSourcePicker = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.caption2).foregroundStyle(theme.accent)
+                        Text("源 · \(site.name)")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(theme.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold)).foregroundStyle(theme.textSecondary)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background { glassCapsule() }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Button { showCatPanel = true } label: {
+                    HStack(spacing: 5) {
+                        Text("分类").font(.caption2).foregroundStyle(theme.textSecondary)
+                        Text(landscapeCatLabel)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(selectedBucket != nil ? theme.accent : theme.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold)).foregroundStyle(theme.textSecondary)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background { glassCapsule(on: selectedBucket != nil) }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Button { showSearchPanel = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption2).foregroundStyle(theme.textSecondary)
+                        Text(searchResults != nil ? "“\(searchText)”" : "搜本源")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(searchResults != nil ? theme.accent : theme.textPrimary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background { glassCapsule(on: searchResults != nil) }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Text(totalCount > 0
+                     ? "共 \(totalCount) 部 · 第 \(page)\(pageCount > 0 ? "/\(pageCount)" : "") 页"
+                     : "第 \(page) 页")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.trailing, 16)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .frame(height: 50)   // 定高：横滚 ScrollView 在 VStack 里不定高会贪婪分屏
+    }
+
+    /// 玻璃胶囊底（与全 App 统一的 ultraThinMaterial + 发丝描边）。
+    private func glassCapsule(on: Bool = false) -> some View {
+        Capsule().fill(.ultraThinMaterial)
+            .overlay(Capsule().fill(Color.white.opacity(0.12)))
+            .overlay(Capsule().stroke(on ? theme.accent.opacity(0.55) : Color.white.opacity(0.14),
+                                      lineWidth: on ? 1 : 0.5))
+    }
+
+    /// 横屏分类浮层：大类（buckets）+ 组内二级（subItems）。
+    /// 选中写同一批 @State（selectedBucket/subCategory）并复用既有 loadBucket/reload 链路。
+    private var landscapeCatPanel: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    panelSection(title: "大类") {
+                        panelChip("全部", selectedBucket == nil && selectedCategory == nil) {
+                            selectedBucket = nil
+                            selectedCategory = nil
+                            subCategory = nil
+                            Task { await reload() }
+                        }
+                        ForEach(buckets) { b in
+                            panelChip(b.title, selectedBucket?.title == b.title) {
+                                let turnOff = selectedBucket?.title == b.title
+                                selectedBucket = turnOff ? nil : b
+                                selectedCategory = nil
+                                subCategory = nil
+                                Task {
+                                    if turnOff { await reload() } else { await loadBucket(b, page: 1) }
+                                }
+                            }
+                        }
+                    }
+                    if let b = selectedBucket {
+                        let subs = subItems(of: b)
+                        if subs.count > 1 {
+                            panelSection(title: "二级（\(b.title)）") {
+                                panelChip("全部", subCategory == nil) {
+                                    subCategory = nil
+                                    Task { await loadBucket(b, page: 1) }
+                                }
+                                ForEach(subs, id: \.cat.id) { pair in
+                                    panelChip(pair.label, subCategory?.id == pair.cat.id) {
+                                        let isOn = subCategory?.id == pair.cat.id
+                                        subCategory = isOn ? nil : pair.cat
+                                        Task {
+                                            if isOn {
+                                                await loadBucket(b, page: 1)
+                                            } else {
+                                                await loadBucket(NavBucket(title: b.title, cats: [pair.cat]), page: 1)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle("分类")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { showCatPanel = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground {
+            ZStack {
+                TintBackgroundView()
+                Color.white.opacity(0.05)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    /// 横屏搜索浮层：搜索框收进浮层（不再占常驻栏），提交走既有 runSearch（全局跨源）。
+    private var landscapeSearchPanel: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.footnote).foregroundStyle(theme.textSecondary)
+                    TextField("搜全部源", text: $searchText)
+                        .font(.subheadline)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.search)
+                        .onSubmit {
+                            Task {
+                                await runSearch()
+                                showSearchPanel = false
+                            }
+                        }
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                            searchResults = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.footnote).foregroundStyle(theme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button("搜索") {
+                        Task {
+                            await runSearch()
+                            showSearchPanel = false
+                        }
+                    }
+                    .font(.footnote.weight(.semibold)).foregroundStyle(theme.accent)
+                    .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background { glassCapsule() }
+                Spacer()
+                Text("搜索走全部健康源（全局跨源），结果直接进海报墙")
+                    .font(.caption).foregroundStyle(theme.textSecondary)
+            }
+            .padding(16)
+            .navigationTitle("搜索")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium])
+        .presentationBackground {
+            ZStack {
+                TintBackgroundView()
+                Color.white.opacity(0.05)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    /// 浮层自适应网格列。
+    private static let panelGrid = [GridItem(.adaptive(minimum: 76), spacing: 8)]
+
+    @ViewBuilder
+    private func panelSection(title: String, @ViewBuilder chips: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(theme.textSecondary)
+            LazyVGrid(columns: Self.panelGrid, spacing: 8, content: chips)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 浮层选项胶囊。
+    private func panelChip(_ name: String, _ selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(name)
+                .font(.footnote.weight(selected ? .bold : .regular))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background {
+                    if selected {
+                        Capsule().fill(.ultraThinMaterial).overlay(Capsule().fill(Color.white.opacity(0.12)))
+                            .overlay(Capsule().stroke(theme.accent.opacity(0.55), lineWidth: 1))
+                    } else {
+                        Capsule().fill(.ultraThinMaterial).overlay(Capsule().fill(Color.white.opacity(0.12)))
+                            .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
+                    }
+                }
+                .foregroundStyle(selected ? theme.accent : theme.textPrimary)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }

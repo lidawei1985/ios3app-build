@@ -2,3 +2,18 @@ build/
 DerivedData/
 *.xcuserdatad
 .DS_Store
+
+# Python 缓存（诊断脚本 import 时产生，不入库）
+__pycache__/
+*.pyc
+
+# 大体积产物（IPA / 抓取的片源数据），不入库
+pages/bundle/
+pages/_bundle/
+pages/feed/
+
+# 直播表定稿过程的临时备份（不入仓）
+*.finalbak
+*.logobak
+*.twopassbak
+*.bak-*

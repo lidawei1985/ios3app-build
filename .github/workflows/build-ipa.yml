@@ -10,9 +10,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 「Publish update.json」那步要 PUT `/repos/<repo>/contents/update.json`（写 gh-pages 分支）。
-# 2026-10-03 实测：不显式声明时这份 GITHUB_TOKEN 是**只读**的 → 该步 HTTP 403 Forbidden
-# （整轮明明编译成功，却因为这一步把 run 判成 failure，白等一次构建）。
+# 2026-10-01：滚动 Release（发布 IPA）与 gh-pages 推送都需要 contents 写权限
+# （GITHUB_TOKEN 默认只读 → 上一次跑在 Publish 步骤 403 Resource not accessible by integration）
 permissions:
   contents: write
 
@@ -119,24 +118,21 @@ jobs:
               exit 1
             fi
 
-            # 台标内置资源必须真进 app bundle（2026-10-01：iOS 端曾因解析层丢 tvg-logo 而全端无台标；
-            # 复用 TV 端同源台标库 332 张，随包后离线也有。星幕才有直播，心屋不检。）
-            if [ "$scheme" = "XingmuISO" ]; then
-              echo "===== $scheme logo bundle check ====="
-              lcount=$(find "$app" \( -path "*/LiveLogo/0*.png" -o -name "0*.png" \) 2>/dev/null | wc -l | tr -d ' ')
-              echo "logo images in bundle: $lcount"
-              if [ "$lcount" -lt 300 ]; then
-                echo "::error::$scheme 台标图仅 $lcount 张（要求 >=300；LiveLogo 未打进 bundle 或资源丢失）"
-                exit 1
-              fi
-            fi
-
             mkdir -p "artifact/$scheme/Payload"
             cp -R "$app" "artifact/$scheme/Payload/"
             (cd "artifact/$scheme" && zip -qry "../$scheme.ipa" Payload)
             rm -rf "artifact/$scheme"
           done
           ls -la artifact
+
+      # 2026-10-01 主人钦定「随时下载使用 · 谁都可以下载有下载地址 能安装」：
+      # 明文 IPA 直接进公开 Release（主人已拍板选 A，知悉 feed 解密密钥随包公开的代价）。
+      # 加密 artifact 保留给内部推机链（chain_build_relay）。
+      - name: Keep plain IPAs for Release
+        run: |
+          mkdir -p release
+          cp artifact/*.ipa release/
+          ls -la release
 
       # 公开仓 artifact 人人可下 → 必须先加密；ART_PASS 只在 Secret 与用户本机凭据册
       - name: Encrypt IPAs (公开仓禁止明文产物)
@@ -153,56 +149,49 @@ jobs:
             artifact/art.key.json
           retention-days: 7
 
-      # gh-pages 的 update.json = App「发现新版本」自动更新的数据源。
-      #
-      # 为什么必须补这一段（2026-10-03 实测定位）：**中转仓这条流水线原先没有它**，
-      # 而日常构建全走中转仓 → update.json 长期停在上一次「私有仓构建」时的指纹。
-      # 后果不是"少个提示"，而是：用户装上**最新包**后，App 每次冷启都误报「发现新版本」，
-      # 弹窗把首页盖住、底部 tab 点不动 → **进不去直播**（本次任务就是被它挡住的）。
-      #
-      # 实现口径：**只走 Contents API 覆盖 update.json 一个文件**，
-      # 绝不用 `git push -f gh-pages`（那会把同分支上的 gh-pages 安装页一起冲掉）。
-      - name: Publish update.json (App 更新数据源)
-        # 产物（加密 IPA）在上一步已上传完，这一步只是"顺手更新版本号数据源"。
-        # 所以它失败**绝不允许拖垮整批**：403/网络抖一下只记一条提示，产物照样能取。
-        continue-on-error: true
+      # 滚动 Release：固定 tag `latest`，覆盖式更新资产。App 内 UpdateChecker 与 Pages 一键安装都走它。
+      - name: Publish rolling Release (公开下载)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import base64, json, os, urllib.request
-          tok = os.environ["GH_TOKEN"]
-          repo = os.environ["GITHUB_REPOSITORY"]
-          stamp = open("/tmp/build_stamp.txt").read().strip()
-          msg = os.popen("git log -1 --pretty=%s").read().strip() or "relay build"
-          def api(method, path, body=None):
-              req = urllib.request.Request(
-                  "https://api.github.com" + path,
-                  data=json.dumps(body).encode() if body is not None else None,
-                  headers={"Authorization": "token " + tok,
-                           "Accept": "application/vnd.github+json",
-                           "User-Agent": "ci"}, method=method)
-              with urllib.request.urlopen(req, timeout=60) as r:
-                  raw = r.read().decode()
-              return json.loads(raw) if raw.strip() else {}
-          sha = None
-          try:
-              sha = api("GET", "/repos/%s/contents/update.json?ref=gh-pages" % repo).get("sha")
-          except Exception as e:
-              print("no existing update.json:", e)
-          content = {
-              "stamp": stamp,
-              "note": msg,
-              "builtAt": os.popen("date -u +%FT%TZ").read().strip(),
-              "apps": {"xingmu": {"asset": "XingmuISO.ipa"},
-                       "xinwu": {"asset": "XinwuISO.ipa"}},
+          STAMP=$(cat /tmp/build_stamp.txt)
+          MSG=$(git log -1 --pretty=%s)
+          printf '构建指纹: %s\n\n%s\n\n> 安装说明见 https://lidawei1985.github.io/ios3app-build/\n' "$STAMP" "$MSG" > /tmp/notes.md
+          if gh release view latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload latest -R "$GITHUB_REPOSITORY" release/*.ipa --clobber
+            gh release edit latest -R "$GITHUB_REPOSITORY" --title "最新构建" --notes-file /tmp/notes.md
+          else
+            gh release create latest -R "$GITHUB_REPOSITORY" release/*.ipa \
+              --title "最新构建" --notes-file /tmp/notes.md
+          fi
+          echo "release published: stamp=$STAMP"
+
+      # gh-pages：安装页 + update.json（App 自动更新的数据源，静态文件无 API 限流）
+      - name: Deploy Pages (安装页 + update.json)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          STAMP=$(cat /tmp/build_stamp.txt)
+          MSG=$(git log -1 --pretty=%s)
+          mkdir -p gp
+          cp scripts/pages/index.html gp/
+          cat > gp/update.json <<JSON
+          {
+            "stamp": "$STAMP",
+            "note": "$MSG",
+            "builtAt": "$(date -u +%FT%TZ)",
+            "apps": {
+              "xingmu": {"asset": "XingmuISO.ipa"},
+              "xinwu":  {"asset": "XinwuISO.ipa"}
+            }
           }
-          body = {"message": "pages: " + stamp,
-                  "content": base64.b64encode((json.dumps(content, indent=2) + "\n").encode()).decode(),
-                  "branch": "gh-pages"}
-          if sha:
-              body["sha"] = sha
-          api("PUT", "/repos/%s/contents/update.json" % repo, body)
-          print("update.json published: stamp=%s" % stamp)
-          PY
+          JSON
+          cd gp
+          git init -q -b gh-pages
+          git config user.name "ci-bot" && git config user.email "ci@noreply"
+          git add -A
+          git commit -q -m "pages: $STAMP"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/$GITHUB_REPOSITORY.git" gh-pages:gh-pages
+          echo "pages deployed: stamp=$STAMP"

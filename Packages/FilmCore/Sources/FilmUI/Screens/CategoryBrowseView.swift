@@ -16,6 +16,16 @@ import FilmCore
 public struct CategoryBrowseView: View {
     @EnvironmentObject private var store: CatalogStore
     @Environment(\.filmTheme) private var theme
+
+    // MARK: - 横屏适配（2026-10-04 主人钦定）
+    // 病根：六条筛选栏（poolBar…sortBar）竖着钉死 ≈260pt 固定高度，横屏内容区仅 ≈316pt
+    // → 海报墙被挤成缝且筛选栏不随滚动让位（主人原话「分类不上移 海报怎么动也看不到」）。
+    // 修法：横屏（verticalSizeClass == .compact）时六条栏折叠成一条「筛选摘要栏」+ 玻璃浮层；
+    // 竖屏代码路径一行不动（主人铁律：杜绝一切回归）。
+    @Environment(\.verticalSizeClass) private var vSizeClass
+    @State private var showFilterPanel = false
+    private var isLandscape: Bool { vSizeClass == .compact }
+
     @State private var selectedGroupID: String? = nil
     @State private var selectedSubID: String? = nil
     @State private var selectedYear: String? = nil
@@ -107,20 +117,33 @@ public struct CategoryBrowseView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            poolBar
-            categoryBar
-            subBar
-            areaBar
-            yearBar
-            sortBar
-            content
+        Group {
+            if isLandscape {
+                // 横屏分支（2026-10-04）：六条筛选栏折叠成一条摘要栏，筛选收进浮层。
+                // content（海报墙+pager）复用竖屏原组件，零改动。
+                VStack(spacing: 0) {
+                    landscapeFilterBar
+                    content
+                }
+            } else {
+                // 竖屏：原布局原样保留（杜绝回归）
+                VStack(spacing: 0) {
+                    poolBar
+                    categoryBar
+                    subBar
+                    areaBar
+                    yearBar
+                    sortBar
+                    content
+                }
+            }
         }
         .background(TintBackgroundView().ignoresSafeArea())
         .navigationTitle(activeGroup?.title ?? "分类")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: recomputeKey) { await recompute() }
         .onChange(of: store.catalog.items.count) { _ in refreshGroups() }
+        .sheet(isPresented: $showFilterPanel) { landscapeFilterPanel }
     }
 
 
@@ -577,6 +600,207 @@ public struct CategoryBrowseView: View {
                     }
                 }
                 .contentShape(Capsule())   // 整枚胶囊都可点（硬化命中区，防横滚手势吞点击）
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 横屏（2026-10-04）：筛选摘要栏 + 筛选浮层
+
+    /// 横屏摘要栏：一行胶囊显示当前全部筛选状态（类型/地区/年份/排序 + 重置 + 计数），
+    /// 点任意胶囊弹浮层改条件。海报墙从 ≈56pt 拿回 ≈260pt —— 主人需求「横屏看全海报并选片」。
+    /// 「类型」胶囊文本（大类 + 二级，无强解包）。
+    private var landscapeTypeLabel: String {
+        if let s = activeSub { return "\(activeGroup?.title ?? "") · \(s.label)" }
+        return activeGroup?.title ?? "全部"
+    }
+
+    private var landscapeFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                summaryChip(k: "类型", v: landscapeTypeLabel,
+                            on: selectedGroupID != nil) { showFilterPanel = true }
+                if areasCache.count > 1 {
+                    summaryChip(k: "地区", v: selectedArea ?? "全部", on: selectedArea != nil) {
+                        showFilterPanel = true
+                    }
+                }
+                if !yearsCache.isEmpty {
+                    summaryChip(k: "年份", v: selectedYear ?? "全部", on: selectedYear != nil) {
+                        showFilterPanel = true
+                    }
+                }
+                summaryChip(k: "排序", v: selectedSort.title, on: selectedSort != .overall) {
+                    showFilterPanel = true
+                }
+                Button {
+                    selectedGroupID = nil
+                    selectedSubID = nil
+                    selectedYear = nil
+                    selectedArea = nil
+                    selectedSort = .overall
+                } label: {
+                    Text("重置")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Capsule().stroke(.white.opacity(0.22),
+                                                      style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Text("共 \(filteredCache.count) 部")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.trailing, 16)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .frame(height: 50)   // 定高：与竖屏各栏同因，横滚 ScrollView 在 VStack 里不定高会贪婪
+    }
+
+    /// 摘要栏胶囊（键名 + 当前值 + 下拉箭头，玻璃质感与 chip 同观感）。
+    private func summaryChip(k: String, v: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(k).font(.caption2).foregroundStyle(theme.textSecondary)
+                Text(v).font(.footnote.weight(.semibold))
+                    .foregroundStyle(on ? theme.accent : theme.textPrimary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background {
+                Capsule().fill(.ultraThinMaterial).overlay(Capsule().fill(Color.white.opacity(0.12)))
+                    .overlay(Capsule().stroke(on ? theme.accent.opacity(0.55) : Color.white.opacity(0.14),
+                                              lineWidth: on ? 1 : 0.5))
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 横屏筛选浮层：六条栏的全部选项收进一个可滚玻璃面板。
+    /// 数据与竖屏栏完全同源（groupsCache / areasCache / yearsCache / SortMode），
+    /// 选中直接写同一批 @State → 既有 recompute / 翻页归位链路原样复用（content 零改动）。
+    private var landscapeFilterPanel: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    panelSection(title: "类型") {
+                        panelChip("全部", selectedGroupID == nil) {
+                            selectedGroupID = nil
+                            selectedSubID = nil
+                        }
+                        ForEach(groupsCache) { g in
+                            panelChip(g.title, selectedGroupID == g.id) {
+                                selectedGroupID = selectedGroupID == g.id ? nil : g.id
+                                selectedSubID = nil
+                            }
+                        }
+                    }
+                    if let g = activeGroup, !g.subs.isEmpty {
+                        panelSection(title: "二级（\(g.title)）") {
+                            panelChip("全部", selectedSubID == nil) { selectedSubID = nil }
+                            ForEach(g.subs) { s in
+                                panelChip(s.label, selectedSubID == s.id) {
+                                    selectedSubID = selectedSubID == s.id ? nil : s.id
+                                }
+                            }
+                        }
+                    }
+                    if areasCache.count > 1 {
+                        panelSection(title: "地区") {
+                            panelChip("全部", selectedArea == nil) { selectedArea = nil }
+                            ForEach(areasCache) { a in
+                                panelChip(a.name, selectedArea == a.name) {
+                                    selectedArea = selectedArea == a.name ? nil : a.name
+                                }
+                            }
+                        }
+                    }
+                    if !yearsCache.isEmpty {
+                        // 浮层可滚 → 年份全量列出，无需竖屏的「更早」展开
+                        panelSection(title: "年份") {
+                            panelChip("全部", selectedYear == nil) { selectedYear = nil }
+                            ForEach(yearsCache) { y in
+                                panelChip(y.year, selectedYear == y.year) {
+                                    selectedYear = selectedYear == y.year ? nil : y.year
+                                }
+                            }
+                        }
+                    }
+                    panelSection(title: "排序") {
+                        ForEach(SortMode.allCases) { m in
+                            panelChip(m.title, selectedSort == m) { selectedSort = m }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle("筛选")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        selectedGroupID = nil
+                        selectedSubID = nil
+                        selectedYear = nil
+                        selectedArea = nil
+                        selectedSort = .overall
+                    } label: {
+                        Text("重置").foregroundStyle(theme.textSecondary)
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { showFilterPanel = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackground {
+            ZStack {
+                TintBackgroundView()
+                Color.white.opacity(0.05)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    /// 浮层里的自适应网格列（胶囊多时自动换行）。
+    private static let panelGrid = [GridItem(.adaptive(minimum: 76), spacing: 8)]
+
+    @ViewBuilder
+    private func panelSection(title: String, @ViewBuilder chips: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(theme.textSecondary)
+            LazyVGrid(columns: Self.panelGrid, spacing: 8, content: chips)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 浮层选项胶囊（观感与竖屏 chip 一致，但撑满网格列宽）。
+    private func panelChip(_ name: String, _ selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(name)
+                .font(.footnote.weight(selected ? .bold : .regular))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background {
+                    if selected {
+                        Capsule().fill(.ultraThinMaterial).overlay(Capsule().fill(Color.white.opacity(0.12)))
+                            .overlay(Capsule().stroke(theme.accent.opacity(0.55), lineWidth: 1))
+                    } else {
+                        Capsule().fill(.ultraThinMaterial).overlay(Capsule().fill(Color.white.opacity(0.12)))
+                            .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
+                    }
+                }
+                .foregroundStyle(selected ? theme.accent : theme.textPrimary)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
