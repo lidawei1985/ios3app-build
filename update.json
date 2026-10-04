@@ -1,0 +1,9 @@
+{
+  "stamp": "d25a1ea9afb7",
+  "note": "relay sync: v59.1: 拆分两张横屏浮层卡片为子表达式(修CI编译type-check超时:CategoryBrowseView:697/SiteBrowseView:1016)",
+  "builtAt": "2026-10-04T05:37:31Z",
+  "apps": {
+    "xingmu": {"asset": "XingmuISO.ipa"},
+    "xinwu":  {"asset": "XinwuISO.ipa"}
+  }
+}

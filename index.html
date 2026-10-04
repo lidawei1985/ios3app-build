@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>星幕 · 心屋 安装</title>
+<style>
+  :root{--bg:#0b0f16;--card:#161d29;--tx:#e6edf3;--tx2:#8b98ab;--acc:#e0353f;--ok:#31c48d;--warn:#f0b429}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--tx);
+       font:15px/1.65 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:0 0 40px}
+  .wrap{max-width:620px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 16px) 14px 0}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--tx2);font-size:13px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid #232e3f;border-radius:14px;padding:14px;margin-bottom:12px}
+  .step{display:flex;gap:10px;align-items:flex-start}
+  .n{flex:none;width:26px;height:26px;border-radius:50%;background:var(--acc);color:#fff;
+     font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
+  .t{font-weight:700;font-size:15px;margin-bottom:3px}
+  .d{font-size:13px;color:var(--tx2);line-height:1.7}
+  .btn{display:block;width:100%;padding:13px;border:0;border-radius:12px;background:var(--acc);
+       color:#fff;font-size:16px;font-weight:700;text-align:center;text-decoration:none;margin-top:10px}
+  .btn.g{background:#2a3444}
+  .btn.b{background:#2b6cd4}
+  .btn.sm{padding:10px;font-size:14px}
+  .note{font-size:12px;color:var(--tx2);margin-top:8px;line-height:1.7}
+  .tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:5px;background:#22303f;color:var(--ok);margin-left:6px}
+  .alt{background:rgba(240,180,41,.1);border:1px solid #4a3a12;border-radius:10px;padding:10px 12px;
+       font-size:12.5px;color:#e8cf9a;margin-bottom:12px;line-height:1.7}
+  .alt a{color:#ffd479}
+  .danger{background:rgba(224,53,63,.12);border:1px solid #5a1a20;border-radius:10px;padding:10px 12px;
+       font-size:12.5px;color:#ffb3b9;margin-bottom:12px;line-height:1.7}
+  .wxgate{position:fixed;inset:0;z-index:99;background:rgba(6,9,14,.96);display:none;
+          padding:calc(env(safe-area-inset-top) + 40px) 22px 22px;text-align:center}
+  .wxgate p{font-size:15px;line-height:1.9;color:#e6edf3}
+  .wxgate .cp{display:block;margin:16px auto 0;padding:12px;border-radius:12px;background:#2b6cd4;
+              color:#fff;font-weight:700;font-size:16px;text-decoration:none;max-width:320px}
+  details{background:var(--card);border:1px solid #232e3f;border-radius:12px;padding:12px;margin-top:10px}
+  summary{font-size:14px;font-weight:600;cursor:pointer}
+  details p{font-size:12.5px;color:var(--tx2);line-height:1.75;margin:8px 0 0}
+</style>
+</head>
+<body>
+<!-- 2026-10-01：微信 / QQ 内置浏览器不认 itms-services 安装链接（点开就是一屏乱码），
+     也不让跳 Safari。这里拦一下，让用户手动点右上角「··· → 在 Safari 中打开」。 -->
+<div class="wxgate" id="wxgate">
+  <p style="font-size:26px;margin:0 0 14px">🧭</p>
+  <p><b>请用 Safari 打开本页</b><br>
+     微信 / QQ 里打不开安装链接（点了会显示乱码）。<br>
+     点右上角 <b>···</b> → 选 <b>在 Safari 中打开</b>。</p>
+  <a class="cp" id="wxcopy" href="javascript:void(0)">复制本页地址（再去 Safari 粘贴）</a>
+</div>
+<div class="wrap">
+
+  <h1>星幕 · 心屋</h1>
+  <div class="sub">不用电脑、不用花钱 · 本页所有下载都从我们自己的服务器直连</div>
+
+  <div class="danger">
+    🚨 <b>防骗提醒（先看这个）</b><br>
+    本页安装全程<b>不需要</b>滑动任何滑块、<b>不需要</b>发送任何短信、<b>不需要</b>下载任何杀毒软件。<br>
+    凡是出现「拖动滑块验证 / 发短信验证 / 下载 XXX 助手」的页面，都是<b>广告扣费陷阱</b>，立刻关闭。
+  </div>
+
+  <div class="alt">
+    ⚠️ 页面打开慢 / 打不开？换备用地址：<br>
+    <a href="https://cdn.jsdelivr.net/gh/lidawei1985/ios3app-build@gh-pages/index.html">备用地址 1</a> ｜
+    <a href="https://fastly.jsdelivr.net/gh/lidawei1985/ios3app-build@gh-pages/index.html">备用地址 2</a>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <div class="n">1</div>
+      <div style="flex:1">
+        <div class="t">装「轻松签」签名器<span class="tag">只装这一次 · 不用 Apple ID</span></div>
+        <div class="d">苹果规定：非商店 App 必须由证书签名。这个签名器<b>自带证书</b>，装上就能直接签我们的包，全程不用你的 Apple ID。</div>
+
+        <!-- 2026-10-01 v5 主人令：「能不能本体下载、别再是广告」→ 去掉一切网页跳转，
+             直接用苹果的 OTA 安装协议（itms-services）：点了只弹 iOS 系统安装框，
+             不开任何网页、不进任何广告站。点位清单来自官方分发域（qm.esgin.cn）。 -->
+        <a class="btn b" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/1.plist">一键安装签名器（点一下就装）</a>
+        <div class="note">
+          点了会<b>直接弹 iOS 的安装确认框</b>——<b>不打开任何网页、没有任何广告</b>。<br>
+          ⚠️ 必须用 <b>Safari</b> 打开本页（微信 / QQ 里点会显示乱码，页面已自动提示）。<br>
+          装好后：设置 → 通用 → VPN与设备管理 → 点企业级 App → <b>信任</b>。
+        </div>
+        <div class="note">
+          装不上（提示无法安装）＝这个点位当天掉签，换下面备用点位，哪个能装用哪个：
+        </div>
+        <a class="btn g sm" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/2.plist">备用点位 2</a>
+        <a class="btn g sm" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/3.plist">备用点位 3</a>
+        <a class="btn g sm" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/5.plist">备用点位 5</a>
+        <div class="note" style="color:#e8cf9a">
+          都不行再试国外那个：<a href="https://usescarlet.com/" target="_blank" rel="noopener">Scarlet 官网</a>
+          ——它官网广告很多，只认 <b>Install → Direct Install</b>，其余（滑块 / 短信 / 杀毒软件）全是扣费陷阱，别碰。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <div class="n">2</div>
+      <div style="flex:1">
+        <div class="t">装「星幕」<span class="tag">装完桌面就是它</span></div>
+        <div class="d">这个包是「容器 + 播放器」一体：图标和名字就是<b>星幕</b>，打开即是。</div>
+
+        <a class="btn" id="dl-xm" href="#">下载 星幕（34 MB）</a>
+        <a class="btn g sm" id="dl-xw" href="#">下载 心屋 儿童版（34 MB）</a>
+        <div class="note" id="dl-note">
+          正在选最快的下载通道…（国内直连 GitHub 有时很慢）
+        </div>
+        <div class="note">
+          下载完：Safari 右下角<b>下载图标</b> → 点文件 → <b>分享</b> → 选 <b>轻松签</b> → 点「签名 / 安装」。<br>
+          装完桌面出现「星幕」。心屋同理。
+        </div>
+        <div class="note">
+          进阶（可选）：如果你装的是 SideStore 签名器，也可以把我们的应用源加进去自动更新：
+          <a href="javascript:void(0)" id="copy-src" style="color:#ffd479">复制应用源地址</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <div class="n">3</div>
+      <div style="flex:1">
+        <div class="t">一键导入片源<span class="tag">只点一次</span></div>
+        <div class="d">先打开一次刚装的「星幕」，再回本页点按钮，片源自动装进去。</div>
+        <a class="btn g" id="imp-xm" href="#">导入片源到 星幕</a>
+        <a class="btn g sm" id="imp-xw" href="#">导入片源到 心屋</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <div class="n" style="background:var(--ok)">✓</div>
+      <div style="flex:1">
+        <div class="t">以后怎么更新、会不会突然打不开</div>
+        <div class="d">
+          <b>出新版本：</b>App 里会弹更新提示，点一下下载新包，再分享到轻松签装一遍（数据、收藏不丢）。<br>
+          <b>如果哪天全打不开：</b>那是签名被苹果吊销了（所有人都一样），回到本页重新做第 1、2 步即可。<br>
+          <b>想彻底免维护：</b>有电脑的话用电脑装一次 SideStore，之后每 7 天自动续签，永远不用管（见页尾）。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <details>
+    <summary>为什么必须装一个签名器？不能点一下直接装吗？</summary>
+    <p>苹果不允许任何 App 绕过签名进 iPhone。「点一下就装」的通道，背后都是站方<b>花钱买的企业证书</b>替你签——所以这些站全靠广告和会员费赚钱，广告多、陷阱多就是这么来的。<br>
+    我们能做到的：把「直达安装」的按钮直接放进本页（跳过他们网页里的所有广告跳板），并把所有风险写在明面上。这类证书有被苹果吊销的可能，吊销后回本页重装即可。</p>
+  </details>
+
+  <details>
+    <summary>用电脑装（进阶，最稳）</summary>
+    <p>想要 7 天自动续签、彻底不用管：电脑下载
+    <a href="https://github.com/lidawei1985/ios3app-build/releases/download/latest/iloader-windows-x64.exe" style="color:#ffd479">iloader</a>
+    ，双击运行，填自己的 Apple ID，一键装 SideStore。之后在本页第 2 步把应用源加进 SideStore 即可。</p>
+  </details>
+
+</div>
+
+<script>
+/* 微信 / QQ 内置浏览器拦截：这类 App 内浏览器不认 itms-services 安装链接 */
+(function () {
+  var ua = navigator.userAgent || "";
+  var inApp = /MicroMessenger/i.test(ua) || /QQ\//i.test(ua) || /QQBrowser/i.test(ua);
+  if (!inApp) return;
+  document.getElementById("wxgate").style.display = "block";
+  var btn = document.getElementById("wxcopy");
+  btn.onclick = function () {
+    var ta = document.createElement("textarea");
+    ta.value = "https://lidawei1985.github.io/ios3app-build/index.html";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+    btn.textContent = "已复制 ✓ 去 Safari 粘贴打开";
+    setTimeout(function () { btn.textContent = "复制本页地址（再去 Safari 粘贴）"; }, 3000);
+  };
+})();
+var REL = "https://github.com/lidawei1985/ios3app-build/releases/download/latest/";
+var SRC = "https://lidawei1985.github.io/ios3app-build/apps.json";
+var cbtn = document.getElementById("copy-src");
+cbtn.onclick = function () {
+  var ta = document.createElement("textarea");
+  ta.value = SRC; document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } catch (e) {}
+  document.body.removeChild(ta);
+  cbtn.textContent = "已复制 ✓";
+  setTimeout(function () { cbtn.textContent = "复制应用源地址"; }, 3000);
+};
+document.getElementById("dl-xm").href = REL + "Xingmu-Bundle.ipa";
+document.getElementById("dl-xw").href = REL + "Xinwu-Bundle.ipa";
+document.getElementById("imp-xm").href = "livecontainer://install?url=" + encodeURIComponent(REL + "XingmuISO.ipa");
+// 心屋包是第二个容器实例，scheme 是 livecontainer2（否则两个容器抢同一个链接会把片源装错）
+document.getElementById("imp-xw").href = "livecontainer2://install?url=" + encodeURIComponent(REL + "XinwuISO.ipa");
+
+/* ---- 自动挑最快的下载通道 ----
+   实测（2026-10-01）：国内直连 GitHub Release 经常超时；
+   几个第三方加速镜像里 gh-proxy.com / ghproxy.net / ghfast.top 可达。
+   下载按钮默认先给官方直链，测完速再换成最快的。 */
+var MIRRORS = [
+  { name: "官方直链", p: "" },
+  { name: "加速镜像 gh-proxy", p: "https://gh-proxy.com/" },
+  { name: "加速镜像 ghproxy.net", p: "https://ghproxy.net/" },
+  { name: "加速镜像 ghfast", p: "https://ghfast.top/" }
+];
+function probe(url, ms) {
+  return new Promise(function (res) {
+    var done = false, t0 = performance.now();
+    var to = setTimeout(function () { if (!done) { done = true; res(-1); } }, ms);
+    fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" })
+      .then(function () { if (!done) { done = true; clearTimeout(to); res(performance.now() - t0); } })
+      .catch(function () { if (!done) { done = true; clearTimeout(to); res(-1); } });
+  });
+}
+(function pickFastest() {
+  var test = REL + "XingmuISO.ipa";
+  var jobs = MIRRORS.map(function (m) {
+    return probe(m.p + test, 8000).then(function (t) { return { m: m, t: t }; });
+  });
+  Promise.all(jobs).then(function (rs) {
+    var ok = rs.filter(function (r) { return r.t >= 0; }).sort(function (a, b) { return a.t - b.t; });
+    if (!ok.length) {
+      document.getElementById("dl-note").textContent =
+        "所有通道都测不通（可能是网络限制）。可换个网络再试，或用顶部备用地址。";
+      return;
+    }
+    var best = ok[0].m;
+    document.getElementById("dl-xm").href = best.p + REL + "Xingmu-Bundle.ipa";
+    document.getElementById("dl-xw").href = best.p + REL + "Xinwu-Bundle.ipa";
+    // 第 3 步导入片源是容器自己去下载，同样走最快通道，否则它会卡在下载
+    document.getElementById("imp-xm").href =
+      "livecontainer://install?url=" + encodeURIComponent(best.p + REL + "XingmuISO.ipa");
+    document.getElementById("imp-xw").href =
+      "livecontainer2://install?url=" + encodeURIComponent(best.p + REL + "XinwuISO.ipa");
+    document.getElementById("dl-note").innerHTML =
+      "已自动选最快通道：<b>" + best.name + "</b>（" + Math.round(ok[0].t) + " ms）。" +
+      "下载慢就刷新本页重选。";
+  });
+})();
+</script>
+</body>
+</html>
