@@ -1,9 +1,13 @@
 {
-  "stamp": "d25a1ea9afb7",
-  "note": "relay sync: v59.1: 拆分两张横屏浮层卡片为子表达式(修CI编译type-check超时:CategoryBrowseView:697/SiteBrowseView:1016)",
-  "builtAt": "2026-10-04T05:37:31Z",
+  "stamp": "520e87bc1674",
+  "note": "iOS \u661f\u5e55/\u5fc3\u5c4b \u514d\u7b7e\u6784\u5efa\u6e90\uff08\u516c\u5f00\u4e2d\u8f6c\uff0c\u4e0d\u542b\u591c\u822a\u6570\u636e\uff09",
+  "builtAt": "2026-10-04T07:46:37Z",
   "apps": {
-    "xingmu": {"asset": "XingmuISO.ipa"},
-    "xinwu":  {"asset": "XinwuISO.ipa"}
+    "xingmu": {
+      "asset": "XingmuISO.ipa"
+    },
+    "xinwu": {
+      "asset": "XinwuISO.ipa"
+    }
   }
 }
