@@ -7,7 +7,7 @@
     "pagesBase": "https://lidawei1985.github.io/ios3app-build/",
     "releaseBase": "https://github.com/lidawei1985/ios3app-build/releases/download/latest/",
     "shellOta": {
-      "plist": "https://lidawei1985.github.io/ios3app-build/shell.xml",
+      "plist": "https://lidawei1985.github.io/ios3app-build/shell2.xml",
       "enabled": true
     }
   },
