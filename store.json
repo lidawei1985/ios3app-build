@@ -1,10 +1,27 @@
 {
   "_说明": "全站 App 清单。加新 App：在 apps 里加一条即可，页面自动出卡片。ios/android 为 null 表示该端暂无包（前端显示开发中）。coming=true 显示「即将上线」。",
   "site": {
-    "name": "免费 App 直装",
-    "sub": "iPhone / 安卓 · 全程免费 · 不用电脑 · 不进苹果商店",
+    "name": "伟哥智能工作站",
+    "brand": "伟哥智能工作站",
+    "sub": "装上就自动签名 · 不用电脑 · 设一次管一年",
     "pagesBase": "https://lidawei1985.github.io/ios3app-build/",
     "releaseBase": "https://github.com/lidawei1985/ios3app-build/releases/download/latest/"
+  },
+  "trust": {
+    "title": "为什么要你「信任」一下？",
+    "body": "苹果规定：所有非商店 App 必须由证书签名才能装进 iPhone。第一次装完，系统会让你手动「信任」一次证书——这是苹果的规矩，绕不过去，但只做一次。"
+  },
+  "renew": {
+    "title": "自动续签：不用另外装 App",
+    "badge": "已内置",
+    "body": "续签引擎（SideStore）已经打包在安装文件里了，不用再装第二个 App。你要做的只有一次：打开 App → 用你的 Apple ID 登录一次（免费号就行）→ 允许它装一个 VPN 描述文件。之后就交给它自己，每 7 天自动续，不用电脑、不用回本页。",
+    "points": [
+      { "t": "只设一次", "d": "登录 Apple ID 一次，之后全自动" },
+      { "t": "7 天自动续", "d": "后台静默续签，不用你管" },
+      { "t": "不用电脑", "d": "手机 Safari 上就能走完全程" },
+      { "t": "收藏不丢", "d": "万一失效，回本页重装即可，数据保留" }
+    ],
+    "why_appleid": "为什么非要登录 Apple ID？因为苹果只发免费证书给 Apple ID 名下，这是唯一免费且能自动续的路子。我们不用你的账号做任何事，它只是本机签名通道。"
   },
   "signer": {
     "name": "轻松签",
