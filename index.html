@@ -193,6 +193,18 @@
     <a class="btn" href="#install">立即安装 →</a>
   </div>
 
+  <!-- ===== 快捷通道：手机 OTA 直装 ===== -->
+  <div class="card" id="ota-card" style="border-color:rgba(255,201,60,.5);display:none">
+    <div class="step">
+      <div class="n" style="background:linear-gradient(140deg,#e6a817,#ffc93c);box-shadow:0 4px 12px rgba(255,201,60,.3)">⚡</div>
+      <div style="flex:1">
+        <div class="t">免电脑直装<span class="tag" style="background:rgba(255,201,60,.14);color:#ffd479">手机点一下就装 · 不用连电脑</span></div>
+        <div class="d">手机上（Safari）点下面的按钮，弹出「安装」时点确认，App 就自己装进手机。<b>不用电脑、不用数据线</b>。<br>仅限本站已登记过的设备；如果点了装不上或提示无法安装，走下面第 1~2 步的电脑路线（一样免费，5 分钟）。</div>
+        <a class="btn" id="ota-btn" style="margin-top:11px;background:linear-gradient(135deg,#e6a817,#ffc93c);color:#1a1408;box-shadow:0 8px 22px rgba(255,201,60,.3)" href="javascript:void(0)">📱 一键安装（免电脑）</a>
+      </div>
+    </div>
+  </div>
+
   <div class="minimal">
     <div class="mt">✅ 你要手动做的，只有 3 件事（全部只做一次）</div>
     <div class="mrow"><span class="mn">1</span><span><b>电脑上装好 Sideloadly</b>（免费小工具，第 1 步有下载按钮）</span></div>
@@ -553,7 +565,12 @@ function pickMirror() {
   document.title = brand;
 
   if (IS_IOS) {
-    /* 主路线=电脑 Sideloadly（静态卡片，无需 JS 渲染）；备用路线已内嵌在折叠区 */
+    /* 快捷通道：手机 OTA 直装 */
+    var ota = S.site.shellOta;
+    if (ota && ota.plist) {
+      $("ota-card").style.display = "block";
+      $("ota-btn").href = "itms-services://?action=download-manifest&url=" + encodeURIComponent(ota.plist);
+    }
   } else {
     var pc = $("profile-card"); if (pc) pc.style.display = "none";
     var sc = $("signer-card"); if (sc) sc.style.display = "none";
