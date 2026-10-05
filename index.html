@@ -194,9 +194,10 @@
   </div>
 
   <div class="minimal">
-    <div class="mt">✅ 你要手动做的，只有 2 件事</div>
-    <div class="mrow"><span class="mn">1</span><span><b>点一下</b>，把签名器装上（只装这一次，全站通用）</span></div>
-    <div class="mrow"><span class="mn">2</span><span>打开 App，用 <b>Apple ID 登录一次</b>（免费号就行）</span></div>
+    <div class="mt">✅ 你要手动做的，只有 3 件事（全部只做一次）</div>
+    <div class="mrow"><span class="mn">1</span><span><b>装「防掉签」配置文件</b>——不装它，签名器装不上（会报"无法验证其完整性"）</span></div>
+    <div class="mrow"><span class="mn">2</span><span><b>点一下</b>，把签名器装上（全站通用）</span></div>
+    <div class="mrow"><span class="mn">3</span><span>打开 App，用 <b>Apple ID 登录一次</b>（免费号就行）</span></div>
     <div class="mfoot">
       之后<b>下载、签名、续签全部自动</b>：不用电脑、不用再点任何东西、每 7 天自己续命。<br>
       长期稳定性 = 包里内置续签引擎 + 手机保持联网。这是<b>免费方案里能做到的最省事</b>的程度了。
@@ -221,10 +222,25 @@
     <a href="https://fastly.jsdelivr.net/gh/lidawei1985/ios3app-build@gh-pages/index.html">备用地址 2</a>
   </div>
 
-  <h2 id="install"><span class="bar"></span>开始安装 · 只需 4 步</h2>
-  <div class="sub">iPhone 用户按顺序点；安卓用户直接看下面「应用列表」。</div>
+  <h2 id="install"><span class="bar"></span>开始安装（iPhone 按顺序点）</h2>
+  <div class="sub"><b style="color:#e8cf9a">顺序不能乱</b>：先装第 0 步配置文件，再装签名器，否则签名器装不上。</div>
 
-  <!-- 第一步：签名器（仅 iOS 显示，全站共用） -->
+  <!-- 第 0 步：防掉签配置文件（iOS 必装，先于签名器） -->
+  <div class="card" id="profile-card" style="border-color:rgba(240,180,41,.42)">
+    <div class="step">
+      <div class="n" style="background:linear-gradient(140deg,#e8a020,#ffc93c);box-shadow:0 4px 12px rgba(255,201,60,.3)">0</div>
+      <div style="flex:1">
+        <div class="t">先装「防掉签」配置文件<span class="tag" style="background:rgba(240,180,41,.14);color:var(--gold)">iOS 必装 · 一次就好</span></div>
+        <div class="d"><b style="color:#e8cf9a">没装它就装签名器 = 必报「无法验证其完整性」。</b><br>
+        它只做一件事：拦掉苹果的"证书吊销联网检查"，让免费签名证书能正常装进手机。内容已逐行审计：只拦证书验证域名，不碰你的照片、位置和任何其他数据。</div>
+        <a class="btn b sm" id="profile-btn" style="margin-top:11px" href="#">① 安装「防掉签」配置文件</a>
+        <div class="note">点了之后：Safari 提示"正在尝试下载一个配置描述文件" → 点<b>允许</b> → 打开<b>设置</b> → 顶部会显示"描述文件已下载" → 点进去 → <b>安装</b>（输入锁屏密码，一路安装）。</div>
+        <div class="note" style="color:#e8cf9a">主线路打不开就用备用：<a id="profile-bak" href="#" style="color:#ffd479">备用配置文件（同内容）</a></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第 1 步：签名器（仅 iOS 显示，全站共用） -->
   <div class="card" id="signer-card">
     <div class="step">
       <div class="n">1</div>
@@ -233,9 +249,10 @@
         <div class="d" id="signer-why">苹果规定：非商店 App 必须由证书签名。这个签名器自带免费证书，装一次就能签本站任何 App，全程不用你的 Apple ID。</div>
         <div id="signer-btns"></div>
         <div class="note" id="probe-note">⏳ 正在实时检测各点位是否可用…</div>
-        <div class="note" id="signer-mirror" style="color:#e8cf9a"></div>
+        <div class="note" id="signer-integrity" style="color:#e8cf9a"></div>
+        <div class="note" id="signer-alts"></div>
         <div class="note">
-          <b>装好后：</b>设置 → 通用 → VPN与设备管理 → 点「企业级 App」→ <b>信任</b>。
+          <b>装好后：</b>设置 → 通用 → VPN与设备管理 → 点「企业级 App」→ <b>信任</b>（iOS 18 以上信任后若要求，重启一次手机）。
         </div>
       </div>
     </div>
@@ -249,6 +266,13 @@
   <div class="renew" id="renew-box"></div>
 
   <h2><span class="bar"></span>常见问题</h2>
+
+  <details>
+    <summary>装签名器时提示「无法验证其完整性」怎么办？</summary>
+    <p><b>这是最常见的问题，原因只有一个：没装第 0 步的「防掉签」配置文件</b>（或该点位证书恰好被苹果吊销）。<br>
+    苹果会给每个免费证书做"联网验废"——一查是共享证书就拒绝安装。第 0 步的配置文件就是拦掉这个联网验废的，装好后签名器就能正常装进去。<br>
+    <b>解决顺序：</b>① 确认第 0 步配置文件已在设置里装好 → ② 换下一个点位重试（11 个点位 = 11 本独立证书）→ ③ 都不行就用下面的备用签名器。</p>
+  </details>
 
   <details>
     <summary>还需要另外装一个「续签 App」吗？</summary>
@@ -328,6 +352,14 @@ function probe(url, ms) {
 }
 
 /* ================= 签名器区块 ================= */
+function renderProfile() {
+  var p = S.signer && S.signer.profile;
+  if (!p) return;
+  $("profile-btn").href = p.url;
+  $("profile-btn").textContent = "① " + p.title;
+  $("profile-bak").href = p.backup;
+}
+
 function renderSigner() {
   var sg = S.signer;
   $("signer-title").innerHTML = '装「' + esc(sg.name) + '」签名器<span class="tag">只装这一次 · 全站通用</span>';
@@ -343,7 +375,11 @@ function renderSigner() {
     a.textContent = s.label;
     box.appendChild(a);
   });
-  $("signer-mirror").innerHTML = '都不行再试国外那个：<a href="' + sg.mirror + '" target="_blank" rel="noopener" style="color:#ffd479">Scarlet 官网</a>（' + esc(sg.mirrorNote) + '）';
+  $("signer-integrity").innerHTML = '⚠️ ' + esc(sg.integrityNote || "");
+  $("signer-alts").innerHTML = '实在都不行，换备用签名器（打开后装同样要先装第 0 步配置文件）：<br>' +
+    sg.alts.map(function (a2) {
+      return '<a href="' + esc(a2.url) + '" target="_blank" rel="noopener" style="color:#ffd479">' + esc(a2.name) + '</a>';
+    }).join(" ｜ ");
 
   Promise.all(sg.slots.map(function (s) {
     return probe(s.plist + "?_t=" + Date.now(), 8000).then(function (t) { return { s: s, t: t }; });
@@ -493,8 +529,10 @@ function pickMirror() {
   document.title = brand;
 
   if (IS_IOS) {
+    renderProfile();
     renderSigner();
   } else {
+    var pc = $("profile-card"); if (pc) pc.style.display = "none";
     $("signer-card").innerHTML =
       '<div class="step"><div class="n">1</div><div style="flex:1">' +
       '<div class="t">你是安卓 / 电脑用户</div>' +
