@@ -493,6 +493,8 @@ function renderApps() {
 }
 
 /* ================= 下载通道测速 ================= */
+/* 通道按真机实测速度排序（2026-10-06 iPhone 实测：ghproxy.net 约300KB/s，GitHub直连卡0KB）
+   逐个探测，第一个活的直接用；GitHub直连"能握手不吐字节"，必须垫底。 */
 function pickMirror() {
   var rel = S.site.releaseBase;
   var probeApp = null;
@@ -500,18 +502,23 @@ function pickMirror() {
   if (!probeApp) return;
   var target = rel + probeApp.ios.iso;
   var MIRRORS = [
-    { name: "官方直链", p: "" },
-    { name: "加速镜像 gh-proxy", p: "https://gh-proxy.com/" },
     { name: "加速镜像 ghproxy.net", p: "https://ghproxy.net/" },
-    { name: "加速镜像 ghfast", p: "https://ghfast.top/" }
+    { name: "加速镜像 gh-proxy", p: "https://gh-proxy.com/" },
+    { name: "加速镜像 ghfast", p: "https://ghfast.top/" },
+    { name: "官方直链", p: "" }
   ];
-  Promise.all(MIRRORS.map(function (m) {
-    return probe(m.p + target, 8000).then(function (t) { return { m: m, t: t }; });
-  })).then(function (rs) {
-    var ok = rs.filter(function (r) { return r.t >= 0; }).sort(function (a, b) { return a.t - b.t; });
-    if (ok.length) BEST = ok[0].m;
-    (window.__dl_pending || []).forEach(function (fn) { fn(); });
-  });
+  (function tryNext(i) {
+    if (i >= MIRRORS.length) return;
+    var m = MIRRORS[i];
+    probe(m.p + target, 6000).then(function (t) {
+      if (t >= 0) {
+        BEST = m;
+        (window.__dl_pending || []).forEach(function (fn) { fn(); });
+      } else {
+        tryNext(i + 1);
+      }
+    });
+  })(0);
 }
 
 /* ================= 启动 ================= */
