@@ -1,0 +1,52 @@
+{
+  "name": "星幕 · 心屋",
+  "identifier": "tv.filmcollector.iso.source",
+  "sourceURL": "https://lidawei1985.github.io/ios3app-build/apps.json",
+  "apps": [
+    {
+      "name": "星幕",
+      "bundleIdentifier": "com.kdt.livecontainer",
+      "developerName": "星幕心屋",
+      "subtitle": "海量影视 · 免费看",
+      "localizedDescription": "一体化包：装好桌面就是星幕，内置自动续签。首次打开后用页面「一键导入片源」装播放器。",
+      "iconURL": "https://lidawei1985.github.io/ios3app-build/icon_xingmu_512.png",
+      "tintColor": "#e0353f",
+      "category": "entertainment",
+      "versions": [
+        {
+          "version": "3.8.0",
+          "date": "2026-10-01",
+          "size": 35307469,
+          "downloadURL": "https://github.com/lidawei1985/ios3app-build/releases/download/latest/Xingmu-Bundle.ipa",
+          "localizedDescription": "一体化包（容器改名换图标，内置自动续签）"
+        }
+      ],
+      "screenshotURLs": [],
+      "permissionNames": [],
+      "appPermissions": {}
+    },
+    {
+      "name": "心屋",
+      "bundleIdentifier": "com.kdt.livecontainer.xw",
+      "developerName": "星幕心屋",
+      "subtitle": "儿童专区 · 放心看",
+      "localizedDescription": "一体化包：装好桌面就是心屋，内置自动续签。首次打开后用页面「一键导入片源」装播放器。",
+      "iconURL": "https://lidawei1985.github.io/ios3app-build/icon_xinwu_512.png",
+      "tintColor": "#4c8dff",
+      "category": "entertainment",
+      "versions": [
+        {
+          "version": "3.8.0",
+          "date": "2026-10-01",
+          "size": 35313996,
+          "downloadURL": "https://github.com/lidawei1985/ios3app-build/releases/download/latest/Xinwu-Bundle.ipa",
+          "localizedDescription": "一体化包（容器改名换图标，内置自动续签）"
+        }
+      ],
+      "screenshotURLs": [],
+      "permissionNames": [],
+      "appPermissions": {}
+    }
+  ],
+  "news": []
+}
