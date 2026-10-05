@@ -199,8 +199,9 @@
       <div class="n" style="background:linear-gradient(140deg,#e6a817,#ffc93c);box-shadow:0 4px 12px rgba(255,201,60,.3)">⚡</div>
       <div style="flex:1">
         <div class="t">免电脑直装<span class="tag" style="background:rgba(255,201,60,.14);color:#ffd479">手机点一下就装 · 不用连电脑</span></div>
-        <div class="d">手机上（Safari）点下面的按钮，弹出「安装」时点确认，App 就自己装进手机。<b>不用电脑、不用数据线</b>。<br>仅限本站已登记过的设备；如果点了装不上或提示无法安装，走下面第 1~2 步的电脑路线（一样免费，5 分钟）。</div>
+        <div class="d">手机上（Safari）点下面的按钮，弹出「安装」时点确认，App 就自己装进手机。<b>不用电脑、不用数据线</b>。下载走自动测速选出的最快线路，约 1~3 分钟。<br>① 若弹「在“iTunes”中打开？」——直接点<b>取消</b>，安装仍会自动进行（部分系统版本的假弹窗）<br>② 主线路装不上？用<a id="ota-b-btn" href="javascript:void(0)" style="color:#ffd479">备用线路</a>再试一次；还不行就走下面第 1~2 步的电脑路线（一样免费，5 分钟）。<br>仅限本站已登记过的设备。</div>
         <a class="btn" id="ota-btn" style="margin-top:11px;background:linear-gradient(135deg,#e6a817,#ffc93c);color:#1a1408;box-shadow:0 8px 22px rgba(255,201,60,.3)" href="javascript:void(0)">📱 一键安装（免电脑）</a>
+        <a class="btn" id="ota-b-btn2" style="margin-top:9px;display:none;background:rgba(255,201,60,.12);color:#ffd479;border:1px solid rgba(255,201,60,.4)" href="javascript:void(0)">🛟 备用线路安装（主线路不行时用）</a>
       </div>
     </div>
   </div>
@@ -574,6 +575,12 @@ function pickMirror() {
           if (!j || !j.live) return;
           $("ota-card").style.display = "block";
           $("ota-btn").href = "itms-services://?action=download-manifest&url=" + encodeURIComponent(ota.plist);
+          if (ota.backupPlist) {
+            var b1 = $("ota-b-btn"), b2 = $("ota-b-btn2");
+            var bh = "itms-services://?action=download-manifest&url=" + encodeURIComponent(ota.backupPlist);
+            if (b1) b1.href = bh;
+            if (b2) { b2.href = bh; b2.style.display = "inline-block"; }
+          }
         })
         .catch(function () {});
     }
