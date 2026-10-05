@@ -77,7 +77,7 @@
         <!-- 2026-10-01 v5 主人令：「能不能本体下载、别再是广告」→ 去掉一切网页跳转，
              直接用苹果的 OTA 安装协议（itms-services）：点了只弹 iOS 系统安装框，
              不开任何网页、不进任何广告站。点位清单来自官方分发域（qm.esgin.cn）。 -->
-        <a class="btn b" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/1.plist">一键安装签名器（点一下就装）</a>
+        <a class="btn b" id="slot-1" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/1.plist">一键安装签名器（点一下就装）</a>
         <div class="note">
           点了会<b>直接弹 iOS 的安装确认框</b>——<b>不打开任何网页、没有任何广告</b>。<br>
           ⚠️ 必须用 <b>Safari</b> 打开本页（微信 / QQ 里点会显示乱码，页面已自动提示）。<br>
@@ -86,12 +86,13 @@
         <div class="note">
           装不上（提示无法安装）＝这个点位当天掉签，换下面备用点位，哪个能装用哪个：
         </div>
-        <a class="btn g sm" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/2.plist">备用点位 2</a>
-        <a class="btn g sm" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/3.plist">备用点位 3</a>
-        <a class="btn g sm" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/5.plist">备用点位 5</a>
+        <a class="btn g sm" id="slot-2" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/2.plist">备用点位 2</a>
+        <a class="btn g sm" id="slot-3" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/3.plist">备用点位 3</a>
+        <a class="btn g sm" id="slot-5" href="itms-services://?action=download-manifest&amp;url=https://qm.esgin.cn/qsq/neizhi/5.plist">备用点位 5</a>
+        <div class="note" id="probe-note">⏳ 正在实时检测各点位是否可用…</div>
         <div class="note" style="color:#e8cf9a">
           都不行再试国外那个：<a href="https://usescarlet.com/" target="_blank" rel="noopener">Scarlet 官网</a>
-          ——它官网广告很多，只认 <b>Install → Direct Install</b>，其余（滑块 / 短信 / 杀毒软件）全是扣费陷阱，别碰。
+          （<b>需能访问国外网络</b>，国内直连打不开）——只认 <b>Install → Direct Install</b>，其余（滑块 / 短信 / 杀毒软件）全是扣费陷阱，别碰。
         </div>
       </div>
     </div>
@@ -102,7 +103,7 @@
       <div class="n">2</div>
       <div style="flex:1">
         <div class="t">装「星幕」<span class="tag">装完桌面就是它</span></div>
-        <div class="d">这个包是「容器 + 播放器」一体：图标和名字就是<b>星幕</b>，打开即是。</div>
+        <div class="d">这个包是「容器 + 播放器」一体：图标和名字就是<b>星幕</b>，打开即是。<b>包内置自动续签组件</b>——按 App 内提示登录一次 Apple ID（免费、不用充值），之后每 7 天自动续签，<b>不会突然打不开</b>。</div>
 
         <a class="btn" id="dl-xm" href="#">下载 星幕（34 MB）</a>
         <a class="btn g sm" id="dl-xw" href="#">下载 心屋 儿童版（34 MB）</a>
@@ -135,17 +136,41 @@
 
   <div class="card">
     <div class="step">
+      <div class="n" style="background:var(--ok)">4</div>
+      <div style="flex:1">
+        <div class="t">开启自动续签<span class="tag">一次设置 · 每 7 天自动续 · 永不掉签</span></div>
+        <div class="d">装好的 App <b>内置了续签组件（SideStore）</b>。登录一次你自己的 Apple ID（<b>免费 Apple ID 就行，不用充值</b>）后，它会在手机上自动给 App 续签——<b>不用电脑、不用回本页、无感续命</b>。</div>
+        <div class="d" style="margin-top:6px">
+          <b>开启步骤（只做一次）：</b><br>
+          1. 打开桌面上的「星幕」，按 App 内的<b>「开启自动续签」引导</b>操作（一般首次打开就会提示；没看到就在设置 / 侧栏里找 <b>SideStore</b> 或「续签」）；<br>
+          2. 过程需要<b>登录一次你的 Apple ID</b>——只用于给你自己的手机签名，苹果不会因此收费；<br>
+          3. 中途会要求允许一个 <b>VPN 描述文件</b>，这是它在<b>本机</b>自动续签用的通道，不会监控你的上网；<br>
+          4. 看到「续签已开启」即完成，以后<b>每 7 天自动续</b>。
+        </div>
+        <div class="note">长期不开 App 可能错过自动续签——真打开了发现过期，回本页第 1、2 步重签一次即可，<b>收藏和播放记录不会丢</b>。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step">
       <div class="n" style="background:var(--ok)">✓</div>
       <div style="flex:1">
         <div class="t">以后怎么更新、会不会突然打不开</div>
         <div class="d">
           <b>出新版本：</b>App 里会弹更新提示，点一下下载新包，再分享到轻松签装一遍（数据、收藏不丢）。<br>
-          <b>如果哪天全打不开：</b>那是签名被苹果吊销了（所有人都一样），回到本页重新做第 1、2 步即可。<br>
-          <b>想彻底免维护：</b>有电脑的话用电脑装一次 SideStore，之后每 7 天自动续签，永远不用管（见页尾）。
+          <b>会不会突然打不开：</b><b>不会</b>——这个包内置自动续签组件，登录 Apple ID 后每 7 天自动续。<br>
+          <b>万一真打不开（签名被苹果吊销）：</b>回到本页重新做第 1、2 步即可，数据、收藏不丢。
         </div>
       </div>
     </div>
   </div>
+
+  <details>
+    <summary>点开 App 提示「需要开发者模式」？（iOS 16 以上会遇到）</summary>
+    <p>这是苹果对新装 App 的正常要求，只需设置一次：<br>
+    <b>设置 → 隐私与安全性 → 开发者模式</b> → 打开 → 按提示<b>重启手机</b>。之后装任何 App 都不会再弹。</p>
+  </details>
 
   <details>
     <summary>为什么必须装一个签名器？不能点一下直接装吗？</summary>
@@ -239,6 +264,40 @@ function probe(url, ms) {
     document.getElementById("dl-note").innerHTML =
       "已自动选最快通道：<b>" + best.name + "</b>（" + Math.round(ok[0].t) + " ms）。" +
       "下载慢就刷新本页重选。";
+  });
+})();
+
+/* ---- 点位自动测活（2026-10-05）：死的标灰，不让用户盲选 ----
+   fetch no-cors 对「DNS失败/超时/证书无效」会 reject，可达则 resolve——够当探针。 */
+(function () {
+  var note = document.getElementById("probe-note");
+  if (!note) return;
+  function probe(u, ms) {
+    return new Promise(function (res) {
+      var done = false, t0 = performance.now();
+      var to = setTimeout(function () { if (!done) { done = true; res(-1); } }, ms);
+      fetch(u, { mode: "no-cors", cache: "no-store" })
+        .then(function () { if (!done) { done = true; clearTimeout(to); res(performance.now() - t0); } })
+        .catch(function () { if (!done) { done = true; clearTimeout(to); res(-1); } });
+    });
+  }
+  var SLOTS = [1, 2, 3, 5];
+  Promise.all(SLOTS.map(function (i) {
+    return probe("https://qm.esgin.cn/qsq/neizhi/" + i + ".plist?_t=" + Date.now(), 8000)
+      .then(function (t) { return { i: i, t: t }; });
+  })).then(function (rs) {
+    var ok = rs.filter(function (r) { return r.t >= 0; });
+    rs.forEach(function (r) {
+      var a = document.getElementById("slot-" + r.i);
+      if (a && r.t < 0) { a.style.opacity = .45; a.textContent += "（不通）"; }
+    });
+    if (!ok.length) {
+      note.innerHTML = "⚠️ 本次检测 4 个点位都不通（多为网络波动）——直接点上面按钮试，装不上就过会儿再来。";
+      return;
+    }
+    var best = ok.sort(function (a, b) { return a.t - b.t; })[0];
+    note.innerHTML = "✅ 实时检测：" + ok.length + "/4 个点位可用，最快 <b>点位 " + best.i +
+      "</b>（" + Math.round(best.t) + " ms）。哪个装不上就换下一个。";
   });
 })();
 </script>
