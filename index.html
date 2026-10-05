@@ -565,13 +565,13 @@ function pickMirror() {
   document.title = brand;
 
   if (IS_IOS) {
-    /* 快捷通道：手机 OTA 直装（IPA 资产在线才显示卡片） */
+    /* 快捷通道：手机 OTA 直装（同源标记文件在线才显示卡片） */
     var ota = S.site.shellOta;
     if (ota && ota.plist) {
-      fetch("https://github.com/lidawei1985/ios3app-build/releases/download/latest/LiveContainer-signed.ipa",
-            { method: "HEAD", cache: "no-store" })
-        .then(function (r) {
-          if (!r.ok) return;
+      fetch("ota-live.json", { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j || !j.live) return;
           $("ota-card").style.display = "block";
           $("ota-btn").href = "itms-services://?action=download-manifest&url=" + encodeURIComponent(ota.plist);
         })
