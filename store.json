@@ -26,14 +26,30 @@
   "signer": {
     "name": "轻松签",
     "why": "苹果规定：非商店 App 必须经证书签名才能装。这个签名器自带免费证书，装一次，本站所有 App 通用。",
+    "profile": {
+      "title": "安装「防掉签」配置文件",
+      "url": "https://lidawei1985.github.io/ios3app-build/DNS.mobileconfig",
+      "backup": "https://youquzhushou.cn/DNS.mobileconfig",
+      "note": "不装它，签名器会报「无法验证其完整性」。它只拦苹果的证书吊销联网检查（ocsp/crl.apple.com 等 27 个域名），内容已逐行审计，不碰其他数据。"
+    },
     "slots": [
-      { "n": 1, "label": "一键安装签名器", "plist": "https://qm.esgin.cn/qsq/neizhi/1.plist" },
-      { "n": 2, "label": "备用点位 2", "plist": "https://qm.esgin.cn/qsq/neizhi/2.plist" },
-      { "n": 3, "label": "备用点位 3", "plist": "https://qm.esgin.cn/qsq/neizhi/3.plist" },
-      { "n": 5, "label": "备用点位 5", "plist": "https://qm.esgin.cn/qsq/neizhi/5.plist" }
+      { "n": 1,  "label": "一键安装签名器（点位 1）",  "plist": "https://qm.esgin.cn/qsq/neizhi/1.plist" },
+      { "n": 2,  "label": "备用点位 2",  "plist": "https://qm.esgin.cn/qsq/neizhi/2.plist" },
+      { "n": 3,  "label": "备用点位 3",  "plist": "https://qm.esgin.cn/qsq/neizhi/3.plist" },
+      { "n": 4,  "label": "备用点位 4",  "plist": "https://qm.esgin.cn/qsq/neizhi/4.plist" },
+      { "n": 5,  "label": "备用点位 5",  "plist": "https://qm.esgin.cn/qsq/neizhi/5.plist" },
+      { "n": 6,  "label": "备用点位 6",  "plist": "https://qm.esgin.cn/qsq/neizhi/6.plist" },
+      { "n": 7,  "label": "备用点位 7",  "plist": "https://qm.esgin.cn/qsq/neizhi/7.plist" },
+      { "n": 8,  "label": "备用点位 8",  "plist": "https://qm.esgin.cn/qsq/neizhi/8.plist" },
+      { "n": 9,  "label": "备用点位 9",  "plist": "https://qm.esgin.cn/qsq/neizhi/9.plist" },
+      { "n": 10, "label": "备用点位 10", "plist": "https://qm.esgin.cn/qsq/neizhi/10.plist" },
+      { "n": 11, "label": "备用点位 11", "plist": "https://qm.esgin.cn/qsq/neizhi/11.plist" }
     ],
-    "mirror": "https://usescarlet.com/",
-    "mirrorNote": "需能访问国外网络；只认 Install → Direct Install，其余（滑块/短信/杀毒软件）全是扣费陷阱"
+    "integrityNote": "提示「无法验证其完整性」＝该点位证书被苹果吊销了。先确认第 0 步配置文件已装好，再换下一个点位——11 个点位是 11 本独立证书，总有能用的。",
+    "alts": [
+      { "name": "EZsign（备用签名器，同样需先装第 0 步）", "url": "https://int.youquzhushou.cn/" },
+      { "name": "签牛体验版（备用签名器）", "url": "https://iosqn.com/tiyan/" }
+    ]
   },
   "apps": [
     {
