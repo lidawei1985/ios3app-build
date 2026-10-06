@@ -183,11 +183,15 @@
    "id": "music",
    "name": "音乐 App",
    "subtitle": "13 万曲库 · 免费听",
-   "desc": "正在开发，上线后出现在这里，一键安装。",
+   "desc": "壳内导入即用，更新走壳自动。",
    "icon": "",
    "tint": "#7c5cff",
-   "coming": true,
-   "ios": null,
+   "coming": false,
+   "ios": {
+    "iso": "DWGMusic.ipa",
+    "scheme": "livecontainer",
+    "sizeMB": 4
+   },
    "android": null
   }
  ]
