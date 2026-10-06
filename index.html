@@ -199,13 +199,16 @@
       <div class="n" style="background:linear-gradient(140deg,#e6a817,#ffc93c);box-shadow:0 4px 12px rgba(255,201,60,.3)">⚡</div>
       <div style="flex:1">
         <div class="t">免电脑直装<span class="tag" style="background:rgba(255,201,60,.14);color:#ffd479">手机点一下就装 · 不用连电脑</span></div>
-        <div class="d">手机上（Safari）点下面的按钮，再<b>连点两个确认</b>就装上（实测 2 分钟）：<br><b>①</b> 点「一键安装」→ 弹「在“iTunes”中打开？」→ 点<b>【打开】</b>（别点取消！）<br><b>②</b> 系统弹「"lidawei1985.github.io"想要安装“伟哥工作站”」→ 点<b>【安装】</b><br><b>③</b> 自动下载安装约 1~2 分钟（自动走测速最快线路），全程<b>不用电脑</b>。多按几次不会装坏。<br>装不上？换<a id="ota-b-btn" href="javascript:void(0)" style="color:#ffd479">备用线路</a>再试；仍不行走下面电脑路线（一样免费）。仅限本站已登记过的设备。</div>
+        <div class="d">手机上（Safari）点下面的按钮，再<b>连点两个确认</b>就装上（实测 2 分钟）：<br><b>①</b> 点「一键安装」→ 弹「在“iTunes”中打开？」→ 点<b>【打开】</b>（别点取消！）<br><b>②</b> 系统弹「"lidawei1985.github.io"想要安装“伟哥工作站”」→ 点<b>【安装】</b><br><b>③</b> 自动下载安装约 1~2 分钟（自动走测速最快线路），全程<b>不用电脑</b>。多按几次不会装坏。<br>装不上？换<a id="ota-b-btn" href="javascript:void(0)" style="color:#ffd479">备用线路</a>再试。</div>
+        <div style="margin:10px 0 0;padding:9px 11px;border-radius:9px;background:rgba(255,59,71,.10);border:1px solid rgba(255,59,71,.35);font-size:13px;line-height:1.7">📱 <b style="color:#ffdada">谁能装：</b>目前只登记了 <b>伟哥的 iPhone</b>（免费签名一次只认一台设备）。<b style="color:#ffdada">别的手机点「一键安装」会装失败</b>——桌面可能剩一个带叉的灰图标，长按删掉即可，手机没坏。想在新手机上装：需要用那台手机连电脑重签一次（走下面「电脑路线」）。</div>
         <a class="btn" id="ota-btn" style="margin-top:11px;background:linear-gradient(135deg,#e6a817,#ffc93c);color:#1a1408;box-shadow:0 8px 22px rgba(255,201,60,.3)" href="javascript:void(0)">📱 一键安装（免电脑）</a>
         <a class="btn" id="ota-b-btn2" style="margin-top:9px;display:none;background:rgba(255,201,60,.12);color:#ffd479;border:1px solid rgba(255,201,60,.4)" href="javascript:void(0)">🛟 备用线路安装（主线路不行时用）</a>
       </div>
     </div>
   </div>
 
+  <details style="margin-top:14px">
+    <summary>💻 电脑路线 · 你要手动做的只有 3 件事（点开看）</summary>
   <div class="minimal">
     <div class="mt">✅ 你要手动做的，只有 3 件事（全部只做一次）</div>
     <div class="mrow"><span class="mn">1</span><span><b>电脑上装好 Sideloadly</b>（免费小工具，第 1 步有下载按钮）</span></div>
@@ -216,6 +219,7 @@
       电脑只在<b>第一次装壳</b>时用一下——这是苹果规则下<b>免费、稳定、最省事</b>的路（真机验证通过）。
     </div>
   </div>
+  </details>
 
   <div class="feats">
     <div class="feat"><div class="em">🔁</div><div class="ft">自动续签</div><div class="fd">设一次，7 天自续</div></div>
@@ -235,7 +239,9 @@
     <a href="https://fastly.jsdelivr.net/gh/lidawei1985/ios3app-build@gh-pages/index.html">备用地址 2</a>
   </div>
 
-  <h2 id="install"><span class="bar"></span>开始安装（iPhone · 全程免费）</h2>
+  <details style="margin-top:14px">
+    <summary>📖 电脑路线 · 详细步骤（第一次装壳才需要 · 点开看）</summary>
+  <h2 id="install" style="margin-top:10px"><span class="bar"></span>开始安装（iPhone · 全程免费）</h2>
   <div class="sub">只需电脑在<b>第一次装壳</b>时出一次力，之后全部在手机上自动完成。</div>
 
   <!-- 第 1 步：电脑装 Sideloadly -->
@@ -287,6 +293,7 @@
       <b style="color:#ff8a8a">但 2026-10-06 真机实测：这类签名器用的免费共享证书已被苹果吊销，iOS 27 上必报「无法验证其完整性」，防掉签配置也拦不住</b>——是苹果封的路，不是操作问题。哪天证书商重签了，这里按钮还能用；在那之前请用上面的电脑路线（5 分钟，一次就好）。
     </p>
   </details>
+  </details>
 
   <h2><span class="bar"></span>应用列表</h2>
   <div id="apps"></div>
@@ -296,6 +303,12 @@
   <div class="renew" id="renew-box"></div>
 
   <h2><span class="bar"></span>常见问题</h2>
+
+  <details>
+    <summary>在别的手机上点「一键安装」，桌面出现一个带叉的灰图标？</summary>
+    <p><b>那是安装失败的残留，不是手机坏了。</b>本站的安装包用免费证书签名，一次只能登记一台设备——目前登记的是<b>伟哥的 iPhone</b>。别的手机点安装，苹果会在校验环节拒绝，桌面就剩下那个装到一半的灰图标（长按删掉即可）。<br>
+    想在另一台手机上装：需要用<b>那台手机</b>连电脑，走上面「电脑路线」重新签一次（免费，5 分钟）。签完那台手机也被登记，之后就能在它上面正常用。</p>
+  </details>
 
   <details>
     <summary>装签名器/App 时提示「无法验证其完整性」怎么办？</summary>
