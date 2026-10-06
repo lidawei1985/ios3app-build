@@ -200,7 +200,7 @@
       <div style="flex:1">
         <div class="t">免电脑直装<span class="tag" style="background:rgba(255,201,60,.14);color:#ffd479">手机点一下就装 · 不用连电脑</span></div>
         <div class="d">手机上（Safari）点下面的按钮，再<b>连点两个确认</b>就装上（实测 2 分钟）：<br><b>①</b> 点「一键安装」→ 弹「在“iTunes”中打开？」→ 点<b>【打开】</b>（别点取消！）<br><b>②</b> 系统弹「"lidawei1985.github.io"想要安装“伟哥工作站”」→ 点<b>【安装】</b><br><b>③</b> 自动下载安装约 1~2 分钟（自动走测速最快线路），全程<b>不用电脑</b>。多按几次不会装坏。<br>装不上？换<a id="ota-b-btn" href="javascript:void(0)" style="color:#ffd479">备用线路</a>再试。</div>
-        <div style="margin:10px 0 0;padding:9px 11px;border-radius:9px;background:rgba(255,59,71,.10);border:1px solid rgba(255,59,71,.35);font-size:13px;line-height:1.7">📱 <b style="color:#ffdada">谁能装：</b>目前只登记了 <b>伟哥的 iPhone</b>（免费签名一次只认一台设备）。<b style="color:#ffdada">别的手机点「一键安装」会装失败</b>——桌面可能剩一个带叉的灰图标，长按删掉即可，手机没坏。想在新手机上装：需要用那台手机连电脑重签一次（走下面「电脑路线」）。</div>
+        <div style="margin:10px 0 0;padding:9px 11px;border-radius:9px;background:rgba(255,59,71,.10);border:1px solid rgba(255,59,71,.35);font-size:13px;line-height:1.7">📱 <b style="color:#ffdada">谁能装：</b>目前这个包只登记了 <b>伟哥的 iPhone</b>（免费签名一次只认一台）。<b style="color:#ffdada">别的手机点「一键安装」会装失败</b>——桌面可能剩一个带叉的灰图标，长按删掉即可，手机没坏。<b style="color:#7de8a5">新手机想装？</b>展开下面「新手机 5 分钟自助接入」，用你自己的 Apple ID 照着做，5 分钟装上，之后这台手机就是免电脑的。</div>
         <a class="btn" id="ota-btn" style="margin-top:11px;background:linear-gradient(135deg,#e6a817,#ffc93c);color:#1a1408;box-shadow:0 8px 22px rgba(255,201,60,.3)" href="javascript:void(0)">📱 一键安装（免电脑）</a>
         <a class="btn" id="ota-b-btn2" style="margin-top:9px;display:none;background:rgba(255,201,60,.12);color:#ffd479;border:1px solid rgba(255,201,60,.4)" href="javascript:void(0)">🛟 备用线路安装（主线路不行时用）</a>
       </div>
@@ -208,15 +208,16 @@
   </div>
 
   <details style="margin-top:14px">
-    <summary>💻 电脑路线 · 你要手动做的只有 3 件事（点开看）</summary>
+    <summary>💻 新手机第一次安装 · 5 分钟自助接入（免费 · 用你自己的 Apple ID · 密码不给任何人）</summary>
   <div class="minimal">
-    <div class="mt">✅ 你要手动做的，只有 3 件事（全部只做一次）</div>
-    <div class="mrow"><span class="mn">1</span><span><b>电脑上装好 Sideloadly</b>（免费小工具，第 1 步有下载按钮）</span></div>
-    <div class="mrow"><span class="mn">2</span><span>手机连电脑：本页点「下载」，把文件<b>拖进 Sideloadly</b>，输入你的 <b>Apple ID</b> 点 Start</span></div>
-    <div class="mrow"><span class="mn">3</span><span>打开 App，用 <b>Apple ID 登录一次</b>（免费号就行，开自动续签）</span></div>
+    <div class="mt">📱 新手机接入四步（照着点，5 分钟，只做这一次）</div>
+    <div class="mrow"><span class="mn">1</span><span><b>电脑上装 Sideloadly</b>：<a href="https://sideloadly.io/" target="_blank" rel="noopener" style="color:#7de8a5">点此打开官网下载</a> → 安装。提示缺驱动就装个 iTunes（微软商店搜 iTunes，免费），装完重启一次电脑。</span></div>
+    <div class="mrow"><span class="mn">2</span><span><b>手机用数据线连电脑</b>（第一次连接点手机上的「信任」）。<br>电脑浏览器打开这个地址下载安装包：<a href="https://gh-proxy.com/https://github.com/lidawei1985/ios3app-build/releases/download/latest/LiveContainer-signed.ipa" style="color:#7de8a5;word-break:break-all">点此下载 伟哥工作站.ipa</a></span></div>
+    <div class="mrow"><span class="mn">3</span><span><b>把下载的 .ipa 拖进 Sideloadly 窗口</b> → Apple ID 填<b>你自己的</b>（没有就用邮箱免费注册一个）→ 点 <b>Start</b> → 等进度走完。</span></div>
+    <div class="mrow"><span class="mn">4</span><span><b>手机收尾一次</b>：设置 → 通用 → VPN与设备管理 → 点你的 Apple ID → <b>信任</b>；再打开 App 登录一次你的 Apple ID，<b>自动续签激活</b>。</span></div>
     <div class="mfoot">
-      之后<b>装片源、签名、续签全部自动</b>：手机上打开本页点「导入」就行，不用再连电脑、每 7 天自己续命。<br>
-      电脑只在<b>第一次装壳</b>时用一下——这是苹果规则下<b>免费、稳定、最省事</b>的路（真机验证通过）。
+      ✅ 完事。<b>以后这台手机就是「免电脑」的</b>：装片源、升级、续签全在手机上点一下，每 7 天自动续，什么都不用管。<br>
+      💡 你的 Apple ID 密码只提交给苹果官方，本站<b>全程接触不到</b>。全套免费，没有任何付费项。
     </div>
   </div>
   </details>
