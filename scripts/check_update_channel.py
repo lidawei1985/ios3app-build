@@ -55,6 +55,26 @@ check("LC 没装时兜底开 pages 指南页（pagesBase），不许再开 githu
 if re.search(r"releases/tag/", uc):
     fails.append("[FAIL] UpdateChecker 仍残留 github.com releases/tag 兜底（国内打不开）")
 
+# ②b 2026-10-07 新增 P0 回归门禁：「官方直链」绝不许进竞速候选
+# 病根：官方直链是 github.com → 302 → Azure blob，**首字节快、吞吐极慢**（实测 213~466 B/s），
+# 一旦赢竞速就会卡死（34MB 要跑 3 小时+）。网页端 pickMirror() 一直是「官方直链垫底不参与选优」，
+# App 端却把它塞进了 mirrors 数组 —— 这条门禁就是钉死这个口子。
+_m = re.search(r"let mirrors:\s*\[String\]\s*=\s*\[([\s\S]*?)\]", uc)
+if not _m:
+    fails.append("[FAIL] UpdateChecker 找不到 `let mirrors: [String] = [...]` 竞速候选数组")
+else:
+    _body = _m.group(1)
+    _urls = re.findall(r'"(https?://[^"]+)"', _body)
+    if re.search(r'^\s*""\s*,?\s*$', _body, re.M):
+        fails.append("[FAIL] 竞速候选里出现空串 \"\"（= 官方直链）——"
+                     "官方直链首字节快、吞吐极慢，会赢竞速然后卡死，必须剔除、只作兜底")
+    if len(_urls) != 3:
+        fails.append(f"[FAIL] 竞速候选应为 3 个镜像站，实际 {len(_urls)} 个：{_urls}")
+    if "gh-proxy.com" not in _body or "ghproxy.net" not in _body or "ghfast.top" not in _body:
+        fails.append("[FAIL] 竞速候选缺少三个镜像站之一（gh-proxy.com / ghproxy.net / ghfast.top）")
+if not re.search(r"return fastest \?\? rel", uc):
+    fails.append("[FAIL] 竞速全挂时未回退官方直链（应 `return fastest ?? rel`，永不返回 nil）")
+
 # ③ 两个 App 入口各自声明容器 scheme
 xm = load("Apps/Xingmu/XingmuApp.swift")
 xw = load("Apps/Xinwu/XinwuApp.swift")
@@ -67,4 +87,4 @@ if fails:
     print("\n".join(fails))
     print(f"\nRESULT: FAIL（{len(fails)} 条）")
     sys.exit(1)
-print("RESULT: PASS — 更新链路机检 9 条全过")
+print("RESULT: PASS — 更新链路机检 13 条全过（含 2026-10-07 新增：官方直链不得进竞速）")

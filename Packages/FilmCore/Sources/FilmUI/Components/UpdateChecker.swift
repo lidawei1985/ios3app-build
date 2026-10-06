@@ -117,12 +117,23 @@ public final class UpdateChecker: ObservableObject {
         }
     }
 
-    /// 镜像竞速：与网页端 `scripts/pages/index.html` 同一套通道（2026-10-01 手机网络实测可达）。
+    /// 镜像竞速：与网页端 `scripts/pages/index.html` 同一套通道。
     /// Range 1KB 探测、6 秒超时；取最快可达者，全挂则回官方直链（永不返回 nil）。
+    ///
+    /// ⚠️ 2026-10-07 修 P0「赢了竞速然后卡死」：**官方直链已从竞速候选里剔除**，只作兜底。
+    ///
+    /// 病根：旧代码把「官方直链」也放进竞速，判据是 **Range 1KB 的响应时间**。
+    /// 可官方直链是 `github.com → 302 → release-assets.githubusercontent.com(Azure blob)`，
+    /// **起手快、之后掐速**——本机实测 1KB 首字节 1.26~3.96s（完全能在竞速里胜出），
+    /// 真实吞吐却只有 **213~466 B/s**：45 秒只吐 131KB，34MB 得跑 3 个多小时 ⇒ 必然失败。
+    /// 同一个 URL 经三个镜像站，实测吞吐 63~470 KB/s（34MB 约 1.2~9 分钟），差三个数量级。
+    ///
+    /// 修法（最小改动，与网页端 `pickMirror()` 同口径：官方直链垫底、不参与选优）：
+    /// 竞速只在**三个镜像**之间进行；官方直链仅当镜像全挂时兜底返回（永不返回 nil）。
     static func fastestDirectURL(asset: String) async -> URL {
         let rel = URL(string: "https://github.com/\(repo)/releases/download/\(releaseTag)/\(asset)")!
+        // ⛔ 这里**绝不能**再放 ""（官方直链）：首字节快、吞吐极慢，会把竞速带沟里。
         let mirrors: [String] = [
-            "",                              // 官方直链
             "https://gh-proxy.com/",
             "https://ghproxy.net/",
             "https://ghfast.top/",
