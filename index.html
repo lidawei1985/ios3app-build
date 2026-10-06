@@ -473,29 +473,34 @@ function appCard(a) {
     btns = '<div class="coming">🚧 即将上线，敬请期待</div>';
   } else {
     if (a.ios) {
-      var iosLabel = IS_IOS ? "安装 iOS 版" : "iOS 安装教程";
-      btns += '<button class="btn" data-ios="' + a.id + '" style="margin-top:13px;background:linear-gradient(135deg,' +
-              esc(a.tint || "#ff3b47") + ',' + esc(a.tint || "#ff3b47") + 'dd)">' + iosLabel +
-              '<span class="plat">iOS ' + (a.ios.sizeMB || "") + ' MB</span></button>';
+      if (IS_IOS) {
+        // 手机：主按钮直接就是「一键装进壳」，电脑路线收进折叠
+        steps =
+          '<div class="steps open" id="steps-' + a.id + '">' +
+            '<a class="btn" id="imp-' + a.id + '" style="margin-top:2px" href="#">📱 一键装进「伟哥工作站」（约90秒 · 全自动）</a>' +
+            '<div class="note">点了之后弹「在“伟哥工作站”中打开？」→ 点<b>打开</b>，进度走完就装好了，再回这个页面装下一个 App。<br><b>没反应？</b>说明手机还没装壳——先回上面「开始安装」装一次壳（5 分钟，全站只装这一次）。</div>' +
+            '<details style="margin-top:10px">' +
+              '<summary>💻 用电脑装（没装过壳 / 上面装不上时才用）</summary>' +
+              '<a class="btn b sm" id="dl-' + a.id + '" style="margin-top:10px" href="#">下载 ' + esc(a.name) + '.ipa（' + (a.ios.sizeMB || "?") + ' MB）</a>' +
+              '<div class="note" id="dlnote-' + a.id + '">正在选最快的下载通道…</div>' +
+              '<div class="note">下载完把这个 .ipa <b>拖进 Sideloadly</b> → 填<b>你自己的</b> Apple ID → 点 Start。壳装好一次后，以后装 App 全在手机上点上面「一键装进」。</div>' +
+            '</details>' +
+          '</div>';
+      } else {
+        // 电脑：只给下载 + Sideloadly 说明
+        steps =
+          '<div class="steps open" id="steps-' + a.id + '">' +
+            '<a class="btn b sm" id="dl-' + a.id + '" style="margin-top:2px" href="#">下载 ' + esc(a.name) + '.ipa（' + (a.ios.sizeMB || "?") + ' MB）</a>' +
+            '<div class="note" id="dlnote-' + a.id + '">正在选最快的下载通道…</div>' +
+            '<div class="note">下载完把这个 .ipa <b>拖进 Sideloadly</b> → 填<b>你自己的</b> Apple ID → 点 Start → 手机上信任后打开。<br>壳全站只装一次；之后手机打开本页，每个 App 点一下「一键装进」就行，不再用电脑。</div>' +
+          '</div>';
+      }
     }
     if (a.android) {
       btns += '<a class="btn b" style="margin-top:9px" href="' + esc(S.site.releaseBase + a.android.apk) +
               '">安卓下载 APK<span class="plat">Android ' + (a.android.sizeMB || "") + ' MB</span></a>';
     } else {
       btns += '<button class="btn g sm" style="margin-top:9px" disabled>安卓版开发中</button>';
-    }
-    if (a.ios) {
-      steps =
-        '<div class="steps" id="steps-' + a.id + '">' +
-          '<div class="t" style="font-size:13px">iOS 安装步骤（第一次约 5 分钟，全程免费）</div>' +
-          '<div class="d" style="margin-top:7px"><b>② 没装过壳</b>：回本页「开始安装」第 1~2 步——电脑装 Sideloadly，把下面 ③ 下载的文件拖进去，填 Apple ID 点 Start（<b>壳全站只装一次</b>，之后所有 App 都在手机上点「导入」装）。</div>' +
-          '<a class="btn b sm" id="dl-' + a.id + '" style="margin-top:10px" href="#">③ 下载 ' + esc(a.name) +
-            '（' + (a.ios.sizeMB || "?") + ' MB）</a>' +
-          '<div class="note" id="dlnote-' + a.id + '">正在选最快的下载通道…</div>' +
-          '<div class="note">电脑用户：下载完把这个 .ipa <b>拖进 Sideloadly</b> → 填 Apple ID → Start。已装过壳的手机用户：跳过 ③，直接点下面 ④。</div>' +
-          '<a class="btn g sm" id="imp-' + a.id + '" style="margin-top:10px" href="#">④ 点这里，自动装进「伟哥工作站」（约90秒）</a>' +
-          '<div class="note">点了之后弹「在"伟哥工作站"中打开？」→ 点<b>打开</b>，进度走完就装好了。再回这个页面装下一个 App。</div>' +
-        '</div>';
     }
   }
   card.innerHTML =
