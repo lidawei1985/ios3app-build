@@ -249,6 +249,16 @@
   <h2><span class="bar"></span>应用列表</h2>
   <div id="apps"></div>
 
+  <div class="card" id="addsource-card" style="border-color:rgba(76,141,255,.5);margin-top:14px">
+    <div class="app">
+      <div class="icon" style="background:linear-gradient(140deg,#2b6cd4,#3f86ff)">📡</div>
+      <div class="ainfo"><div class="aname">进阶：把「更新源」装进壳里（推荐，设一次）</div>
+      <div class="asub">设好以后，打开壳 → 底部「源」→ 点 App 旁的安装，就是最新版。不用再回这个网页。</div></div>
+    </div>
+    <a class="btn" id="addsource-btn" style="margin-top:12px;background:linear-gradient(135deg,#2b6cd4,#3f86ff)" href="javascript:void(0)">📡 一键添加更新源（点一下就设好）</a>
+    <div class="note">弹「在“伟哥工作站”中打开？」→ 点<b>打开</b>。之后发新版本，壳里的「源」页会直接显示，点安装即可；<b>更新只换程序，收藏和设置不丢</b>。</div>
+  </div>
+
   <details style="margin-top:14px">
     <summary>🔁 关于「自动续签」（设一次，每 7 天自动续，不用管）</summary>
   <div class="renew" id="renew-box" style="margin-top:10px"></div>
@@ -542,6 +552,10 @@ function pickMirror() {
   renderApps();
   renderRenew();
   pickMirror();
+
+  // 一键加源深链
+  var sb = $("addsource-btn");
+  if (sb) sb.href = "livecontainer://source?url=" + encodeURIComponent(S.site.pagesBase + "source.json");
 })();
 </script>
 </body>
