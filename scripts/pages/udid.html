@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>授权这台设备 · 星幕 心屋</title>
+<style>
+  :root{--tx:#e6edf3;--tx2:#9aa7b8;--acc:#4c8dff;--ok:#3fb950;--warn:#f0a02a;--bad:#f85149}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:linear-gradient(165deg,#141d2c,#0b0f16 75%);color:var(--tx);
+       font:15px/1.75 -apple-system,"PingFang SC",sans-serif;padding:0 0 36px}
+  .hd{text-align:center;padding:26px 16px 6px}
+  .hd h1{margin:0;font-size:19px}
+  .hd p{margin:5px 0 0;font-size:12.5px;color:var(--tx2)}
+  .wrap{max-width:430px;margin:0 auto;padding:0 14px}
+  .card{margin-top:16px;padding:16px;border-radius:15px;
+        background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.12)}
+  .btn{display:block;width:100%;padding:13px;border-radius:12px;border:0;cursor:pointer;
+       background:var(--acc);color:#fff;font-weight:700;font-size:15.5px;text-align:center;text-decoration:none}
+  .btn:active{transform:scale(.98)}
+  .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.28);color:var(--tx);
+             font-weight:500;font-size:13.5px;margin-top:9px;padding:11px}
+  ol{margin:10px 0 0;padding-left:22px;font-size:13.5px}
+  li{margin:8px 0}
+  li b{color:#fff}
+  .kbd{background:rgba(255,255,255,.14);padding:1px 6px;border-radius:4px;font-size:12px;color:#fff}
+  .box{margin-top:12px;padding:11px 12px;border-radius:10px;font-size:12.5px;line-height:1.85}
+  .box.ok{background:rgba(63,185,80,.13);border-left:3px solid var(--ok);color:#b6e8bf}
+  .box.warn{background:rgba(240,160,42,.13);border-left:3px solid var(--warn);color:#f3d7a8}
+  .box.bad{background:rgba(248,81,73,.13);border-left:3px solid var(--bad);color:#ffc4c0}
+  code{background:rgba(255,255,255,.12);padding:1px 6px;border-radius:4px;font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="hd">
+  <h1>授权这台设备</h1>
+  <p>每台 iPhone 只做一次 · 之后一年都不用管</p>
+</div>
+
+<div class="wrap">
+  <div class="card" id="step1">
+    <ol>
+      <li>点下面这个按钮，会提示下载一个<b>描述文件</b> → 点<b>允许</b>。</li>
+      <li>进 <span class="kbd">设置 → 通用 → VPN 与设备管理</span>，最上面有刚下载的描述文件 → 点<b>安装</b>（要输一次手机锁屏密码）。</li>
+      <li>装完会自动回到这个页面，显示<b>已授权</b>，就可以去装 App 了。</li>
+    </ol>
+    <div style="margin-top:14px">
+      <a class="btn" id="go" href="udid.mobileconfig">① 获取设备授权</a>
+    </div>
+    <div class="box warn">
+      这个描述文件<b>只读取设备编号</b>（装 App 要用），读不到照片、通讯录等任何个人数据，装完就自动消失。
+    </div>
+  </div>
+
+  <div class="card" id="done" style="display:none">
+    <div class="box ok"><b>✅ 这台设备已授权</b>（编号 <code id="u">…</code>）<br>签名正在后台生成，一般 3–5 分钟就好。</div>
+    <a class="btn" href="index.html">② 去安装星幕 / 心屋</a>
+  </div>
+
+  <div class="card" id="full" style="display:none">
+    <div class="box bad"><b>本批设备名额已满</b>。苹果对个人开发者号的限制是一年 100 台。<br>请联系管理员加名额，或等下一年。</div>
+  </div>
+</div>
+
+<script>
+const q = new URLSearchParams(location.search);
+if (q.get("err") === "full") {
+  document.getElementById("step1").style.display = "none";
+  document.getElementById("full").style.display = "";
+} else if (q.get("udid")) {
+  document.getElementById("step1").style.display = "none";
+  document.getElementById("done").style.display = "";
+  document.getElementById("u").textContent = q.get("udid").slice(-8);
+}
+</script>
+</body>
+</html>

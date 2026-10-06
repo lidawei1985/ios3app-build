@@ -1,0 +1,1223 @@
+import SwiftUI
+import FilmCore
+
+/// TVBox 点播源浏览页（原版 TVBox 思路：选中一个 site 源，分类/列表/搜索/播放全走该源）。
+/// 分类 chips（单选）→ 海报墙（滚动分页，ac=list&t=&pg=，播放地址进详情补拉）→ 复用 DetailView/PlayerScreen。
+/// 「选择线路」（TVBox 原版功能）：顶部常驻入口，随时弹出全部线路点选切换。
+public struct SiteBrowseView: View {
+    /// 入参站点池（不可变；「还没换配置线路」时它是权威来源）
+    private let initialSites: [TVBoxSite]
+    @State private var site: TVBoxSite
+    @State private var showSourcePicker = false
+    @State private var pickerQuery = ""
+    @State private var switchingLine = false
+
+    // MARK: - 横屏适配（2026-10-04 主人钦定，与 CategoryBrowseView 同病同修）
+    // 病根：四条栏（siteHeader≈50 + searchBar≈52 + categoryBar 50 + subBar 38）≈190pt 钉死，
+    // 横屏内容区仅 ≈316pt → 海报墙被挤死、栏不随滚动让位（主人原话「内置源也是一样的问题」）。
+    // 修法：横屏折叠成一条摘要栏（源/分类/搜索胶囊）；竖屏代码路径一行不动（杜绝回归铁律）。
+    @Environment(\.verticalSizeClass) private var vSizeClass
+    @State private var showCatPanel = false
+    @State private var showSearchPanel = false
+    private var isLandscape: Bool { vSizeClass == .compact }
+
+    @State private var refreshedSites: [TVBoxSite] = []
+    @Environment(\.filmTheme) private var theme
+    @State private var categories: [SiteCategory] = []
+    @State private var selectedCategory: SiteCategory? = nil
+    /// 导航组（2026-09-22 用户钦定「多源集合一个分类到我们的一个分类」）：
+    /// 源分类先按端策略归入同名大类，点开一组 = 该大类下所有源分类合并展示（内容多、不空壳）。
+    @State private var selectedBucket: NavBucket? = nil
+    /// 组内二级筛选（合并大类后的「地区/子类型」细分）。
+    /// 用户 2026-09-22：「合并了是不是得分区域？比如韩国/日本/港台……我想看那种得能找到，也就是筛选吧」
+    @State private var subCategory: SiteCategory? = nil
+    @State private var items: [FeedItem] = []
+    @State private var page = 1
+    @State private var loading = false
+    @State private var loadingMore = false
+    @State private var reachedEnd = false
+    /// 翻页元信息（35包·用户钦定「点开一个分类最多三四十部，还是没有翻页功能导致的」）
+    @State private var pageCount = 0      // 上游给的权威总页数（0=没给）
+    @State private var totalCount = 0     // 上游给的权威总条数（0=没给）
+    @State private var paging = false     // 翻页请求中（防连点）
+    @State private var skipNote: String?  // 「该分类空 → 已自动跳到 X」轻提示（35包·空分类自动跳过）
+    @State private var loadError: String?
+    @State private var searchText = ""
+    @State private var searchResults: [FeedItem]?
+    @State private var searchTask: Task<Void, Never>?
+    /// 空态自动重试护栏：同一「源+分类」只自动重试一次（35包，防死循环转圈）
+    @State private var autoRetryKey = ""
+
+    /// 2026-10-03「内置源加载加速」根修：这里原来是 `{ TVBoxSiteClient(site: site) }` ——
+    /// **计算属性**，每读一次就新建一个客户端（而每个客户端会建 2 个 URLSession）。
+    /// 一次页面加载（bootstrap → categories → listPage → enrich → 翻页）会读它十几次
+    /// → 建二十几个 URLSession，每次搜索/翻页的连接池都被丢掉重来。
+    /// 改走进程内按 `site.key` 复用的 `shared(for:)`：连接池跨翻页/跨进页面存活。
+    private var client: TVBoxSiteClient { TVBoxSiteClient.shared(for: site) }
+    private var retryKey: String { "\(site.key)|\(selectedBucket?.title ?? selectedCategory?.id ?? "_")" }
+
+    /// 当前产品模式（星幕 normal / 心屋 child / 成人端 adult）——源浏览的端隔离闸门用它。
+    /// 用户钦定 2026-09-22：「港台三级伦理这些必须是成人端，其他的 APP 不能给」。
+    private var mode: String { TVBoxConfigStore.currentProductMode() }
+
+    /// 一个导航组（同名大类合并后的展示单位）。
+    private struct NavBucket: Identifiable, Hashable {
+        let title: String
+        let cats: [SiteCategory]
+        var id: String { title }
+    }
+
+    /// 分类 → 导航组：按 `NavPolicy` 先把本端不要的源分类摘掉（成人分类只留成人端 /
+    /// 星幕不要综艺体育短剧 / 心屋只留儿童向），再把同名大类并成一组。
+    private var buckets: [NavBucket] {
+        var order: [String] = []
+        var map: [String: [SiteCategory]] = [:]
+        for c in categories {
+            // 2026-09-25 并轨：navTitleOrNewcomer —— 命中我们的大类就并进去，
+            // 没有的分类直接新立一组（用户钦点「他的分类都会进到我们对应的分类；
+            // 有的进没有的分类就直接出现新分类」），不再丢弃任何过了红线的源分类。
+            guard let t = NavPolicy.navTitleOrNewcomer(c.name, mode: mode) else { continue }
+            if map[t.title] == nil { order.append(t.title) }
+            map[t.title, default: []].append(c)
+        }
+        return order.map { NavBucket(title: $0, cats: map[$0] ?? []) }
+    }
+
+    /// 条目级端隔离（标题 + 源分类双判；与 `FeedAdapter.isolationReject` 同口径）。
+    private func scopedItems(_ arr: [FeedItem]) -> [FeedItem] {
+        arr.filter {
+            NavPolicy.allowsItem(title: $0.title,
+                                 sourceCategory: $0.originalCategoryName ?? $0.origin?.category,
+                                 mode: mode)
+        }
+    }
+
+    /// 当前生效的加载单元：选中二级筛选时＝该二级分类单独一桶，否则＝整个大类。
+    private var activeBucket: NavBucket? {
+        guard let b = selectedBucket else { return nil }
+        if let sub = subCategory { return NavBucket(title: "\(b.title) · \(sub.name)", cats: [sub]) }
+        return b
+    }
+
+    /// 组内二级筛选项（地区 / 子类型短名；通用项返回 nil 已被「全部」覆盖）。
+    private func subItems(of b: NavBucket) -> [(cat: SiteCategory, label: String)] {
+        b.cats.compactMap { c in
+            guard let l = NavPolicy.subLabel(c.name, groupTitle: b.title) else { return nil }
+            return (c, l)
+        }
+    }
+
+    public init(site: TVBoxSite, sites: [TVBoxSite]? = nil) {
+        self.initialSites = sites ?? [site]
+        _site = State(initialValue: site)
+    }
+
+    /// 当前可用点播源池：换过配置线路用新解析出的，否则用入参。
+    /// （用 computed 而非 @State 直存，避免 View 实例复用时 @State 不重初始化）
+    private var allSites: [TVBoxSite] { refreshedSites.isEmpty ? initialSites : refreshedSites }
+
+    public var body: some View {
+        Group {
+            if isLandscape {
+                // 横屏分支（2026-10-04）：四条栏折叠成一条摘要栏，分类/搜索收进浮层，换源复用现有 sourcePicker。
+                // v2（原型 v3 钦定）：浮层由 .sheet 改为**居中玻璃卡片** overlay。
+                ZStack {
+                    VStack(spacing: 0) {
+                        landscapeBar
+                        content
+                    }
+                    if showCatPanel { landscapeCatCard }
+                    if showSearchPanel { landscapeSearchCard }
+                }
+                .animation(.easeOut(duration: 0.18), value: showCatPanel)
+                .animation(.easeOut(duration: 0.18), value: showSearchPanel)
+            } else {
+                // 竖屏：原布局原样保留（杜绝回归）
+                VStack(spacing: 0) {
+                    siteHeader
+                    searchBar            // 35包：源内搜索入口（原 searchText/searchResults 只写了数据层，没有输入框）
+                    categoryBar
+                    subBar
+                    content
+                }
+            }
+        }
+        .background(TintBackgroundView().ignoresSafeArea())
+        .navigationTitle(site.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showSourcePicker) { sourcePicker }
+        .task {
+            rememberLastSite()   // TVBox「首页站源 / 下次进入」语义：记住上次浏览的源
+            await bootstrap()
+        }
+    }
+
+
+    /// 记录本次浏览的源，设置页「上次浏览」一键直达。
+    private func rememberLastSite() {
+        let dict: [String: Any] = ["key": site.key, "name": site.name,
+                                   "api": site.api, "type": site.type ?? 1]
+        if let d = try? JSONSerialization.data(withJSONObject: dict) {
+            UserDefaults.standard.set(d, forKey: "tvbox.lastBrowsedSite")
+        }
+    }
+
+    private var siteHeader: some View {
+        // A2 改版（2026-09-21 用户钦定）：整条头部 = 源胶囊，点开即一键换源（TVBox 换首页语义）
+        Button { showSourcePicker = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "square.stack.3d.up.fill").font(.footnote).foregroundStyle(theme.accent)
+                Text("源 · \(site.name)").font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(theme.accent)
+                if allSites.count > 1 {
+                    Text("一键切换").font(.caption2).foregroundStyle(theme.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            // v62：显式 `.clear`（静态取色底档）。旧默认档 `.regular` 材质去色 → 灰胶囊（与设置页源胶囊同批修复）。
+            .filmGlass(cornerRadius: 999, tint: 0.07, strokeOpacity: 0.12, weight: .clear)
+            .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16).padding(.vertical, 8)
+    }
+
+    // MARK: - 源内搜索（35包补齐入口：内置源/自定义源浏览页里直接搜本站片名）
+    // 用户报「内置源和自定义源内的搜索没有」→ 数据层 TVBoxSiteClient.search 早已存在，
+    // 但页面从未渲染输入框，等于没入口。这里补搜索框 + 触发 + 结果补图。
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.footnote).foregroundStyle(theme.textSecondary)
+            TextField("搜全部源", text: $searchText)
+                .font(.subheadline)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .onSubmit { Task { await runSearch() } }
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    searchResults = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.footnote).foregroundStyle(theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            Button("搜索") { Task { await runSearch() } }
+                .font(.footnote.weight(.semibold)).foregroundStyle(theme.accent)
+                .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        // v62：显式 `.clear`（静态取色底档，B6 搜索框同款）。旧默认档 `.regular` 材质去色 → 灰条。
+        .filmGlass(cornerRadius: 999, tint: 0.07, strokeOpacity: 0.12, weight: .clear)
+        .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.5))
+        .padding(.horizontal, 16).padding(.vertical, 6)
+    }
+
+    private func runSearch() async {
+        let kw = searchText.trimmingCharacters(in: .whitespaces)
+        guard !kw.isEmpty else { return }
+        // 2026-10-01 用户钦定「全部带搜索都搜全部源内容」：源内搜索 → **全局跨源搜索**
+        // （健康源优先、全量内置源分批并发；Spider 引擎源引擎内已跳过，无需按本站类型分支）。
+        loading = true
+        loadError = nil
+        let mode = TVBoxConfigStore.currentProductMode()
+        let r = await GlobalSiteSearch.search(kw, mode: mode)
+        searchResults = scopedItems(r)
+        loading = false
+        enrichResults(r)
+    }
+
+    /// 搜索结果补图（与列表同策略：ac=list 无图 → 并发 detail 补，按 dedupId 合并，不整体覆盖）。
+    private func enrichResults(_ list: [FeedItem]) {
+        guard list.contains(where: { ($0.poster?.url ?? "").isEmpty }) else { return }
+        Task { @MainActor in
+            let enriched = await client.enrichPosters(list)
+            var pics: [String: String] = [:]
+            for it in enriched {
+                if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }
+            }
+            guard !pics.isEmpty, let cur = searchResults else { return }
+            searchResults = cur.map { it in
+                if (it.poster?.url ?? "").isEmpty, let u = pics[it.dedupId] { return it.withPoster(u) }
+                return it
+            }
+        }
+    }
+
+    // MARK: - 选择线路（TVBox 原版：全部线路一屏点选，Spider 明示需引擎）
+
+    private var sourcePicker: some View {
+        NavigationStack {
+            List {
+                Section {
+                    // A2 改版：80+ 源找源靠搜不靠滚
+                    TextField("搜索源名称 / 接口地址", text: $pickerQuery)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .listRowBackground(Color.clear)
+                }
+                let q = pickerQuery.trimmingCharacters(in: .whitespaces).lowercased()
+                let pre = q.isEmpty ? allSites
+                    : allSites.filter { $0.name.lowercased().contains(q) || $0.api.lowercased().contains(q) }
+                // 熔断的源沉底（不隐藏——保留入口便于冷却后半开探测自愈）
+                let filtered = pre.filter { SourceHealth.shared.sortKey($0.key) == 0 }
+                    + pre.filter { SourceHealth.shared.sortKey($0.key) == 1 }
+                let cms = filtered.filter { $0.type != 3 }
+                let spiders = filtered.filter { $0.type == 3 }
+                // 2026-09-26 分区（用户：「看不明白哪些是电影的哪些是成人的」）：
+                // 点播源按 影视 / 混合 / 自定义 / 成人 分组，成人区永远排最后。
+                let zoneGroups: [(title: String, items: [TVBoxSite])] = {
+                    var g: [DefaultSites.VodZone: [TVBoxSite]] = [:]
+                    for s in cms { g[DefaultSites.vodZone(of: s), default: []].append(s) }
+                    let order: [(DefaultSites.VodZone, String)] = [
+                        (.film, "影视源"), (.mixed, "混合源（影视+成人分类）"),
+                        (.custom, "自定义源"), (.adult, "成人源"),
+                    ]
+                    return order.compactMap { z, t in
+                        g[z].map { (t + " \($0.count)", $0) }
+                    }
+                }()
+                if cms.isEmpty {
+                    Section {
+                        Text(q.isEmpty ? "没有可用的点播源" : "没有匹配「\(pickerQuery)」的点播源")
+                            .font(.footnote).foregroundStyle(theme.textSecondary)
+                            .listRowBackground(Color.clear)
+                    } header: {
+                        // 术语归一（35包）：这里列的是「点播源」（站点），不再叫"线路"——
+                        // 与设置页「配置线路」（一份配置包）区分，用户曾问「两个列表为啥分开」
+                        Text("点播源 · 共 \(allSites.count)")
+                    } footer: {
+                        Text("点选立即切换整站内容并记住（下次直接进这个源）。")
+                    }
+                } else {
+                    ForEach(zoneGroups, id: \.title) { zone in
+                        Section {
+                            // 2026-09-28 用户钦定：内置源列表改**双排**（原来一行一个，50 条要点半天）。
+                            // List 内嵌 LazyVGrid = 一个 row 里放整块网格（标准写法，避免每行一个网格）。
+                            LazyVGrid(columns: Self.siteGridColumns, spacing: 10) {
+                                ForEach(zone.items) { s in
+                                    Button { switchSite(s) } label: { siteChip(s) }
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            .listRowBackground(Color.clear)
+                        } header: {
+                            Text(zone.title)
+                        } footer: {
+                            if zone.items.contains(where: { DefaultSites.vodZone(of: $0) == .adult }) {
+                                Text("成人源仅星幕可见（心屋儿童端永不出现）；影视源看片、成人源看成人内容，分区不会混。")
+                            }
+                        }
+                    }
+                }
+                // 内置实测「配置线路」也放进一键切换
+                // （用户钦定 2026-09-22：「内置27条实测为什么不在继续浏览的一键切换里」）
+                let repos = TVBoxConfigStore.shared.builtinRepoOptions
+                if !repos.isEmpty {
+                    Section {
+                        ForEach(repos) { repo in
+                            Button { switchConfigLine(repo) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: repo.url == TVBoxConfigStore.shared.activeBuiltinRepoURL
+                                          ? "checkmark.circle.fill" : "circle")
+                                        .font(.footnote)
+                                        .foregroundStyle(repo.url == TVBoxConfigStore.shared.activeBuiltinRepoURL
+                                                         ? theme.accent : theme.textSecondary)
+                                    Text(repo.name).font(.subheadline).foregroundStyle(theme.textPrimary).lineLimit(1)
+                                    Spacer()
+                                    if switchingLine { ProgressView().scaleEffect(0.7) }
+                                }
+                            }
+                            .listRowBackground(Color.clear)
+                        }
+                    } header: {
+                        Text("换配置线路（内置实测 \(repos.count) 条）")
+                    } footer: {
+                        Text("一条线路 = 一份配置包（内含几十~几百个站点源）。点选后自动解析，上方「点播源」列表随即换成新线路的源。")
+                    }
+                }
+                if !spiders.isEmpty {
+                    Section {
+                        ForEach(spiders) { s in
+                            HStack {
+                                Text(s.name).font(.subheadline).foregroundStyle(theme.textSecondary).lineLimit(1)
+                                Spacer()
+                                Text("需引擎 · 开发中").font(.caption2).foregroundStyle(theme.textSecondary)
+                            }
+                            .listRowBackground(Color.clear)
+                        }
+                    } header: {
+                        Text("Spider 源（\(spiders.count) · 需引擎）")
+                    } footer: {
+                        Text("Spider 爬虫源需要内置执行引擎，移植开发中，暂不可浏览。")
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .scrollContentBackground(.hidden)
+            .navigationTitle("切换源")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        // 2026-09-30 全 App 弹层统一毛玻璃（用户：「全局都是毛玻璃为什么要用黑框」）。
+        // 2026-10-01 二修（用户真机截图「变成纯透明的了」）：.clear 档只提亮不模糊，
+        // 底下浏览页的海报墙**直接穿透**，两层内容叠成一锅粥。
+        // 正解＝presentationBackground 直接垫「海报取色渐变」（TintBackgroundView 与浏览页
+        // 同一色源 HeroTintStore → 面板天然跟海报变色），且它自带不透明底 → 穿透被盖住。
+        .presentationBackground {
+            ZStack {
+                TintBackgroundView()
+                Color.white.opacity(0.05)   // 微提亮助读
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    /// 内置源双排网格（用户钦定 2026-09-28：一行一个太散，50 条要点半天）。
+    private static let siteGridColumns = [
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
+    ]
+
+    /// 双排里的单个源芯片：勾选态 + 名称 + 类型，毛玻璃胶囊（与设置页源胶囊同观感）。
+    private func siteChip(_ s: TVBoxSite) -> some View {
+        let selected = s.id == site.id
+        return HStack(spacing: 6) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.caption)
+                .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+            Text(s.name).font(.footnote).foregroundStyle(theme.textPrimary).lineLimit(1)
+            Spacer(minLength: 0)
+            if allSites.count > 12 {
+                Text(typeLabel(s.type)).font(.system(size: 9)).foregroundStyle(theme.textSecondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // 2026-10-01 用户钦定：格子也去材质（.clear）——跟面板一起透出海报色，不再是灰方块
+        .filmGlass(cornerRadius: 12, tint: 0.06, strokeOpacity: 0.10, weight: .clear)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(selected ? theme.accent.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private func typeLabel(_ t: Int?) -> String {
+        switch t {
+        case 0: return "XML"
+        case 1: return "JSON"
+        case 3: return "Spider"
+        default: return ""
+        }
+    }
+
+    private func switchSite(_ s: TVBoxSite) {
+        showSourcePicker = false
+        guard s.id != site.id else { return }
+        site = s
+        categories = []
+        selectedCategory = nil
+        selectedBucket = nil
+        subCategory = nil
+        searchResults = nil
+        Task { await bootstrap() }
+    }
+
+    /// 换「配置线路」：激活内置线路 → 等解析完 → 用新站点池替换。
+    /// 用户钦定 2026-09-22：「内置27条实测为什么不在继续浏览的一键切换里」——
+    /// 原来换线路只能回设置页，浏览中换不了。现在浏览页源胶囊里直接可达。
+    private func switchConfigLine(_ repo: TVBoxSubscription) {
+        guard !switchingLine else { return }
+        switchingLine = true
+        Task {
+            let cfg = TVBoxConfigStore.shared
+            cfg.activateBuiltinRepo(repo)
+            await cfg.refreshAll()
+            SourceHealth.shared.reset()   // 新线路另一批源，健康账清零
+            let fresh = cfg.displayResult.sites
+            if !fresh.isEmpty {
+                refreshedSites = fresh
+                // 当前浏览的源不在新线路里 → 自动落到第一个可用源（不然「换了线路还在看旧源」）
+                if !fresh.contains(where: { $0.id == site.id }),
+                   let first = fresh.first(where: { $0.type != 3 }) {
+                    site = first
+                    categories = []
+                    selectedCategory = nil
+                    selectedBucket = nil
+                    subCategory = nil
+                    searchResults = nil
+                    await bootstrap()
+                }
+            }
+            switchingLine = false
+            showSourcePicker = false
+        }
+    }
+
+    /// 组内二级筛选条（2026-09-22 用户：「合并了是不是得分区域？韩国/日本/港台…想找得能找到」）：
+    /// 大类合并后，组内源分类名天然带维度（韩国伦理/日本伦理/港剧/动作片）——
+    /// 剥成短标签做筛选，点「韩国」就只剩韩国的。只有 1 个细项时不显示（没得筛）。
+    @ViewBuilder
+    private var subBar: some View {
+        if let b = selectedBucket {
+            let subs = subItems(of: b)
+            if subs.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 8) {
+                        subChip(name: "全部", selected: subCategory == nil) {
+                            subCategory = nil
+                            Task { await loadBucket(b, page: 1) }
+                        }
+                        ForEach(subs, id: \.cat.id) { pair in
+                            subChip(name: pair.label, selected: subCategory?.id == pair.cat.id) {
+                                let isOn = subCategory?.id == pair.cat.id
+                                subCategory = isOn ? nil : pair.cat
+                                Task {
+                                    if isOn {
+                                        await loadBucket(b, page: 1)
+                                    } else {
+                                        await loadBucket(NavBucket(title: b.title, cats: [pair.cat]), page: 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 6)
+                }
+                .frame(height: 38)
+            }
+        }
+    }
+
+    private func subChip(name: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(name)
+                .font(.caption.weight(selected ? .bold : .regular))
+                .lineLimit(1)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                // v60：二级筛选同上 —— 裸材质（去色成灰）→ 全局玻璃 `.clear` 档。
+                .filmGlass(cornerRadius: 999,
+                           tint: selected ? 0.14 : 0.07,
+                           strokeOpacity: selected ? 0.16 : 0.12,
+                           weight: .clear)
+                .overlay(Capsule().stroke(selected ? theme.accent.opacity(0.55) : .white.opacity(0.14),
+                                          lineWidth: selected ? 1 : 0.5))
+                .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var categoryBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 8) {
+                chip(name: "全部", selected: selectedCategory == nil && selectedBucket == nil) {
+                    selectedCategory = nil
+                    selectedBucket = nil
+                    subCategory = nil
+                    Task { await reload() }
+                }
+                // 分组优先（2026-09-22）：源分类先归同名大类，点开即「电影/电视剧/动漫/4K专区/…」
+                // 这样每一组里都是几十~上百部，不会出现「一个分类只有两部」的尴尬。
+                if !buckets.isEmpty {
+                    ForEach(buckets) { b in
+                        chip(name: b.title, selected: selectedBucket?.title == b.title) {
+                            let turnOff = selectedBucket?.title == b.title
+                            selectedBucket = turnOff ? nil : b
+                            selectedCategory = nil
+                            subCategory = nil
+                            Task {
+                                if turnOff { await reload() } else { await loadBucket(b, page: 1) }
+                            }
+                        }
+                    }
+                } else {
+                    ForEach(categories) { cat in
+                        chip(name: cat.name, selected: selectedCategory?.id == cat.id) {
+                            selectedCategory = selectedCategory?.id == cat.id ? nil : cat
+                            selectedBucket = nil
+                            subCategory = nil
+                            Task { await reload() }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .frame(height: 50)   // 横滚定高（防 VStack 贪婪分屏）
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if loading {
+            LoadingView(text: "加载 \(site.name) …")
+        } else if let error = loadError {
+            VStack(spacing: 12) {
+                EmptyStateView(icon: "exclamationmark.triangle", title: "该源暂时不可用", subtitle: error)
+                Button("换个源试试") { Task { await bootstrap() } }
+                    .font(.footnote).foregroundStyle(theme.accent)
+            }
+        } else {
+            browseList
+        }
+    }
+
+    private var browseList: some View {
+        ScrollViewReader { proxy in
+        ScrollView(showsIndicators: false) {
+            Color.clear.frame(height: 0).id("browseTop")
+            if searchResults != nil { searchHeader }
+            let display = searchResults ?? items
+            if display.isEmpty {
+                if searchResults != nil {
+                    EmptyStateView(icon: "film", title: "该源没有搜到", subtitle: "换个关键词试试")
+                } else if autoRetryKey != retryKey {
+                    // 红线（2026-09-22 用户钦定）：任何情况不出现分类空态文案。
+                    // 分类拉空 → 自动回退「全部」并重载；全源拉空 → 自动重新引导。
+                    // 35包修：原 `.task` 无护栏——bootstrap 置 loading=true 会把本视图从层级摘掉，
+                    // 回来时 .task 再触发 → 空列表源死循环转圈（永久「加载中…」）。
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("加载中…").font(.footnote).foregroundStyle(theme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 360)
+                    .task {
+                        guard autoRetryKey != retryKey else { return }
+                        autoRetryKey = retryKey
+                        if selectedCategory != nil { selectedCategory = nil; await reload() }
+                        else { await bootstrap() }
+                    }
+                } else {
+                    // 重试后仍空 = 该源确实没内容：按红线不出分类空态文案，改为引导换源
+                    VStack(spacing: 12) {
+                        EmptyStateView(icon: "exclamationmark.triangle", title: "该源暂时没有内容",
+                                       subtitle: "换一条线路，或稍后再试")
+                        Button("换个源试试") { showSourcePicker = true }
+                            .font(.footnote).foregroundStyle(theme.accent)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 360)
+                }
+            } else {
+                if let note = skipNote, searchResults == nil {
+                    // 自动跳过提示（35包）：让用户知道「不是坏了，是这个分类源站没内容」
+                    Label(note, systemImage: "arrow.turn.down.right")
+                        .font(.caption).foregroundStyle(theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.top, 10)
+                }
+                if searchResults == nil, totalCount > 0 || pageCount > 0 {
+                    // 总量/页码明示（35包）：原来只有底部隐式「上滑加载更多」，
+                    // 用户不知道这个分类其实有几千部，误以为「只有三四十部」。
+                    // 尾巴加「源站就这么少」：个别叶子分类上游确实只有 1~几部
+                    // （用户 2026-09-22 报「那道源里就一部电影」），明示不是 App 丢条目。
+                    Text((totalCount > 0
+                         ? "共 \(totalCount) 部 · 第 \(page)\(pageCount > 0 ? "/\(pageCount)" : "") 页"
+                         : "第 \(page) 页")
+                         + (totalCount > 0 && totalCount <= 5 ? "（源站这个分类就这么少）" : ""))
+                        .font(.caption).foregroundStyle(theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.top, 10)
+                }
+                PosterGrid(items: display, columns: 3)
+                    .padding(.vertical, 12)
+                if searchResults == nil { paginationBar }
+            }
+        }
+        .refreshable { await reload() }
+        // 翻页后回到顶部（否则停留在上一页的滚动位置，看着像没换）
+        .onChange(of: page) { _, _ in
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("browseTop", anchor: .top) }
+        }
+        }
+    }
+
+    /// 翻页条（35包·用户钦定「还是没有翻页功能导致的」）：
+    /// 之前只有隐式「上滑加载更多」，既看不到总量也翻不动页。
+    private var paginationBar: some View {
+        VStack(spacing: 10) {
+            Text(pageCount > 0
+                 ? "第 \(page) / \(pageCount) 页" + (totalCount > 0 ? " · 共 \(totalCount) 部" : "")
+                 : "第 \(page) 页" + (totalCount > 0 ? " · 共 \(totalCount) 部" : ""))
+                .font(.footnote.weight(.medium)).foregroundStyle(theme.textPrimary)
+            HStack(spacing: 12) {
+                Button {
+                    Task { await gotoPage(page - 1) }
+                } label: {
+                    Label("上一页", systemImage: "chevron.left")
+                        .font(.footnote.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(page <= 1 || paging)
+
+                if paging { ProgressView().scaleEffect(0.8) }
+
+                Button {
+                    Task { await gotoPage(page + 1) }
+                } label: {
+                    Label("下一页", systemImage: "chevron.right")
+                        .font(.footnote.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(theme.accent)
+                .disabled(paging || (pageCount > 0 && page >= pageCount))
+            }
+            .padding(.horizontal, 16)
+            if pageCount == 0 {
+                Text("该源没提供总页数，按「下一页」继续翻即可")
+                    .font(.caption2).foregroundStyle(theme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 16).padding(.bottom, 28)
+    }
+
+    private var searchHeader: some View {
+        HStack {
+            Text("搜到 \(searchResults?.count ?? 0) 条").font(.footnote).foregroundStyle(theme.textSecondary)
+            Spacer()
+            Button("返回浏览") { searchResults = nil }
+                .font(.footnote).foregroundStyle(theme.accent)
+        }
+        .padding(.horizontal, 16).padding(.top, 10)
+    }
+
+    private func chip(name: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(name)
+                .font(.footnote.weight(selected ? .bold : .regular))
+                .lineLimit(1)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                // v60：分类按钮同分类页口径 —— 全局玻璃 `.clear` 档（不再裸材质去色）。
+                // （选中=accent 描边+accent 字；未选=白描边素字）。
+                .filmGlass(cornerRadius: 999,
+                           tint: selected ? 0.14 : 0.07,
+                           strokeOpacity: selected ? 0.16 : 0.12,
+                           weight: .clear)
+                .overlay(Capsule().stroke(selected ? theme.accent.opacity(0.55) : .white.opacity(0.14),
+                                          lineWidth: selected ? 1 : 0.5))
+                .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+                .contentShape(Capsule())   // 整枚胶囊都可点（硬化命中区，防横滚手势吞点击）
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 数据
+
+    private func bootstrap() async {
+        loading = true
+        loadError = nil
+        items = []
+        page = 1
+        reachedEnd = false
+        // Spider 爬虫源：需要内置执行引擎（移植开发中），明示而非假装空列表
+        if site.type == 3 {
+            loading = false
+            loadError = "这是 Spider 爬虫源（\(site.api)），需要内置执行引擎才能出内容，移植开发中。点右上「选择线路」换一条可用线路。"
+            return
+        }
+        // 2026-10-03「内置源加载加速」：分类与第一页原来**串行**取 →
+        // 首屏耗时 = RTT(分类) + RTT(第一页)（实测中位源各 ~1s，慢源 2~3s）。
+        // 两者互不依赖（第一页取的是不带分类的「全站最新」），改为并发发出 →
+        // 首屏耗时降到 max(RTT1, RTT2)，冷启动大约砍一半。
+        // 语义不变：分类仅在本地为空时才需要走网络。
+        let needCats = categories.isEmpty
+        async let firstAsync = client.listPage(categoryId: nil, page: 1)
+        if needCats { categories = await client.categories() }
+        let first = await firstAsync
+        selectedBucket = nil
+        selectedCategory = nil
+        subCategory = nil
+        items = scopedItems(first.items)
+        page = 1
+        pageCount = first.pageCount
+        totalCount = first.total
+        reachedEnd = first.pageCount > 0 ? 1 >= first.pageCount : first.items.count < 10
+        loading = false
+        enrichCurrent()
+    }
+
+    private func reload() async {
+        // 分组模式（同名大类合并 / 二级筛选）：一次拉组内全部源分类，合并展示
+        if let b = activeBucket {
+            await loadBucket(b, page: 1)
+            return
+        }
+        loading = true
+        loadError = nil
+        page = 1
+        reachedEnd = false
+        skipNote = nil
+        var cat = selectedCategory
+        var first = await client.listPage(categoryId: cat?.id, page: 1)
+        // 35包·空分类自动跳过（用户钦定 2026-09-22：「分类里比如电影就一部…那道源里就一部电影」）：
+        // 上游**确实**存在空分类（实测：无尽资源「电影/动漫/资讯/头条/体育赛事」、
+        // 360资源「篮球/反转爽剧」=0 条；金鹰资源则无一空分类）。
+        // 停在空分类上只会出空态（违反「不出现分类空态文案」红线），也没意义 ——
+        // ① 从胶囊条摘掉这颗死分类（自愈，不发额外探测请求，不给源站加压）
+        // ② 自动顺延到下一个**有内容**的分类（最多探 6 个），并轻提示跳到了哪
+        // first.ok 守卫：只有上游**成功应答且为空**才判死；网络抖动不摘分类
+        // （那种情况交给空态自动重试，不会误删好分类）。
+        if let dead = cat, first.ok, first.items.isEmpty, !categories.isEmpty {
+            let start = categories.firstIndex { $0.id == dead.id } ?? -1
+            categories.removeAll { $0.id == dead.id }
+            var moved: SiteCategory?
+            if start >= 0, !categories.isEmpty {
+                for step in 0..<min(6, categories.count) {
+                    let cand = categories[(start + step) % categories.count]
+                    let r = await client.listPage(categoryId: cand.id, page: 1)
+                    if r.ok, !r.items.isEmpty { cat = cand; first = r; moved = cand; break }
+                }
+            }
+            if let moved {
+                skipNote = "「\(dead.name)」源站暂无内容，已自动跳到「\(moved.name)」"
+            } else {
+                // 连探都没内容 → 退回「全部」，别把用户卡在死分类里
+                skipNote = "该分类源站暂无内容，已回到「全部」"
+                cat = nil
+            }
+        }
+        selectedCategory = cat
+        items = scopedItems(first.items)
+        pageCount = first.pageCount
+        totalCount = first.total
+        reachedEnd = first.pageCount > 0 ? 1 >= first.pageCount : first.items.count < 10
+        loading = false
+        enrichCurrent()
+    }
+
+    /// 翻页（替换式；用户钦定 2026-09-22：「点开一个分类最多三四十部，还是没有翻页功能导致的」）。
+    /// 原实现只有隐式「上滑加载更多」，用户既不知道总量也翻不动页。
+    private func gotoPage(_ n: Int) async {
+        guard !paging, n >= 1 else { return }
+        if let b = activeBucket {
+            if pageCount > 0, n > pageCount { return }
+            if n == page, !items.isEmpty { return }
+            await loadBucket(b, page: n)
+            return
+        }
+        if pageCount > 0, n > pageCount { return }
+        if n == page, !items.isEmpty { return }
+        paging = true
+        loadError = nil
+        let r = await client.listPage(categoryId: selectedCategory?.id, page: n)
+        if r.items.isEmpty {
+            // 越过末页：把总页数钉在当前页，避免无限空翻
+            if n > 1 { pageCount = n - 1 }
+            if pageCount == 0 { pageCount = 0 }
+        } else {
+            page = n
+            items = scopedItems(r.items)
+            if r.pageCount > 0 { pageCount = r.pageCount }
+            if r.total > 0 { totalCount = r.total }
+            reachedEnd = pageCount > 0 && page >= pageCount
+        }
+        paging = false
+        enrichCurrent()
+    }
+
+    /// 载入一个导航组（同名大类合并）：把组内每个源分类的第 n 页逐个拉回来合并去重。
+    ///
+    /// 渐进式渲染：每拿到一个分类就先 append 进列表（首批约 1s 亮相），后面的慢慢补，
+    /// 用户不用盯着转圈等 8 个分类全回来。
+    /// 组的总页数取组内各分类页数的**最小值**（保证每一页都能翻到东西，不会翻到半空）。
+    private func loadBucket(_ b: NavBucket, page n: Int) async {
+        loading = (n == 1)
+        paging = (n > 1)
+        loadError = nil
+        skipNote = nil
+        items = []
+        pageCount = 0
+        totalCount = 0
+        var seen = Set<String>()
+        var pageCounts: [Int] = []
+        let cli = client
+        // 兜底组（成人端「其他」）可能含上百个源分类（实测成人源 172 个题材类目）——
+        // 首屏只取前 12 个，其余靠二级筛选条精确进入（点某个题材只看那一个）。
+        let cats = Array(b.cats.prefix(12))
+        // 4K 同片升画质（2026-09-22 用户钦定：「如果能把已有的重复的替换成 4K 的就更好了」）：
+        // 星幕浏览非 4K 组时，先拉一遍 4K 专区，同片（归一化片名一致）直接用 4K 版顶掉。
+        var k4Index: [String: FeedItem] = [:]
+        if mode == "normal", b.title != "4K专区",
+           let k4 = buckets.first(where: { $0.title == "4K专区" }) {
+            for cat in k4.cats {
+                let r = await cli.listPage(categoryId: cat.id, page: n)
+                for it in r.items {
+                    let key = NavPolicy.canonicalTitle(it.title)
+                    if !key.isEmpty, k4Index[key] == nil { k4Index[key] = it }
+                }
+            }
+        }
+        for cat in cats {
+            let r = await cli.listPage(categoryId: cat.id, page: n)
+            if r.pageCount > 0 { pageCounts.append(r.pageCount) }
+            totalCount += r.total
+            var fresh: [FeedItem] = []
+            for it in r.items where seen.insert(it.dedupId).inserted { fresh.append(it) }
+            let kept = scopedItems(fresh).map { it -> FeedItem in
+                guard !k4Index.isEmpty else { return it }
+                return k4Index[NavPolicy.canonicalTitle(it.title)] ?? it
+            }
+            if !kept.isEmpty {
+                items.append(contentsOf: kept)
+                loading = false          // 首批到位就先亮出来
+            }
+        }
+        page = n
+        pageCount = pageCounts.min() ?? 0
+        reachedEnd = pageCount > 0 && n >= pageCount
+        loading = false
+        paging = false
+        enrichCurrent()
+    }
+
+    /// 原「上滑自动追加下一页」已被**显式翻页条**取代（35包）：
+    /// 追加模式没有页码概念，用户既看不到总量也翻不动页 → 改为 `gotoPage(_:)` 替换式翻页。
+    /// 保留 reachedEnd 供分页条禁用判断使用。
+
+    /// 列表补图（34包根修「内置源海报不显示」）：ac=list 的 vod_pic 全空（图只在 ac=detail），
+    /// 后台并发补 detail 取图，命中按 dedupId 合并回当前列表——不整体覆盖，
+    /// 防补图期间翻页追加的条目被丢。
+    private func enrichCurrent() {
+        let snapshot = items
+        guard snapshot.contains(where: { ($0.poster?.url ?? "").isEmpty }) else { return }
+        Task { @MainActor in
+            let enriched = await client.enrichPosters(snapshot)
+            var pics: [String: String] = [:]
+            for it in enriched {
+                if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }
+            }
+            guard !pics.isEmpty else { return }
+            items = items.map { it in
+                if (it.poster?.url ?? "").isEmpty, let u = pics[it.dedupId] { return it.withPoster(u) }
+                return it
+            }
+        }
+    }
+
+    // MARK: - 横屏（2026-10-04）：摘要栏 + 分类浮层 + 搜索浮层
+    // 与 CategoryBrowseView 同病同修：四条栏（≈190pt）折叠成一条摘要栏，海报墙拿回整屏。
+
+    /// 当前分类胶囊显示文本（大类 + 二级）。
+    private var landscapeCatLabel: String {
+        if let b = selectedBucket {
+            if let s = subCategory { return "\(b.title) · \(s.name)" }
+            return b.title
+        }
+        return "全部"
+    }
+
+    /// 横屏摘要栏：源胶囊（复用 sourcePicker）+ 分类胶囊 + 搜索胶囊 + 总量/页码。
+    private var landscapeBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button { showSourcePicker = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.caption2).foregroundStyle(theme.accent)
+                        Text("源 · \(site.name)")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(theme.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold)).foregroundStyle(theme.textSecondary)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background { glassCapsule() }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Button { showCatPanel = true } label: {
+                    HStack(spacing: 5) {
+                        Text("分类").font(.caption2).foregroundStyle(theme.textSecondary)
+                        Text(landscapeCatLabel)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(selectedBucket != nil ? theme.accent : theme.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold)).foregroundStyle(theme.textSecondary)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background { glassCapsule(on: selectedBucket != nil) }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Button { showSearchPanel = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption2).foregroundStyle(theme.textSecondary)
+                        Text(searchResults != nil ? "“\(searchText)”" : "搜本源")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(searchResults != nil ? theme.accent : theme.textPrimary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background { glassCapsule(on: searchResults != nil) }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Button {
+                    // v2.2（原型 v3 钦定）：内置源页补重置（此前没有）——清分类+二级+搜索词回全量
+                    selectedBucket = nil
+                    selectedCategory = nil
+                    subCategory = nil
+                    searchText = ""
+                    searchResults = nil
+                    Task { await reload() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.accent)
+                        Text("重置").font(.footnote).foregroundStyle(theme.textSecondary)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background { glassCapsule() }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Text(totalCount > 0
+                     ? "共 \(totalCount) 部 · 第 \(page)\(pageCount > 0 ? "/\(pageCount)" : "") 页"
+                     : "第 \(page) 页")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.trailing, 16)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .frame(height: 50)   // 定高：横滚 ScrollView 在 VStack 里不定高会贪婪分屏
+    }
+
+    /// 玻璃胶囊底（v60 全 App 统一：静态色底走 `.clear` 档 —— 不挂材质、不去色，
+    /// 只叠极淡均匀白 + 发丝描边，底色色相原样透出）。
+    private func glassCapsule(on: Bool = false) -> some View {
+        Color.clear
+            .filmGlass(cornerRadius: 999,
+                       tint: on ? 0.14 : 0.07,
+                       strokeOpacity: on ? 0.16 : 0.12,
+                       weight: .clear)
+            .overlay(Capsule().stroke(on ? theme.accent.opacity(0.55) : Color.white.opacity(0.14),
+                                      lineWidth: on ? 1 : 0.5))
+    }
+
+    /// 横屏分类浮层 v2（原型 v3 钦定）：**居中玻璃卡片**、胶囊内容宽、大类｜二级 两列、头部 ✕。
+    /// 选中写同一批 @State（selectedBucket/subCategory）并复用既有 loadBucket/reload 链路。
+    /// 结构拆成多个子表达式：整卡一个表达式时编译器 type-check 超时（CI 实测 1016 行）。
+    private var landscapeCatCard: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+                .onTapGesture { showCatPanel = false }
+            catCardBody
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+    }
+
+    private var catCardBody: some View {
+        VStack(spacing: 0) {
+            catCardHeader
+            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
+            ScrollView(showsIndicators: false) {
+                HStack(alignment: .top, spacing: 18) {
+                    catColumnLeft
+                    catColumnRight
+                }
+                .padding(18)
+            }
+            .frame(maxHeight: 300)
+        }
+        .frame(maxWidth: 620)
+        // v60：模态浮层走 `.dark` 档（虚化压暗，压住底下内容；不用 `.regular` 免得洗出一块灰）。
+        .filmGlass(cornerRadius: 20, tint: 0.42, strokeOpacity: 0.16, weight: .dark)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.45), radius: 24, y: 10)
+        .padding(.horizontal, 46)
+    }
+
+    private var catCardHeader: some View {
+        HStack(spacing: 8) {
+            Text("分类").font(.subheadline.weight(.semibold))
+                .foregroundStyle(theme.textPrimary)
+            Spacer(minLength: 8)
+            Text(landscapeCatLabel)
+                .font(.caption).foregroundStyle(theme.textSecondary).lineLimit(1)
+            panelCloseButton { showCatPanel = false }
+        }
+        .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    private var catColumnLeft: some View {
+        panelSection(title: "大类") { catBucketChips }
+    }
+
+    @ViewBuilder
+    private var catColumnRight: some View {
+        if let b = selectedBucket, subItems(of: b).count > 1 {
+            panelSection(title: "二级（\(b.title)）") { catSubChips(b) }
+        }
+    }
+
+    @ViewBuilder
+    private var catBucketChips: some View {
+        panelChip("全部", selectedBucket == nil && selectedCategory == nil) {
+            selectedBucket = nil
+            selectedCategory = nil
+            subCategory = nil
+            Task { await reload() }
+        }
+        ForEach(buckets) { b in
+            panelChip(b.title, selectedBucket?.title == b.title) {
+                let turnOff = selectedBucket?.title == b.title
+                selectedBucket = turnOff ? nil : b
+                selectedCategory = nil
+                subCategory = nil
+                Task {
+                    if turnOff { await reload() } else { await loadBucket(b, page: 1) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func catSubChips(_ b: NavBucket) -> some View {
+        panelChip("全部", subCategory == nil) {
+            subCategory = nil
+            Task { await loadBucket(b, page: 1) }
+        }
+        ForEach(subItems(of: b), id: \.cat.id) { pair in
+            panelChip(pair.label, subCategory?.id == pair.cat.id) {
+                let isOn = subCategory?.id == pair.cat.id
+                subCategory = isOn ? nil : pair.cat
+                Task {
+                    if isOn {
+                        await loadBucket(b, page: 1)
+                    } else {
+                        await loadBucket(NavBucket(title: b.title, cats: [pair.cat]), page: 1)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 浮层卡片头部的 ✕（纯图标，与直播/详情横屏角标同口径）。
+    private func panelCloseButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 横屏搜索浮层 v2（原型 v3 钦定）：居中玻璃卡片（不再 .sheet）；提交走既有 runSearch（全局跨源）。
+    private var landscapeSearchCard: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+                .onTapGesture { showSearchPanel = false }
+            VStack(spacing: 14) {
+                HStack(spacing: 8) {
+                    Text("搜索").font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer(minLength: 8)
+                    panelCloseButton { showSearchPanel = false }
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.footnote).foregroundStyle(theme.textSecondary)
+                    TextField("搜全部源", text: $searchText)
+                        .font(.subheadline)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.search)
+                        .onSubmit {
+                            Task {
+                                await runSearch()
+                                showSearchPanel = false
+                            }
+                        }
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                            searchResults = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.footnote).foregroundStyle(theme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        Task {
+                            await runSearch()
+                            showSearchPanel = false
+                        }
+                    } label: {
+                        Text("搜索")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 16).padding(.vertical, 7)
+                            .background(Capsule().fill(LinearGradient(colors: [theme.accent, theme.accent.opacity(0.72)],
+                                                                     startPoint: .leading, endPoint: .trailing)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background { glassCapsule() }
+                Text("搜索走全部健康源（全局跨源），结果直接进海报墙")
+                    .font(.caption).foregroundStyle(theme.textSecondary)
+            }
+            .padding(18)
+            .frame(maxWidth: 560)
+            // v60：搜索浮层同 catCard 口径 —— `.dark` 玻璃档 + 圆角裁切。
+            .filmGlass(cornerRadius: 20, tint: 0.42, strokeOpacity: 0.16, weight: .dark)
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .shadow(color: .black.opacity(0.45), radius: 24, y: 10)
+            .padding(.horizontal, 46)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+    }
+
+    /// 浮层分组容器：标题 + FlowLayout 流式换行（胶囊按内容宽度排，不再撑满网格列）。
+    @ViewBuilder
+    private func panelSection(title: String, @ViewBuilder chips: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(theme.textSecondary)
+            FlowLayout(spacing: 8) { chips() }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 浮层选项胶囊 v2：**内容宽度**（原型 v2 钦定，修复「按钮撑满全屏」）。
+    private func panelChip(_ name: String, _ selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(name)
+                .font(.footnote.weight(selected ? .bold : .regular))
+                .lineLimit(1)
+                .padding(.horizontal, 13).padding(.vertical, 7)
+                // v60：同 chip 口径 —— `.clear` 玻璃档，与 CategoryBrowseView 完全一致。
+                .filmGlass(cornerRadius: 999,
+                           tint: selected ? 0.14 : 0.07,
+                           strokeOpacity: selected ? 0.16 : 0.12,
+                           weight: .clear)
+                .overlay(Capsule().stroke(selected ? theme.accent.opacity(0.55) : .white.opacity(0.14),
+                                          lineWidth: selected ? 1 : 0.5))
+                .foregroundStyle(selected ? theme.accent : theme.textPrimary)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}

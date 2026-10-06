@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="星幕">
+<meta name="theme-color" content="#0b0f16">
+<title>星幕 · 在线看</title>
+<style>
+  :root{--bg:#0b0f16;--card:#161d29;--tx:#e6edf3;--tx2:#8b98ab;--acc:#e0353f}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 -apple-system,"PingFang SC",sans-serif}
+  .top{position:sticky;top:0;z-index:20;background:rgba(11,15,22,.94);backdrop-filter:blur(12px);
+       padding:calc(env(safe-area-inset-top) + 10px) 12px 10px;border-bottom:1px solid #1e2735}
+  .row{display:flex;gap:8px;align-items:center}
+  .logo{font-size:17px;font-weight:800;color:var(--acc);flex:none}
+  input{flex:1;padding:9px 12px;border-radius:10px;border:1px solid #2a3444;background:#111823;color:var(--tx);font-size:14px}
+  select{background:#111823;color:var(--tx);border:1px solid #2a3444;border-radius:8px;padding:6px;font-size:12.5px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:12px}
+  @media(min-width:600px){.grid{grid-template-columns:repeat(6,1fr)}}
+  .item{cursor:pointer}
+  .poster{position:relative;aspect-ratio:2/3;border-radius:9px;overflow:hidden;background:#1a222f}
+  .poster img{width:100%;height:100%;object-fit:cover;display:block}
+  .tag{position:absolute;right:4px;top:4px;background:rgba(0,0,0,.65);color:#ffd479;font-size:10px;padding:1px 5px;border-radius:4px}
+  .nm{font-size:12px;margin-top:5px;line-height:1.35;height:2.7em;overflow:hidden}
+  .sub{font-size:10.5px;color:var(--tx2)}
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:40;display:none;
+        align-items:center;justify-content:center;padding:14px}
+  .box{background:var(--card);border-radius:14px;max-width:520px;width:100%;max-height:88vh;overflow:auto;padding:14px}
+  .box h3{margin:0 0 5px;font-size:16px}
+  .meta{font-size:12px;color:var(--tx2);margin-bottom:8px}
+  .eps{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .ep{padding:7px 11px;border-radius:8px;background:#222c3b;font-size:12.5px;cursor:pointer;border:1px solid #2f3b4d}
+  .ep.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  video{width:100%;border-radius:8px;background:#000;max-height:42vh}
+  .close{margin-top:12px;width:100%;padding:10px;border:0;border-radius:10px;background:#2a3444;color:var(--tx);font-size:14px}
+  .bar{font-size:12px;color:var(--tx2);padding:8px 12px}
+  .tip{margin:8px 12px;font-size:11.5px;color:var(--tx2);background:rgba(76,141,255,.1);
+       border-left:3px solid #4c8dff;padding:9px 11px;border-radius:8px;line-height:1.7}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="row">
+    <span class="logo">星幕</span>
+    <input id="q" placeholder="搜片名，回车搜索" autocomplete="off">
+  </div>
+  <div class="row" style="margin-top:8px">
+    <span style="font-size:12px;color:var(--tx2)">源：</span>
+    <select id="src" style="flex:1"></select>
+  </div>
+</div>
+
+<div class="bar" id="bar">加载中…</div>
+<div class="tip" id="tip" style="display:none"></div>
+<div class="grid" id="grid"></div>
+
+<div class="mask" id="mask">
+  <div class="box">
+    <h3 id="d-title">—</h3>
+    <div class="meta" id="d-meta">—</div>
+    <video id="vid" controls playsinline webkit-playsinline style="display:none"></video>
+    <div id="d-desc" style="font-size:12.5px;color:var(--tx2);line-height:1.75"></div>
+    <div class="eps" id="d-eps"></div>
+    <button class="close" onclick="closeBox()">关闭</button>
+  </div>
+</div>
+
+<script>
+const FEED = "feed/";                 // 同源静态数据（Actions 定时生成），无跨域问题
+const grid = document.getElementById("grid");
+const bar  = document.getElementById("bar");
+let CATALOG = {};
+
+function esc(s){return (s||"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+async function boot(){
+  let idx;
+  try{ idx = await (await fetch(FEED+"index.json",{cache:"no-store"})).json(); }
+  catch(e){ bar.textContent="数据还没生成（首次由定时任务生成，约几分钟）"; return; }
+
+  const sel = document.getElementById("src");
+  sel.innerHTML = "";
+  idx.sources.filter(s=>s.count>0).forEach(s=>{
+    const o=document.createElement("option");
+    o.value=s.key; o.textContent=`${s.name}（${s.count}）`;
+    sel.appendChild(o);
+  });
+  document.getElementById("tip").style.display="block";
+  document.getElementById("tip").innerHTML =
+    "共 "+idx.total+" 部 · 数据更新于 "+esc(idx.updated)+
+    "　｜　iPhone：Safari 底部分享 → <b>添加到主屏幕</b>，之后像 App 一样点开就看。";
+
+  for(const s of idx.sources){
+    if(!s.count) continue;
+    try{ CATALOG[s.key] = await (await fetch(FEED+s.key+".json",{cache:"no-store"})).json(); }
+    catch(e){}
+  }
+  sel.onchange = render;
+  render();
+}
+
+function cur(){ return CATALOG[document.getElementById("src").value] || {items:[]}; }
+
+function render(kw){
+  const items = (cur().items||[]).filter(it => !kw || (it.name||"").includes(kw));
+  grid.innerHTML = "";
+  if(!items.length){ bar.textContent = kw ? "没搜到「"+kw+"」" : "这个源暂时没数据"; return; }
+  items.forEach(it=>{
+    const d=document.createElement("div");
+    d.className="item";
+    d.innerHTML =
+      '<div class="poster"><img loading="lazy" src="'+esc(it.pic)+'" onerror="this.style.display=\'none\'">'+
+      (it.remarks?'<span class="tag">'+esc(it.remarks)+'</span>':'')+'</div>'+
+      '<div class="nm">'+esc(it.name)+'</div><div class="sub">'+esc(it.type)+'</div>';
+    d.onclick=()=>open(it);
+    grid.appendChild(d);
+  });
+  bar.textContent = "共 "+items.length+" 部 · 点海报播放"+(kw?"（搜索："+kw+"）":"");
+}
+
+document.getElementById("q").addEventListener("keydown",e=>{
+  if(e.key==="Enter") render(e.target.value.trim());
+});
+
+function open(it){
+  document.getElementById("d-title").textContent = it.name;
+  document.getElementById("d-meta").textContent = [it.type,it.year,it.area].filter(Boolean).join(" · ");
+  document.getElementById("d-desc").textContent = it.desc || "无简介";
+  const eps=document.getElementById("d-eps");
+  const vid=document.getElementById("vid");
+  eps.innerHTML=""; vid.style.display="none";
+  document.getElementById("mask").style.display="flex";
+
+  const list = it.eps||[];
+  if(!list.length){ eps.innerHTML='<span style="font-size:12px;color:#8b98ab">没有播放地址</span>'; return; }
+  list.slice(0,120).forEach((ep,i)=>{
+    const b=document.createElement("span");
+    b.className="ep"+(i===0?" on":"");
+    b.textContent=ep.n||("第"+(i+1)+"集");
+    b.onclick=()=>{[...eps.children].forEach(c=>c.classList.remove("on"));b.classList.add("on");play(ep.u);};
+    eps.appendChild(b);
+  });
+  play(list[0].u);
+}
+
+function play(u){
+  const vid=document.getElementById("vid");
+  vid.style.display="block"; vid.src=u; vid.play().catch(()=>{});
+}
+function closeBox(){
+  document.getElementById("mask").style.display="none";
+  const v=document.getElementById("vid"); v.pause(); v.removeAttribute("src");
+}
+
+boot();
+</script>
+</body>
+</html>

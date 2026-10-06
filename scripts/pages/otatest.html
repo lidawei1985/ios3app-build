@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OTA 对照测试</title>
+<style>body{font-family:-apple-system,sans-serif;background:#111;color:#eee;padding:20px}
+a{display:block;margin:14px 0;padding:16px;border-radius:12px;background:#2b6cd4;color:#fff;text-decoration:none;font-size:17px;text-align:center}
+</style></head>
+<body>
+<h3>iOS 安装弹窗对照测试</h3>
+<a id="tA" href="itms-services://?action=download-manifest&url=https%3A%2F%2Flidawei1985.github.io%2Fios3app-build%2Fshell.xml">A：我们的 shell.xml</a>
+<a id="tB" href="itms-services://?action=download-manifest&url=https%3A%2F%2Fqm.esgin.cn%2Fqsq%2Fneizhi%2F1.plist">B：第三方清单(对照)</a>
+<a id="tC" href="itms-services://?action=download-manifest&url=https%3A%2F%2Flidawei1985.github.io%2Fios3app-build%2Fshell.plist">C：我们的 shell.plist</a>
+<a id="tE" href="itms-services://?action=download-manifest&url=https%3A%2F%2Flidawei1985.github.io%2Fios3app-build%2Fshell3.xml">E：镜像直连清单(ghproxy)</a>
+<p id="log">点一个链接，观察弹窗：安装确认=成功；在iTunes中打开=失败。然后回来点下一个。</p>
+<script>
+var n=0;
+document.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){n++;document.getElementById('log').textContent='已点击 '+n+' 次';});});
+</script>
+</body></html>

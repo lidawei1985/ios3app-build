@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#08090d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>伟哥智能工作站</title>
+<style>
+  :root{
+    --bg:#08090d; --card:#12151d; --card2:#171b25; --line:#242a38;
+    --tx:#eaf0f7; --tx2:#8b98ab; --tx3:#5f6b7d;
+    --acc:#ff3b47; --acc2:#ff6b52; --gold:#ffc93c; --ok:#31c48d; --blue:#4c8dff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--tx);
+       font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+       padding:0 0 44px;overflow-x:hidden}
+
+  /* ===== 顶部光晕 ===== */
+  .glow{position:fixed;top:-200px;left:50%;transform:translateX(-50%);
+        width:560px;height:420px;pointer-events:none;z-index:0;
+        background:radial-gradient(closest-side,rgba(255,59,71,.22),rgba(255,107,82,.10) 45%,transparent 72%)}
+  .wrap{position:relative;z-index:1;max-width:640px;margin:0 auto;
+        padding:calc(env(safe-area-inset-top) + 22px) 15px 0}
+
+  /* ===== 品牌头 ===== */
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .logo{width:38px;height:38px;border-radius:11px;flex:none;
+        background:linear-gradient(140deg,var(--acc),var(--acc2));
+        display:flex;align-items:center;justify-content:center;
+        box-shadow:0 6px 18px rgba(255,59,71,.34)}
+  .logo svg{width:21px;height:21px}
+  .bname{font-size:16.5px;font-weight:800;letter-spacing:.2px}
+  .bsub{font-size:11.5px;color:var(--tx3);margin-top:1px;letter-spacing:.3px}
+
+  h1{font-size:29px;line-height:1.28;margin:6px 0 10px;font-weight:800;letter-spacing:-.4px}
+  h1 .hl{background:linear-gradient(100deg,var(--acc),var(--gold));
+         -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lead{font-size:14px;color:var(--tx2);line-height:1.75;margin:0 0 16px}
+
+  /* ===== 徽章 ===== */
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:18px}
+  .chip{font-size:11.5px;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,.05);
+        border:1px solid var(--line);color:var(--tx2);white-space:nowrap}
+  .chip b{color:var(--tx)}
+  .chip.hot{background:rgba(255,59,71,.12);border-color:rgba(255,59,71,.42);color:#ffb3b9}
+
+  /* ===== 主按钮 ===== */
+  .cta{display:flex;gap:10px;margin-bottom:22px}
+  .btn{display:block;width:100%;padding:15px;border:0;border-radius:14px;
+       background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;
+       font-size:16.5px;font-weight:800;text-align:center;text-decoration:none;
+       cursor:pointer;font-family:inherit;letter-spacing:.3px;
+       box-shadow:0 8px 22px rgba(255,59,71,.28);transition:transform .12s}
+  .btn:active{transform:scale(.975)}
+  .btn.g{background:var(--card2);box-shadow:none;border:1px solid var(--line);color:var(--tx);font-weight:700}
+  .btn.b{background:linear-gradient(135deg,#2b6cd4,#3f86ff);box-shadow:0 8px 22px rgba(43,108,212,.28)}
+  .btn.sm{padding:12px;font-size:14.5px;border-radius:12px}
+  .btn[disabled]{opacity:.4;pointer-events:none;box-shadow:none}
+  .btn .plat{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:6px;
+             background:rgba(255,255,255,.18);margin-left:7px;font-weight:600;vertical-align:middle}
+
+  /* ===== 卖点 ===== */
+  .feats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:24px}
+  .feat{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px 10px;text-align:center}
+  .feat .em{font-size:20px;line-height:1;margin-bottom:6px}
+  .feat .ft{font-size:12.5px;font-weight:800;margin-bottom:2px}
+  .feat .fd{font-size:10.5px;color:var(--tx3);line-height:1.45}
+
+  /* ===== 通用 ===== */
+  h2{font-size:15px;margin:26px 0 11px;font-weight:800;display:flex;align-items:center;gap:7px}
+  h2 .bar{width:3px;height:15px;border-radius:2px;background:var(--acc)}
+  .sub{color:var(--tx2);font-size:12.5px;margin:-6px 0 12px;line-height:1.7}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:15px;margin-bottom:11px}
+
+  .danger{background:rgba(255,59,71,.09);border:1px solid rgba(255,59,71,.32);border-radius:12px;
+          padding:11px 13px;font-size:12.5px;color:#ffb3b9;margin-bottom:14px;line-height:1.72}
+  .alt{background:rgba(240,180,41,.08);border:1px solid rgba(240,180,41,.28);border-radius:12px;
+       padding:11px 13px;font-size:12.5px;color:#e8cf9a;margin-bottom:14px;line-height:1.72}
+  .alt a{color:var(--gold);font-weight:700}
+
+  /* ===== 步骤 ===== */
+  .step{display:flex;gap:12px;align-items:flex-start}
+  .n{flex:none;width:27px;height:27px;border-radius:9px;
+     background:linear-gradient(140deg,var(--acc),var(--acc2));color:#fff;
+     font-size:14px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:1px;
+     box-shadow:0 4px 12px rgba(255,59,71,.3)}
+  .n.g{background:var(--card2);color:var(--tx2);box-shadow:none;border:1px solid var(--line)}
+  .t{font-weight:800;font-size:15px;margin-bottom:4px;line-height:1.45}
+  .d{font-size:13px;color:var(--tx2);line-height:1.72}
+  .note{font-size:11.5px;color:var(--tx3);margin-top:9px;line-height:1.7}
+  .tag{display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:6px;
+       background:rgba(49,196,141,.14);color:var(--ok);margin-left:7px;font-weight:700;vertical-align:middle}
+
+  /* ===== App 卡 ===== */
+  .app{display:flex;gap:13px;align-items:center}
+  .icon{flex:none;width:66px;height:66px;border-radius:16px;object-fit:cover;background:#1a2230;
+        display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:800;color:#fff;
+        box-shadow:0 6px 16px rgba(0,0,0,.4)}
+  .ainfo{flex:1;min-width:0}
+  .aname{font-size:17.5px;font-weight:800;letter-spacing:.2px}
+  .asub{font-size:12.5px;color:var(--tx2);margin-top:1px}
+  .adesc{font-size:12px;color:var(--tx3);margin-top:6px;line-height:1.62}
+  .steps{display:none;margin-top:14px;border-top:1px dashed var(--line);padding-top:13px}
+  .steps.open{display:block;animation:fade .22s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .coming{font-size:12.5px;color:var(--gold);margin-top:8px;font-weight:600}
+
+  /* ===== 自动续签专区 ===== */
+  .renew{background:linear-gradient(150deg,rgba(49,196,141,.10),rgba(76,141,255,.07));
+         border:1px solid rgba(49,196,141,.3);border-radius:15px;padding:15px;margin-bottom:11px}
+  .rhead{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .rhead .rt{font-size:15.5px;font-weight:800}
+  .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 4px}
+  .ri{background:rgba(0,0,0,.22);border-radius:11px;padding:10px 11px;border:1px solid rgba(255,255,255,.05)}
+  .ri .it{font-size:12.5px;font-weight:800;color:var(--ok);margin-bottom:2px}
+  .ri .id2{font-size:11px;color:var(--tx3);line-height:1.5}
+  .rwhy{margin-top:11px;padding-top:11px;border-top:1px dashed rgba(255,255,255,.1);
+        font-size:11.5px;color:var(--tx2);line-height:1.72}
+
+  details{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:13px;margin-bottom:9px}
+  summary{font-size:13.5px;font-weight:700;cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:10px}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"＋";color:var(--tx3);font-weight:400;flex:none}
+  details[open] summary::after{content:"−"}
+  details p{font-size:12.5px;color:var(--tx2);line-height:1.78;margin:10px 0 0}
+
+  /* ===== 微信拦截 ===== */
+  .wxgate{position:fixed;inset:0;z-index:99;background:rgba(6,8,12,.97);display:none;
+          padding:calc(env(safe-area-inset-top) + 46px) 24px 24px;text-align:center}
+  .wxgate p{font-size:15px;line-height:1.92;color:var(--tx)}
+  .wxgate .cp{display:block;margin:20px auto 0;padding:14px;border-radius:13px;
+              background:linear-gradient(135deg,#2b6cd4,#3f86ff);color:#fff;font-weight:800;
+              font-size:16px;text-decoration:none;max-width:330px}
+
+  .foot{margin-top:28px;padding-top:14px;border-top:1px dashed var(--line);
+        color:var(--tx3);font-size:11.5px;line-height:1.85;text-align:center}
+
+  /* ===== 最简操作 ===== */
+  .minimal{background:linear-gradient(150deg,rgba(49,196,141,.12),rgba(76,141,255,.06));
+           border:1px solid rgba(49,196,141,.34);border-radius:15px;padding:15px;margin-bottom:16px}
+  .minimal .mt{font-size:13px;font-weight:800;color:var(--ok);margin-bottom:11px;letter-spacing:.2px}
+  .minimal .mrow{display:flex;gap:9px;align-items:flex-start;font-size:13px;color:var(--tx);
+                 line-height:1.6;margin-bottom:9px}
+  .minimal .mn{flex:none;width:19px;height:19px;border-radius:6px;background:var(--ok);color:#052218;
+               font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
+  .minimal .mfoot{font-size:11.5px;color:var(--tx2);line-height:1.72;margin-top:11px;padding-top:11px;
+                  border-top:1px dashed rgba(255,255,255,.11)}
+  .minimal .mfoot b{color:var(--tx)}
+</style>
+</head>
+<body>
+<div class="glow"></div>
+
+<!-- 微信 / QQ 内置浏览器不认 itms-services，拦截提示换 Safari -->
+<div class="wxgate" id="wxgate">
+  <p style="font-size:30px;margin:0 0 16px">🧭</p>
+  <p><b>请用 Safari 打开本页</b><br>
+     微信 / QQ 里打不开安装链接（点了会显示乱码）。<br>
+     点右上角 <b>···</b> → 选 <b>在 Safari 中打开</b>。</p>
+  <a class="cp" id="wxcopy" href="javascript:void(0)">复制本页地址（再去 Safari 粘贴）</a>
+</div>
+
+<div class="wrap">
+
+  <!-- ===== 品牌头 ===== -->
+  <div class="brand">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/>
+        <path d="m8.2 12.2 2.6 2.6 5-5.1" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div>
+      <div class="bname" id="brand-name">伟哥智能工作站</div>
+      <div class="bsub">WEIGE SMART WORKSTATION</div>
+    </div>
+  </div>
+
+  <h1>装上就<span class="hl">自动签名</span><br>不用电脑，不用你管</h1>
+  <p class="lead" id="site-sub">手机 Safari 直接装 · 全程免费 · 设一次，之后 7 天自己续，不掉签。</p>
+
+  <div class="chips">
+    <span class="chip hot">✅ 内置<b>自动续签</b>，不用另装 App</span>
+    <span class="chip">💻 不用电脑</span>
+    <span class="chip">🆓 全程免费</span>
+    <span class="chip">🚫 不进苹果商店</span>
+  </div>
+
+  <div class="cta">
+    <a class="btn" href="#install">立即安装 →</a>
+  </div>
+
+  <!-- ===== 快捷通道：手机 OTA 直装 ===== -->
+  <div class="card" id="ota-card" style="border-color:rgba(255,201,60,.5);display:none">
+    <div class="step">
+      <div class="n" style="background:linear-gradient(140deg,#e6a817,#ffc93c);box-shadow:0 4px 12px rgba(255,201,60,.3)">⚡</div>
+      <div style="flex:1">
+        <div class="t">免电脑直装<span class="tag" style="background:rgba(255,201,60,.14);color:#ffd479">手机点一下就装 · 不用连电脑</span></div>
+        <div class="d">手机上（Safari）点下面的按钮，再<b>连点两个确认</b>就装上（实测 2 分钟）：<br><b>①</b> 点「一键安装」→ 弹「在“iTunes”中打开？」→ 点<b>【打开】</b>（别点取消！）<br><b>②</b> 系统弹「"lidawei1985.github.io"想要安装“伟哥工作站”」→ 点<b>【安装】</b><br><b>③</b> 自动下载安装约 1~2 分钟（自动走测速最快线路），全程<b>不用电脑</b>。多按几次不会装坏。<br>装不上？换<a id="ota-b-btn" href="javascript:void(0)" style="color:#ffd479">备用线路</a>再试；仍不行走下面电脑路线（一样免费）。仅限本站已登记过的设备。</div>
+        <a class="btn" id="ota-btn" style="margin-top:11px;background:linear-gradient(135deg,#e6a817,#ffc93c);color:#1a1408;box-shadow:0 8px 22px rgba(255,201,60,.3)" href="javascript:void(0)">📱 一键安装（免电脑）</a>
+        <a class="btn" id="ota-b-btn2" style="margin-top:9px;display:none;background:rgba(255,201,60,.12);color:#ffd479;border:1px solid rgba(255,201,60,.4)" href="javascript:void(0)">🛟 备用线路安装（主线路不行时用）</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="minimal">
+    <div class="mt">✅ 你要手动做的，只有 3 件事（全部只做一次）</div>
+    <div class="mrow"><span class="mn">1</span><span><b>电脑上装好 Sideloadly</b>（免费小工具，第 1 步有下载按钮）</span></div>
+    <div class="mrow"><span class="mn">2</span><span>手机连电脑：本页点「下载」，把文件<b>拖进 Sideloadly</b>，输入你的 <b>Apple ID</b> 点 Start</span></div>
+    <div class="mrow"><span class="mn">3</span><span>打开 App，用 <b>Apple ID 登录一次</b>（免费号就行，开自动续签）</span></div>
+    <div class="mfoot">
+      之后<b>装片源、签名、续签全部自动</b>：手机上打开本页点「导入」就行，不用再连电脑、每 7 天自己续命。<br>
+      电脑只在<b>第一次装壳</b>时用一下——这是苹果规则下<b>免费、稳定、最省事</b>的路（真机验证通过）。
+    </div>
+  </div>
+
+  <div class="feats">
+    <div class="feat"><div class="em">🔁</div><div class="ft">自动续签</div><div class="fd">设一次，7 天自续</div></div>
+    <div class="feat"><div class="em">✅</div><div class="ft">真机验证</div><div class="fd">全流程实测通过</div></div>
+    <div class="feat"><div class="em">🛡️</div><div class="ft">没有广告坑</div><div class="fd">不弹滑块短信</div></div>
+  </div>
+
+  <div class="danger">
+    🚨 <b>防骗提醒（先看这个）</b><br>
+    本站所有 App <b>全程免费</b>，安装<b>不需要</b>滑动任何滑块、<b>不需要</b>发任何短信、<b>不需要</b>下载任何杀毒软件。<br>
+    凡是出现「拖动滑块 / 发短信验证 / 下载 XXX 助手」的页面，都是<b>广告扣费陷阱</b>，立刻关闭。
+  </div>
+
+  <div class="alt">
+    ⚠️ 页面打开慢 / 打不开？换备用地址：<br>
+    <a href="https://cdn.jsdelivr.net/gh/lidawei1985/ios3app-build@gh-pages/index.html">备用地址 1</a> ｜
+    <a href="https://fastly.jsdelivr.net/gh/lidawei1985/ios3app-build@gh-pages/index.html">备用地址 2</a>
+  </div>
+
+  <h2 id="install"><span class="bar"></span>开始安装（iPhone · 全程免费）</h2>
+  <div class="sub">只需电脑在<b>第一次装壳</b>时出一次力，之后全部在手机上自动完成。</div>
+
+  <!-- 第 1 步：电脑装 Sideloadly -->
+  <div class="card" id="profile-card" style="border-color:rgba(64,200,120,.45)">
+    <div class="step">
+      <div class="n" style="background:linear-gradient(140deg,#2fae62,#4cd97e);box-shadow:0 4px 12px rgba(76,217,126,.3)">1</div>
+      <div style="flex:1">
+        <div class="t">电脑上安装 Sideloadly<span class="tag" style="background:rgba(76,217,126,.14);color:#7de8a5">免费小工具 · 只装这一次</span></div>
+        <div class="d">它就是干一件事的：把你下载的 App 文件用<b>你自己的免费 Apple ID</b> 签名后装进 iPhone。你的密码只提交给苹果官方，不经过任何第三方。装完 Sideloadly 如果提示缺驱动，装一个 <b>iTunes</b>（微软商店搜 iTunes，免费）再插手机就行。</div>
+        <a class="btn b sm" style="margin-top:11px" href="https://sideloadly.io/" target="_blank" rel="noopener">① 打开 Sideloadly 官网下载安装（Windows / Mac）</a>
+        <div class="note">苹果官网下载的 iTunes 或微软商店版都可以；装完 iTunes 重启一次电脑最稳。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第 2 步：下载壳并拖进 Sideloadly -->
+  <div class="card" id="signer-card">
+    <div class="step">
+      <div class="n">2</div>
+      <div style="flex:1">
+        <div class="t">手机连电脑，把 App 拖进去签名安装<span class="tag">每个 App 各拖一次 · 一次管 7 天自动续</span></div>
+        <div class="d">在下面「应用列表」点 <b>③ 下载</b>（自动选最快通道），然后把下载的 <b>.ipa 文件拖进 Sideloadly 窗口</b>：填上你的 Apple ID → 点 <b>Start</b> → 等进度走完，App 就出现在手机桌面了。</div>
+        <div class="note">
+          <b>手机上要做的收尾（一次）：</b>设置 → 通用 → VPN与设备管理 → 点你的 Apple ID → <b>信任</b>；<br>
+          然后打开 App 按引导<b>登录一次 Apple ID</b>，自动续签就激活了（之后每 7 天自己续，不用电脑）。
+        </div>
+        <div class="note" style="color:#e8cf9a">免费 Apple ID 一次最多签 3 个 App、7 天一续（App 自己会自动续，不用你管）；已有 App 时重签同名 App 不占新名额。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 第 3 步：手机端日常装片源（全自动） -->
+  <div class="card" id="daily-card">
+    <div class="step">
+      <div class="n">3</div>
+      <div style="flex:1">
+        <div class="t">以后装 App / 片源：手机上点一下就行<span class="tag">不用电脑 · 全自动签名</span></div>
+        <div class="d">壳装好之后，<b>手机 Safari 打开本页</b>，在应用卡片里点「<b>④ 导入</b>」——壳会自动下载、自动签名、自动安装，全程无感（真机实测 90 秒装完）。</div>
+        <div class="note">这一步不用电脑、不用签名器、不用 Apple ID 再输密码。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 备用路线：手机免电脑（当前已失效，如实标注） -->
+  <details style="margin-top:14px">
+    <summary>没有电脑？「手机免电脑」备用路线（轻松签）——<b style="color:#ff8a8a">当前已失效</b></summary>
+    <p style="line-height:1.9">
+      以前可以全手机操作：装「防掉签」配置文件 → 装「轻松签」签名器（<a href="itms-services://?action=download-manifest&url=https%3A%2F%2Fqm.esgin.cn%2Fqsq%2Fneizhi%2F1.plist">点此试装</a>，备件：<a href="https://youquzhushou.cn/" target="_blank" rel="noopener" style="color:#ffd479">趣助手</a> / <a href="https://int.youquzhushou.cn/" target="_blank" rel="noopener" style="color:#ffd479">EZsign</a>）→ 用它给下载的 App 签名。<br>
+      <b style="color:#ff8a8a">但 2026-10-06 真机实测：这类签名器用的免费共享证书已被苹果吊销，iOS 27 上必报「无法验证其完整性」，防掉签配置也拦不住</b>——是苹果封的路，不是操作问题。哪天证书商重签了，这里按钮还能用；在那之前请用上面的电脑路线（5 分钟，一次就好）。
+    </p>
+  </details>
+
+  <h2><span class="bar"></span>应用列表</h2>
+  <div id="apps"></div>
+
+  <!-- 自动续签专区 -->
+  <h2><span class="bar"></span>关于「自动续签」</h2>
+  <div class="renew" id="renew-box"></div>
+
+  <h2><span class="bar"></span>常见问题</h2>
+
+  <details>
+    <summary>装签名器/App 时提示「无法验证其完整性」怎么办？</summary>
+    <p><b>2026-10-06 真机实测结论：这不是你的操作问题。</b>原因是苹果吊销了共享签名证书，iOS 27 上「防掉签配置文件」也拦不住（实测无效）。<br>
+    <b>当前唯一稳定免费的路：用电脑 Sideloadly + 你自己的 Apple ID 装一次壳</b>（第 1~2 步，5 分钟）。壳装好之后，手机上点「导入」装一切，全自动。<br>
+    那些号称免电脑的签名器，背后都是租来的共享证书——随时可能被苹果成批吊销，吊销那天所有用户一起打不开。</p>
+  </details>
+
+  <details>
+    <summary>还需要另外装一个「续签 App」吗？</summary>
+    <p><b>不用。</b>续签引擎（SideStore）已经打包在安装文件里面了 —— 你装的「星幕 / 心屋」本身就是「App + 自动续签器」二合一，装一次就都齐了。<br>
+    你要做的只有一件事：打开 App，按引导<b>登录一次你自己的 Apple ID</b>（免费号就行），并允许它装一个 VPN 描述文件（只做本机续签通道，不监控你上网）。<br>
+    之后每 7 天它自己在后台续签，<b>不用电脑、不用回本页、不用你再点任何东西</b>。</p>
+  </details>
+
+  <details>
+    <summary>点开 App 提示「需要开发者模式」？（iOS 16 以上会遇到）</summary>
+    <p>这是苹果对新装 App 的正常要求，只需设置一次：<br>
+    <b>设置 → 隐私与安全性 → 开发者模式</b> → 打开 → 按提示<b>重启手机</b>。之后装任何 App 都不会再弹。</p>
+  </details>
+
+  <details>
+    <summary>为什么必须装一个签名器？不能点一下直接装吗？</summary>
+    <p>苹果不允许任何 App 绕过签名进 iPhone。「点一下就装」的通道，背后都是站方<b>花钱买的企业证书</b>替你签——所以那些站全靠广告和会员费赚钱，广告多、陷阱多就是这么来的。<br>
+    我们能做到的：把「直达安装」的按钮直接放进本页（跳过他们网页里的所有广告跳板），并把所有风险写在明面上。</p>
+  </details>
+
+  <details>
+    <summary>万一还是掉签了怎么办？</summary>
+    <p>回本页，按同样的步骤重装一次即可，<b>收藏、观看记录都保留</b>（App 数据存在手机本地，不会被清掉）。<br>
+    掉签的常见原因：长期没打开过 App（超过 7 天没联网，自动续签错过）、或苹果更新系统小版本。<b>每 7 天打开一次最保险。</b></p>
+  </details>
+
+  <details>
+    <summary>安卓怎么装？</summary>
+    <p>安卓版 App 若已上线，点对应卡片的「安卓下载」直接装 APK（首次需允许「安装未知来源应用」）。还没上线的会显示「开发中」。</p>
+  </details>
+
+  <div class="foot">
+    <span id="foot-brand">伟哥智能工作站</span> · 一站式智能设备应用<br>
+    本站不收集你的 Apple ID，不收集通讯录、照片或位置。签名只在你的手机本地完成。
+  </div>
+
+</div>
+
+<script>
+/* ================= 基础 ================= */
+var UA = navigator.userAgent || "";
+var IS_IOS = /iPad|iPhone|iPod/.test(UA) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+var IS_ANDROID = /Android/i.test(UA);
+var S = null;
+var BEST = { p: "", name: "官方直链" };
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return (s == null ? "" : s.toString()).replace(/[&<>"]/g, function (c) {
+  return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+/* ================= 微信/QQ 拦截 ================= */
+(function () {
+  var inApp = /MicroMessenger/i.test(UA) || /QQ\//i.test(UA) || /QQBrowser/i.test(UA);
+  if (!inApp) return;
+  $("wxgate").style.display = "block";
+  var btn = $("wxcopy");
+  btn.onclick = function () {
+    var ta = document.createElement("textarea");
+    ta.value = location.href.split("#")[0];
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+    btn.textContent = "已复制 ✓ 去 Safari 粘贴打开";
+    setTimeout(function () { btn.textContent = "复制本页地址（再去 Safari 粘贴）"; }, 3000);
+  };
+})();
+
+/* ================= 探针 ================= */
+function probe(url, ms) {
+  return new Promise(function (res) {
+    var done = false, t0 = performance.now();
+    var to = setTimeout(function () { if (!done) { done = true; res(-1); } }, ms);
+    fetch(url, { mode: "no-cors", cache: "no-store" })
+      .then(function () { if (!done) { done = true; clearTimeout(to); res(performance.now() - t0); } })
+      .catch(function () { if (!done) { done = true; clearTimeout(to); res(-1); } });
+  });
+}
+
+/* ================= 签名器区块 ================= */
+function renderProfile() {
+  var p = S.signer && S.signer.profile;
+  if (!p) return;
+  $("profile-btn").href = p.url;
+  $("profile-btn").textContent = "① " + p.title;
+  $("profile-bak").href = p.backup;
+}
+
+function renderSigner() {
+  var sg = S.signer;
+  $("signer-title").innerHTML = '装「' + esc(sg.name) + '」签名器<span class="tag">只装这一次 · 全站通用</span>';
+  $("signer-why").textContent = sg.why;
+  var box = $("signer-btns");
+  box.innerHTML = "";
+  sg.slots.forEach(function (s, idx) {
+    var a = document.createElement("a");
+    a.className = "btn " + (idx === 0 ? "b" : "g sm");
+    a.id = "slot-" + s.n;
+    a.style.marginTop = idx === 0 ? "12px" : "8px";
+    a.href = "itms-services://?action=download-manifest&url=" + encodeURIComponent(s.plist);
+    a.textContent = s.label;
+    box.appendChild(a);
+  });
+  $("signer-integrity").innerHTML = '⚠️ ' + esc(sg.integrityNote || "");
+  $("signer-alts").innerHTML = '实在都不行，换备用签名器（打开后装同样要先装第 0 步配置文件）：<br>' +
+    sg.alts.map(function (a2) {
+      return '<a href="' + esc(a2.url) + '" target="_blank" rel="noopener" style="color:#ffd479">' + esc(a2.name) + '</a>';
+    }).join(" ｜ ");
+
+  Promise.all(sg.slots.map(function (s) {
+    return probe(s.plist + "?_t=" + Date.now(), 8000).then(function (t) { return { s: s, t: t }; });
+  })).then(function (rs) {
+    var ok = rs.filter(function (r) { return r.t >= 0; });
+    rs.forEach(function (r) {
+      var a = $("slot-" + r.s.n);
+      if (a && r.t < 0) { a.style.opacity = .45; a.textContent += "（不通）"; }
+    });
+    var note = $("probe-note");
+    if (!ok.length) {
+      note.innerHTML = "⚠️ 本次检测 " + rs.length + " 个点位都不通（多为网络波动）——直接点上面按钮试，装不上就过会儿再来。";
+      return;
+    }
+    var best = ok.sort(function (a, b) { return a.t - b.t; })[0];
+    note.innerHTML = "✅ 实时检测：" + ok.length + "/" + rs.length + " 个点位可用，最快 <b>点位 " + best.s.n +
+      "</b>（" + Math.round(best.t) + " ms）。哪个装不上就换下一个。";
+  });
+}
+
+/* ================= 自动续签区块 ================= */
+function renderRenew() {
+  var r = S.renew;
+  if (!r) return;
+  var pts = (r.points || []).map(function (p) {
+    return '<div class="ri"><div class="it">' + esc(p.t) + '</div><div class="id2">' + esc(p.d) + '</div></div>';
+  }).join("");
+  $("renew-box").innerHTML =
+    '<div class="rhead"><span style="font-size:22px">🔁</span>' +
+      '<span class="rt">' + esc(r.title) + '</span>' +
+      '<span class="tag" style="margin-left:auto">' + esc(r.badge) + '</span></div>' +
+    '<div class="d">' + esc(r.body) + '</div>' +
+    '<div class="rgrid">' + pts + '</div>' +
+    '<div class="rwhy">💡 ' + esc(r.why_appleid) + '</div>';
+}
+
+/* ================= App 列表 ================= */
+function appCard(a) {
+  var card = document.createElement("div");
+  card.className = "card";
+  var icon = a.icon
+    ? '<img class="icon" src="' + esc(S.site.pagesBase + a.icon) + '" onerror="this.style.display=\'none\'">'
+    : '<div class="icon" style="background:' + esc(a.tint || "#444") + '">' + esc((a.name || "?").charAt(0)) + '</div>';
+
+  var btns = "", steps = "";
+  if (a.coming) {
+    btns = '<div class="coming">🚧 即将上线，敬请期待</div>';
+  } else {
+    if (a.ios) {
+      var iosLabel = IS_IOS ? "安装 iOS 版" : "iOS 安装教程";
+      btns += '<button class="btn" data-ios="' + a.id + '" style="margin-top:13px;background:linear-gradient(135deg,' +
+              esc(a.tint || "#ff3b47") + ',' + esc(a.tint || "#ff3b47") + 'dd)">' + iosLabel +
+              '<span class="plat">iOS ' + (a.ios.sizeMB || "") + ' MB</span></button>';
+    }
+    if (a.android) {
+      btns += '<a class="btn b" style="margin-top:9px" href="' + esc(S.site.releaseBase + a.android.apk) +
+              '">安卓下载 APK<span class="plat">Android ' + (a.android.sizeMB || "") + ' MB</span></a>';
+    } else {
+      btns += '<button class="btn g sm" style="margin-top:9px" disabled>安卓版开发中</button>';
+    }
+    if (a.ios) {
+      steps =
+        '<div class="steps" id="steps-' + a.id + '">' +
+          '<div class="t" style="font-size:13px">iOS 安装步骤（第一次约 5 分钟，全程免费）</div>' +
+          '<div class="d" style="margin-top:7px"><b>② 没装过壳</b>：回本页「开始安装」第 1~2 步——电脑装 Sideloadly，把下面 ③ 下载的文件拖进去，填 Apple ID 点 Start（<b>壳全站只装一次</b>，之后所有 App 都在手机上点「导入」装）。</div>' +
+          '<a class="btn b sm" id="dl-' + a.id + '" style="margin-top:10px" href="#">③ 下载 ' + esc(a.name) +
+            '（' + (a.ios.sizeMB || "?") + ' MB）</a>' +
+          '<div class="note" id="dlnote-' + a.id + '">正在选最快的下载通道…</div>' +
+          '<div class="note">电脑用户：下载完把这个 .ipa <b>拖进 Sideloadly</b> → 填 Apple ID → Start。已装过壳的手机用户：跳过 ③，直接点下面 ④。</div>' +
+          '<a class="btn g sm" id="imp-' + a.id + '" style="margin-top:10px" href="#">④ 打开桌面「' + esc(a.name) + '」后，点这里导入片源</a>' +
+          '<div class="note">⑤ <b>开自动续签</b>：App 里按引导登录一次 Apple ID（免费号即可），之后每 7 天自动续，不用再管。</div>' +
+        '</div>';
+    }
+  }
+  card.innerHTML =
+    '<div class="app">' + icon +
+      '<div class="ainfo"><div class="aname">' + esc(a.name) + '</div>' +
+      '<div class="asub">' + esc(a.subtitle || "") + '</div>' +
+      '<div class="adesc">' + esc(a.desc || "") + '</div></div>' +
+    '</div>' + btns + steps;
+  return card;
+}
+
+function renderApps() {
+  var box = $("apps");
+  box.innerHTML = "";
+  S.apps.forEach(function (a) { box.appendChild(appCard(a)); });
+
+  box.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-ios]");
+    if (!b) return;
+    var st = $("steps-" + b.getAttribute("data-ios"));
+    if (st) st.classList.toggle("open");
+  });
+
+  S.apps.forEach(function (a) {
+    if (!a.ios) return;
+    var rel = S.site.releaseBase;
+    var setLinks = function () {
+      var dl = $("dl-" + a.id);
+      if (dl) dl.href = BEST.p + rel + a.ios.bundle;
+      var imp = $("imp-" + a.id);
+      if (imp) imp.href = a.ios.scheme + "://install?url=" + encodeURIComponent(BEST.p + rel + a.ios.iso);
+      var n = $("dlnote-" + a.id);
+      if (n) n.innerHTML = "已选最快通道：<b>" + BEST.name + "</b>。下载慢就刷新本页重选。";
+    };
+    setLinks();
+    window.__dl_pending = window.__dl_pending || [];
+    window.__dl_pending.push(setLinks);
+  });
+}
+
+/* ================= 下载通道测速 ================= */
+/* 通道按真机实测速度排序（2026-10-06 iPhone 实测：ghproxy.net 约300KB/s，GitHub直连卡0KB）
+   逐个探测，第一个活的直接用；GitHub直连"能握手不吐字节"，必须垫底。 */
+function pickMirror() {
+  var rel = S.site.releaseBase;
+  var probeApp = null;
+  for (var i = 0; i < S.apps.length; i++) if (S.apps[i].ios) { probeApp = S.apps[i]; break; }
+  if (!probeApp) return;
+  var target = rel + probeApp.ios.iso;
+  var MIRRORS = [
+    { name: "加速镜像 ghproxy.net", p: "https://ghproxy.net/" },
+    { name: "加速镜像 gh-proxy", p: "https://gh-proxy.com/" },
+    { name: "加速镜像 ghfast", p: "https://ghfast.top/" },
+    { name: "官方直链", p: "" }
+  ];
+  (function tryNext(i) {
+    if (i >= MIRRORS.length) return;
+    var m = MIRRORS[i];
+    probe(m.p + target, 6000).then(function (t) {
+      if (t >= 0) {
+        BEST = m;
+        (window.__dl_pending || []).forEach(function (fn) { fn(); });
+      } else {
+        tryNext(i + 1);
+      }
+    });
+  })(0);
+}
+
+/* ================= 启动 ================= */
+(async function boot() {
+  try {
+    S = await (await fetch("store.json", { cache: "no-store" })).json();
+  } catch (e) {
+    document.body.innerHTML = "<div style='padding:40px;text-align:center;color:#eaf0f7'>配置加载失败，请刷新重试</div>";
+    return;
+  }
+  var brand = S.site.brand || S.site.name;
+  $("brand-name").textContent = brand;
+  $("foot-brand").textContent = brand;
+  $("site-sub").textContent = S.site.sub;
+  document.title = brand;
+
+  if (IS_IOS) {
+    /* 快捷通道：手机 OTA 直装（同源标记文件在线才显示卡片） */
+    var ota = S.site.shellOta;
+    if (ota && ota.plist) {
+      fetch("ota-live.json", { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j || !j.live) return;
+          $("ota-card").style.display = "block";
+          $("ota-btn").href = "itms-services://?action=download-manifest&url=" + encodeURIComponent(ota.plist);
+          if (ota.backupPlist) {
+            var b1 = $("ota-b-btn"), b2 = $("ota-b-btn2");
+            var bh = "itms-services://?action=download-manifest&url=" + encodeURIComponent(ota.backupPlist);
+            if (b1) b1.href = bh;
+            if (b2) { b2.href = bh; b2.style.display = "inline-block"; }
+          }
+        })
+        .catch(function () {});
+    }
+  } else {
+    var pc = $("profile-card"); if (pc) pc.style.display = "none";
+    var sc = $("signer-card"); if (sc) sc.style.display = "none";
+    var dc = $("daily-card"); if (dc) dc.style.display = "none";
+  }
+
+  renderApps();
+  renderRenew();
+  pickMirror();
+})();
+</script>
+</body>
+</html>

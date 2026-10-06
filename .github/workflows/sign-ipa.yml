@@ -1,0 +1,122 @@
+# 自动签名流水线：有设备登记 → 自动签 → 自动上架 → 用户点一下就能装
+#
+# 触发：① Cloudflare Worker 收到新 UDID（repository_dispatch）② 手动点 ③ 每周一 04:00 重签防过期
+#
+# 需要 secrets（主人买号后给我，我配）：
+#   ASC_KEY_ID / ASC_ISSUER_ID / ASC_P8     —— App Store Connect API 密钥（登记设备 + 生成描述文件）
+#   DIST_P12 / DIST_P12_PASSWORD            —— Distribution 证书（base64 后的 .p12）
+#
+# 为什么不用 fastlane match：match 要一个存私钥的 git 仓库，我们只有公开中转仓，
+# 私钥不能进公开仓。所以证书走 secret 导入钥匙串，描述文件用 sigh 现生成。
+name: sign-ipa
+
+on:
+  repository_dispatch:
+    types: [device-added]
+  workflow_dispatch:
+    inputs:
+      udid:
+        description: '手动补登设备 UDID'
+        required: false
+  schedule:
+    - cron: '0 20 * * 1'
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 依赖
+        run: |
+          python3 -m pip install --quiet pyjwt cryptography requests
+          gem install fastlane --no-document || sudo gem install fastlane --no-document
+
+      - name: 准备 API 密钥文件（必须排在 sigh 之前，否则 fastlane 读不到）
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_P8: ${{ secrets.ASC_P8 }}
+        run: |
+          printf '%s' "$ASC_P8" > /tmp/asc.p8
+          python3 - <<PY
+          import json
+          json.dump({"key_id": "$ASC_KEY_ID", "issuer_id": "$ASC_ISSUER_ID",
+                     "key": open("/tmp/asc.p8").read(), "in_house": False},
+                    open("/tmp/asc.json", "w"))
+          PY
+
+      - name: 导入签名证书
+        env:
+          P12: ${{ secrets.DIST_P12 }}
+          P12_PW: ${{ secrets.DIST_P12_PASSWORD }}
+        run: |
+          if [ -z "$P12" ]; then echo "::error::缺少 DIST_P12，签名跑不了"; exit 1; fi
+          echo "$P12" | base64 --decode > /tmp/dist.p12
+          security create-keychain -p "" /tmp/sign.keychain
+          security default-keychain -s /tmp/sign.keychain
+          security unlock-keychain -p "" /tmp/sign.keychain
+          security import /tmp/dist.p12 -k /tmp/sign.keychain \
+            -P "$P12_PW" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -k "" /tmp/sign.keychain
+          security list-keychains -d user -s /tmp/sign.keychain
+
+      - name: 登记设备
+        if: github.event_name != 'schedule'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_P8: ${{ secrets.ASC_P8 }}
+        run: |
+          UDID="${{ github.event.client_payload.udid || inputs.udid }}"
+          [ -z "$UDID" ] && { echo "没有新设备，跳过登记"; exit 0; }
+          python3 scripts/sign/register_devices.py "$UDID"
+          python3 scripts/sign/register_devices.py --list
+
+      - name: 生成 Ad Hoc 描述文件
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_P8: ${{ secrets.ASC_P8 }}
+        run: |
+          mkdir -p profiles
+          for BID in tv.filmcollector.iso.xingmu tv.filmcollector.iso.xinwu; do
+            fastlane sigh --adhoc -a "$BID" \
+              --api_key_path /tmp/asc.json --output_path profiles --filename "$BID.mobileprovision" \
+              --force true || { echo "::error::$BID 描述文件生成失败"; exit 1; }
+          done
+        # sigh 要的是 json 格式的 api key，这里现生成
+        continue-on-error: false
+
+      - name: 下载裸包并签名
+        run: |
+          mkdir -p raw
+          gh release download latest -R "$GITHUB_REPOSITORY" -p "*.ipa" -D raw || \
+            echo "本地没有裸包，先用 artifact"
+          ls -la raw
+
+      - name: 重签两端
+        run: |
+          chmod +x scripts/sign/resign.sh
+          for N in XingmuISO XinwuISO; do
+            BID=tv.filmcollector.iso.$( [ "$N" = XingmuISO ] && echo xingmu || echo xinwu )
+            scripts/sign/resign.sh "raw/$N.ipa" "signed/$N.ipa" "$BID" "profiles/$BID.mobileprovision"
+          done
+          ls -la signed
+
+      - name: 上架签名包 + 更新清单
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload latest -R "$GITHUB_REPOSITORY" signed/*.ipa --clobber
+          STAMP=$(git rev-parse --short=12 HEAD)
+          python3 scripts/make_manifest.py signed/XingmuISO.ipa pages/xingmu.plist --title 星幕
+          python3 scripts/make_manifest.py signed/XinwuISO.ipa pages/xinwu.plist --title 心屋
+          python3 scripts/deploy_pages.py pages/xingmu.plist pages/xinwu.plist
+          # 一年后到期：签名证书 1 年，这里按到期日写死展示给用户看
+          python3 scripts/deploy_pages.py --signed 1 \
+            --until "$(date -v+1y +%Y-%m-%d 2>/dev/null || date -d '+1 year' +%Y-%m-%d)"
+          echo "signed published, stamp=$STAMP"

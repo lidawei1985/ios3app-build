@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  取 UDID 的描述文件。iOS 装它时会把设备号 POST 到下面的 URL，然后自己删掉。
+  用户感知：点一下 → 设置里弹「已下载描述文件」→ 去设置里安装 → 完。全程在手机上。
+
+  坑（必读）：
+  1) URL 必须是 HTTPS，且不能重定向 —— iOS 会直接失败。
+  2) 用 WORKER_URL 占位是为了不把域名写死；部署前用 make_udid_config.py 替换。
+  3) PayloadIdentifier / PayloadUUID 换成自己的，别抄我的，否则同一台设备会被认为是同一个文件。
+-->
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <dict>
+    <key>URL</key>
+    <string>__WORKER_URL__/udid</string>
+    <key>DeviceAttributes</key>
+    <array>
+      <string>UDID</string>
+      <string>IMEI</string>
+      <string>ICCID</string>
+      <string>VERSION</string>
+      <string>PRODUCT</string>
+      <string>DEVICE_NAME</string>
+    </array>
+  </dict>
+  <key>PayloadOrganization</key>
+  <string>星幕 · 心屋</string>
+  <key>PayloadDisplayName</key>
+  <string>获取设备授权</string>
+  <key>PayloadDescription</key>
+  <string>读取设备编号用于签名授权，安装完成后本描述文件会自动移除，不会读取任何个人数据。</string>
+  <key>PayloadIdentifier</key>
+  <string>com.ios3app.udid.fetch</string>
+  <key>PayloadUUID</key>
+  <string>__UUID__</string>
+  <key>PayloadType</key>
+  <string>Profile Service</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadRemovalDisallowed</key>
+  <false/>
+</dict>
+</plist>
