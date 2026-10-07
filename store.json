@@ -174,7 +174,7 @@
    "ios": {
     "bundle": "Xinwu-Bundle.ipa",
     "iso": "XinwuISO.ipa",
-    "scheme": "livecontainer",
+    "scheme": "livecontainer2",
     "sizeMB": 34
    },
    "android": null
