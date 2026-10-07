@@ -72,8 +72,18 @@ else:
         fails.append(f"[FAIL] 竞速候选应为 3 个镜像站，实际 {len(_urls)} 个：{_urls}")
     if "gh-proxy.com" not in _body or "ghproxy.net" not in _body or "ghfast.top" not in _body:
         fails.append("[FAIL] 竞速候选缺少三个镜像站之一（gh-proxy.com / ghproxy.net / ghfast.top）")
-if not re.search(r"return fastest \?\? rel", uc):
-    fails.append("[FAIL] 竞速全挂时未回退官方直链（应 `return fastest ?? rel`，永不返回 nil）")
+if not re.search(r"if let fastest \{ return fastest \}", uc):
+    fails.append("[FAIL] 竞速命中后未直接返回最快通道（应 `if let fastest { return fastest }`）")
+if not re.search(r"return rel\b", uc):
+    fails.append("[FAIL] 兜底阶梯末端未回官方直链（应 `return rel`，永不返回 nil）")
+
+# ②c 2026-10-07 新增：阿里云「版本信号 + 字节中转」接入判据
+check("版本信号有阿里云主源 infraBase",
+      uc, r'infraBase\s*=\s*"http://120\.26\.233\.93"', "UpdateChecker.swift")
+check("版本信号走 fetchVersionJSON（阿里云 /ver.json 主 → Pages update.json 备）",
+      uc, r"func fetchVersionJSON", "UpdateChecker.swift")
+check("兜底阶梯含阿里云字节中转 /dl/（三镜像全挂后启用）",
+      uc, r"infraBase\)/dl/", "UpdateChecker.swift")
 
 # ③ 两个 App 入口各自声明容器 scheme
 xm = load("Apps/Xingmu/XingmuApp.swift")
@@ -87,4 +97,4 @@ if fails:
     print("\n".join(fails))
     print(f"\nRESULT: FAIL（{len(fails)} 条）")
     sys.exit(1)
-print("RESULT: PASS — 更新链路机检 13 条全过（含 2026-10-07 新增：官方直链不得进竞速）")
+print("RESULT: PASS — 更新链路机检 14 条全过（含 2026-10-07：官方直链不得进竞速 + 阿里云主源接入）")

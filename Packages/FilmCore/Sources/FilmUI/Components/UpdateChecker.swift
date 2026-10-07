@@ -20,8 +20,14 @@ public final class UpdateChecker: ObservableObject {
     public static let shared = UpdateChecker()
 
     public static let repo = "lidawei1985/ios3app-build"
-    /// gh-pages 域名（Pages 部署根）
+    /// gh-pages 域名（Pages 部署根）——2026-10-07 起降为**备用**版本信号源
     public static let pagesBase = "https://lidawei1985.github.io/ios3app-build"
+    /// 阿里云基础设施（2026-10-07 上线）：**版本信号主源 + 字节中转兜底**。
+    /// 为什么能当主源：Pages 域名在国内时通时不通（本机实测 3.7s，页面偶发 000 超时），
+    /// 而 `/ver.json` 实测 0.17~0.94s 稳定。
+    /// ⛔ 铁律：阿里云**只搬管道不搬内容** —— 服务端纯流式转发、零落盘、无访问日志；
+    ///    分发包 / 点播源表 / OTA 安装页继续留 GitHub Pages，不上这台国内实名机器。
+    public static let infraBase = "http://120.26.233.93"
     /// 滚动 Release tag
     public static let releaseTag = "latest"
 
@@ -59,12 +65,9 @@ public final class UpdateChecker: ObservableObject {
         state = .checking
         defer { if case .checking = state { state = .idle } }
         do {
-            var req = URLRequest(url: URL(string: Self.pagesBase + "/update.json")!)
-            req.timeoutInterval = 10
-            req.cachePolicy = .reloadIgnoringLocalCacheData
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-                throw URLError(.badServerResponse)
+            // 版本信号：阿里云主源 → GitHub Pages 备用（2026-10-07）。两个都挂才算检查失败。
+            guard let data = await Self.fetchVersionJSON() else {
+                throw URLError(.cannotConnectToHost)
             }
             let j = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             guard let stamp = j?["stamp"] as? String, !stamp.isEmpty else {
@@ -118,7 +121,8 @@ public final class UpdateChecker: ObservableObject {
     }
 
     /// 镜像竞速：与网页端 `scripts/pages/index.html` 同一套通道。
-    /// Range 1KB 探测、6 秒超时；取最快可达者，全挂则回官方直链（永不返回 nil）。
+    /// Range 1KB 探测、6 秒超时；取最快可达者。
+    /// 全挂时走**兜底阶梯**：阿里云字节中转 → 官方直链（永不返回 nil）。
     ///
     /// ⚠️ 2026-10-07 修 P0「赢了竞速然后卡死」：**官方直链已从竞速候选里剔除**，只作兜底。
     ///
@@ -128,8 +132,9 @@ public final class UpdateChecker: ObservableObject {
     /// 真实吞吐却只有 **213~466 B/s**：45 秒只吐 131KB，34MB 得跑 3 个多小时 ⇒ 必然失败。
     /// 同一个 URL 经三个镜像站，实测吞吐 63~470 KB/s（34MB 约 1.2~9 分钟），差三个数量级。
     ///
-    /// 修法（最小改动，与网页端 `pickMirror()` 同口径：官方直链垫底、不参与选优）：
-    /// 竞速只在**三个镜像**之间进行；官方直链仅当镜像全挂时兜底返回（永不返回 nil）。
+    /// 修法（与网页端 `pickMirror()` 同口径：官方直链垫底、不参与选优）：
+    /// 竞速只在**三个镜像**之间进行；全挂时按**兜底阶梯**降级（阿里云中转 → 官方直链），
+    /// 保证永不返回 nil。
     static func fastestDirectURL(asset: String) async -> URL {
         let rel = URL(string: "https://github.com/\(repo)/releases/download/\(releaseTag)/\(asset)")!
         // ⛔ 这里**绝不能**再放 ""（官方直链）：首字节快、吞吐极慢，会把竞速带沟里。
@@ -142,20 +147,8 @@ public final class UpdateChecker: ObservableObject {
             for (i, p) in mirrors.enumerated() {
                 group.addTask {
                     guard let u = URL(string: p + rel.absoluteString) else { return (i, nil, 0) }
-                    var req = URLRequest(url: u)
-                    req.timeoutInterval = 6
-                    req.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
-                    let t0 = Date()
-                    do {
-                        let (_, resp) = try await URLSession.shared.data(for: req)
-                        guard let http = resp as? HTTPURLResponse,
-                              http.statusCode == 206 || (200...299).contains(http.statusCode) else {
-                            return (i, nil, 0)
-                        }
-                        return (i, u, Date().timeIntervalSince(t0))
-                    } catch {
-                        return (i, nil, 0)
-                    }
+                    guard let secs = await Self.probe(u) else { return (i, nil, 0) }
+                    return (i, u, secs)
                 }
             }
             var best: (Int, URL, Double)? = nil
@@ -164,6 +157,55 @@ public final class UpdateChecker: ObservableObject {
             }
             return best?.1
         }
-        return fastest ?? rel
+        if let fastest { return fastest }
+        // ② 三镜像全挂 → 阿里云字节中转兜底。实测 54 KB/s：比镜像慢 16 倍，所以**不进竞速**
+        //    （进去只会拖后腿），但它比官方直链快约 130 倍 —— 走投无路时值这一跳。
+        if let infra = URL(string: "\(Self.infraBase)/dl/\(asset)"), await Self.probe(infra) != nil {
+            return infra
+        }
+        // ③ 最后才回官方直链：慢到基本等于失败，但**永不返回 nil**（调用方不必处理空值）。
+        return rel
+    }
+
+    /// 取版本信号：**阿里云 `/ver.json` 主源 → GitHub Pages `update.json` 备用**（2026-10-07）。
+    /// 两级都失败才返回 nil（silent 模式下调用方依旧静默，不打扰任何人）。
+    static func fetchVersionJSON() async -> Data? {
+        let sources: [(String, Double)] = [
+            (infraBase + "/ver.json", 6),        // 国内稳定，给短超时（挂了就快速让位）
+            (pagesBase + "/update.json", 10),    // 备用：境外、时通时不通，给宽一点
+        ]
+        for (url, timeout) in sources {
+            guard let u = URL(string: url) else { continue }
+            var req = URLRequest(url: u)
+            req.timeoutInterval = timeout
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { continue }
+                return data
+            } catch {
+                continue
+            }
+        }
+        return nil
+    }
+
+    /// Range 1KB 探活：可达返回耗时（秒），不可达/非 2xx 返回 nil。
+    /// 竞速与兜底阶梯共用同一套判据（2026-10-07 抽出，避免两处判据各自漂移）。
+    /// `nonisolated`：本类带 `@MainActor`，而竞速用的是 `@Sendable` 的 task group 闭包
+    /// （非隔离上下文）——不标的话这里过不了隔离检查。纯网络 IO，不碰任何隔离状态。
+    nonisolated static func probe(_ url: URL) async -> Double? {
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 6
+        req.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+        let t0 = Date()
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse,
+                  http.statusCode == 206 || (200...299).contains(http.statusCode) else { return nil }
+            return Date().timeIntervalSince(t0)
+        } catch {
+            return nil
+        }
     }
 }

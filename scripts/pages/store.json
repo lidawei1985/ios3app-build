@@ -1,194 +1,198 @@
 {
-  "_说明": "全站 App 清单。加新 App：在 apps 里加一条即可，页面自动出卡片。ios/android 为 null 表示该端暂无包（前端显示开发中）。coming=true 显示「即将上线」。",
-  "site": {
-    "name": "伟哥智能工作站",
-    "brand": "伟哥智能工作站",
-    "sub": "装上就自动签名 · 不用电脑 · 设一次管一年",
-    "pagesBase": "https://lidawei1985.github.io/ios3app-build/",
-    "releaseBase": "https://github.com/lidawei1985/ios3app-build/releases/download/latest/",
-    "shellOta": {
-      "plist": "https://lidawei1985.github.io/ios3app-build/shell.xml",
-      "backupPlist": "https://lidawei1985.github.io/ios3app-build/shell-b.xml",
-      "bestSource": "gh-proxy.com",
-      "bestUrl": "https://gh-proxy.com/https://github.com/lidawei1985/ios3app-build/releases/download/latest/LiveContainer-signed.ipa",
-      "speedKbps": 11900,
-      "rank": [
-        {
-          "name": "gh-proxy.com",
-          "speed_kbps": 11900,
-          "completed": true
-        },
-        {
-          "name": "ghproxy.net",
-          "speed_kbps": 6232,
-          "completed": true
-        },
-        {
-          "name": "release-direct",
-          "speed_kbps": 138,
-          "completed": false
-        },
-        {
-          "name": "pages-direct",
-          "speed_kbps": 73,
-          "completed": false
-        },
-        {
-          "name": "ghfast.top",
-          "speed_kbps": 33,
-          "completed": false
-        }
-      ],
-      "updatedAt": "2026-10-06 04:45:00"
+ "_说明": "全站 App 清单。加新 App：在 apps 里加一条即可，页面自动出卡片。ios/android 为 null 表示该端暂无包（前端显示开发中）。coming=true 显示「即将上线」。",
+ "site": {
+  "name": "伟哥智能工作站",
+  "brand": "伟哥智能工作站",
+  "sub": "装上就自动签名 · 不用电脑 · 设一次管一年",
+  "pagesBase": "https://lidawei1985.github.io/ios3app-build/",
+  "releaseBase": "https://github.com/lidawei1985/ios3app-build/releases/download/latest/",
+  "shellOta": {
+   "plist": "https://lidawei1985.github.io/ios3app-build/shell.xml",
+   "backupPlist": "https://lidawei1985.github.io/ios3app-build/shell-b.xml",
+   "bestSource": "gh-proxy.com",
+   "bestUrl": "https://gh-proxy.com/https://github.com/lidawei1985/ios3app-build/releases/download/latest/LiveContainer-signed.ipa",
+   "speedKbps": 11900,
+   "rank": [
+    {
+     "name": "gh-proxy.com",
+     "speed_kbps": 11900,
+     "completed": true
+    },
+    {
+     "name": "ghproxy.net",
+     "speed_kbps": 6232,
+     "completed": true
+    },
+    {
+     "name": "release-direct",
+     "speed_kbps": 138,
+     "completed": false
+    },
+    {
+     "name": "pages-direct",
+     "speed_kbps": 73,
+     "completed": false
+    },
+    {
+     "name": "ghfast.top",
+     "speed_kbps": 33,
+     "completed": false
     }
+   ],
+   "updatedAt": "2026-10-06 04:45:00"
+  }
+ },
+ "trust": {
+  "title": "为什么要你「信任」一下？",
+  "body": "苹果规定：所有非商店 App 必须由证书签名才能装进 iPhone。第一次装完，系统会让你手动「信任」一次证书——这是苹果的规矩，绕不过去，但只做一次。"
+ },
+ "renew": {
+  "title": "自动续签：不用另外装 App",
+  "badge": "已内置",
+  "body": "续签引擎（SideStore）已经打包在安装文件里了，不用再装第二个 App。你要做的只有一次：打开 App → 用你的 Apple ID 登录一次（免费号就行）→ 允许它装一个 VPN 描述文件。之后就交给它自己，每 7 天自动续，不用电脑、不用回本页。",
+  "points": [
+   {
+    "t": "只设一次",
+    "d": "登录 Apple ID 一次，之后全自动"
+   },
+   {
+    "t": "7 天自动续",
+    "d": "后台静默续签，不用你管"
+   },
+   {
+    "t": "不用电脑",
+    "d": "手机 Safari 上就能走完全程"
+   },
+   {
+    "t": "收藏不丢",
+    "d": "万一失效，回本页重装即可，数据保留"
+   }
+  ],
+  "why_appleid": "为什么非要登录 Apple ID？因为苹果只发免费证书给 Apple ID 名下，这是唯一免费且能自动续的路子。我们不用你的账号做任何事，它只是本机签名通道。"
+ },
+ "signer": {
+  "name": "轻松签",
+  "why": "苹果规定：非商店 App 必须经证书签名才能装。这个签名器自带免费证书，装一次，本站所有 App 通用。",
+  "profile": {
+   "title": "安装「防掉签」配置文件",
+   "url": "https://lidawei1985.github.io/ios3app-build/DNS.mobileconfig",
+   "backup": "https://youquzhushou.cn/DNS.mobileconfig",
+   "note": "不装它，签名器会报「无法验证其完整性」。它只拦苹果的证书吊销联网检查（ocsp/crl.apple.com 等 27 个域名），内容已逐行审计，不碰其他数据。"
   },
-  "trust": {
-    "title": "为什么要你「信任」一下？",
-    "body": "苹果规定：所有非商店 App 必须由证书签名才能装进 iPhone。第一次装完，系统会让你手动「信任」一次证书——这是苹果的规矩，绕不过去，但只做一次。"
-  },
-  "renew": {
-    "title": "自动续签：不用另外装 App",
-    "badge": "已内置",
-    "body": "续签引擎（SideStore）已经打包在安装文件里了，不用再装第二个 App。你要做的只有一次：打开 App → 用你的 Apple ID 登录一次（免费号就行）→ 允许它装一个 VPN 描述文件。之后就交给它自己，每 7 天自动续，不用电脑、不用回本页。",
-    "points": [
-      {
-        "t": "只设一次",
-        "d": "登录 Apple ID 一次，之后全自动"
-      },
-      {
-        "t": "7 天自动续",
-        "d": "后台静默续签，不用你管"
-      },
-      {
-        "t": "不用电脑",
-        "d": "手机 Safari 上就能走完全程"
-      },
-      {
-        "t": "收藏不丢",
-        "d": "万一失效，回本页重装即可，数据保留"
-      }
-    ],
-    "why_appleid": "为什么非要登录 Apple ID？因为苹果只发免费证书给 Apple ID 名下，这是唯一免费且能自动续的路子。我们不用你的账号做任何事，它只是本机签名通道。"
-  },
-  "signer": {
-    "name": "轻松签",
-    "why": "苹果规定：非商店 App 必须经证书签名才能装。这个签名器自带免费证书，装一次，本站所有 App 通用。",
-    "profile": {
-      "title": "安装「防掉签」配置文件",
-      "url": "https://lidawei1985.github.io/ios3app-build/DNS.mobileconfig",
-      "backup": "https://youquzhushou.cn/DNS.mobileconfig",
-      "note": "不装它，签名器会报「无法验证其完整性」。它只拦苹果的证书吊销联网检查（ocsp/crl.apple.com 等 27 个域名），内容已逐行审计，不碰其他数据。"
-    },
-    "slots": [
-      {
-        "n": 1,
-        "label": "一键安装签名器（点位 1）",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/1.plist"
-      },
-      {
-        "n": 2,
-        "label": "备用点位 2",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/2.plist"
-      },
-      {
-        "n": 3,
-        "label": "备用点位 3",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/3.plist"
-      },
-      {
-        "n": 4,
-        "label": "备用点位 4",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/4.plist"
-      },
-      {
-        "n": 5,
-        "label": "备用点位 5",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/5.plist"
-      },
-      {
-        "n": 6,
-        "label": "备用点位 6",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/6.plist"
-      },
-      {
-        "n": 7,
-        "label": "备用点位 7",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/7.plist"
-      },
-      {
-        "n": 8,
-        "label": "备用点位 8",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/8.plist"
-      },
-      {
-        "n": 9,
-        "label": "备用点位 9",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/9.plist"
-      },
-      {
-        "n": 10,
-        "label": "备用点位 10",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/10.plist"
-      },
-      {
-        "n": 11,
-        "label": "备用点位 11",
-        "plist": "https://qm.esgin.cn/qsq/neizhi/11.plist"
-      }
-    ],
-    "integrityNote": "提示「无法验证其完整性」＝该点位证书被苹果吊销了。先确认第 0 步配置文件已装好，再换下一个点位——11 个点位是 11 本独立证书，总有能用的。",
-    "alts": [
-      {
-        "name": "EZsign（备用签名器，同样需先装第 0 步）",
-        "url": "https://int.youquzhushou.cn/"
-      },
-      {
-        "name": "签牛体验版（备用签名器）",
-        "url": "https://iosqn.com/tiyan/"
-      }
-    ]
-  },
-  "apps": [
-    {
-      "id": "xingmu",
-      "name": "星幕",
-      "subtitle": "海量影视 · 免费看",
-      "desc": "电影 / 剧集 / 直播聚合。装好即用；内置自动续签组件，登录一次 Apple ID 后每 7 天自动续，不掉签。",
-      "icon": "icon_xingmu_512.png",
-      "tint": "#e0353f",
-      "ios": {
-        "bundle": "Xingmu-Bundle.ipa",
-        "iso": "XingmuISO.ipa",
-        "scheme": "livecontainer",
-        "sizeMB": 34
-      },
-      "android": null
-    },
-    {
-      "id": "xinwu",
-      "name": "心屋",
-      "subtitle": "儿童专区 · 放心看",
-      "desc": "儿童模式：过滤后的片库，家长放心。装好即用；内置自动续签组件。",
-      "icon": "icon_xinwu_512.png",
-      "tint": "#4c8dff",
-      "ios": {
-        "bundle": "Xinwu-Bundle.ipa",
-        "iso": "XinwuISO.ipa",
-        "scheme": "livecontainer2",
-        "sizeMB": 34
-      },
-      "android": null
-    },
-    {
-      "id": "music",
-      "name": "音乐 App",
-      "subtitle": "13 万曲库 · 免费听",
-      "desc": "正在开发，上线后出现在这里，一键安装。",
-      "icon": "",
-      "tint": "#7c5cff",
-      "coming": true,
-      "ios": null,
-      "android": null
-    }
+  "slots": [
+   {
+    "n": 1,
+    "label": "一键安装签名器（点位 1）",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/1.plist"
+   },
+   {
+    "n": 2,
+    "label": "备用点位 2",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/2.plist"
+   },
+   {
+    "n": 3,
+    "label": "备用点位 3",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/3.plist"
+   },
+   {
+    "n": 4,
+    "label": "备用点位 4",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/4.plist"
+   },
+   {
+    "n": 5,
+    "label": "备用点位 5",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/5.plist"
+   },
+   {
+    "n": 6,
+    "label": "备用点位 6",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/6.plist"
+   },
+   {
+    "n": 7,
+    "label": "备用点位 7",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/7.plist"
+   },
+   {
+    "n": 8,
+    "label": "备用点位 8",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/8.plist"
+   },
+   {
+    "n": 9,
+    "label": "备用点位 9",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/9.plist"
+   },
+   {
+    "n": 10,
+    "label": "备用点位 10",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/10.plist"
+   },
+   {
+    "n": 11,
+    "label": "备用点位 11",
+    "plist": "https://qm.esgin.cn/qsq/neizhi/11.plist"
+   }
+  ],
+  "integrityNote": "提示「无法验证其完整性」＝该点位证书被苹果吊销了。先确认第 0 步配置文件已装好，再换下一个点位——11 个点位是 11 本独立证书，总有能用的。",
+  "alts": [
+   {
+    "name": "EZsign（备用签名器，同样需先装第 0 步）",
+    "url": "https://int.youquzhushou.cn/"
+   },
+   {
+    "name": "签牛体验版（备用签名器）",
+    "url": "https://iosqn.com/tiyan/"
+   }
   ]
+ },
+ "apps": [
+  {
+   "id": "xingmu",
+   "name": "星幕",
+   "subtitle": "海量影视 · 免费看",
+   "desc": "电影 / 剧集 / 直播聚合。装好即用；内置自动续签组件，登录一次 Apple ID 后每 7 天自动续，不掉签。",
+   "icon": "icon_xingmu_512.png",
+   "tint": "#e0353f",
+   "ios": {
+    "bundle": "Xingmu-Bundle.ipa",
+    "iso": "XingmuISO.ipa",
+    "scheme": "livecontainer",
+    "sizeMB": 34
+   },
+   "android": null
+  },
+  {
+   "id": "xinwu",
+   "name": "心屋",
+   "subtitle": "儿童专区 · 放心看",
+   "desc": "儿童模式：过滤后的片库，家长放心。装好即用；内置自动续签组件。",
+   "icon": "icon_xinwu_512.png",
+   "tint": "#4c8dff",
+   "ios": {
+    "bundle": "Xinwu-Bundle.ipa",
+    "iso": "XinwuISO.ipa",
+    "scheme": "livecontainer2",
+    "sizeMB": 34
+   },
+   "android": null
+  },
+  {
+   "id": "music",
+   "name": "大伟歌",
+   "subtitle": "13 万曲库 · 免费听",
+   "desc": "壳内导入即用，更新走壳自动。",
+   "icon": "",
+   "tint": "#7c5cff",
+   "coming": false,
+   "ios": {
+    "iso": "DWGMusic.ipa",
+    "scheme": "livecontainer",
+    "sizeMB": 4
+   },
+   "android": null
+  }
+ ]
 }
