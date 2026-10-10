@@ -9,9 +9,11 @@ import FilmCore
 /// - CI 每次 push 自动发**滚动 Release**（固定 tag `latest`，明文 IPA）+ 部署 gh-pages；
 /// - App 启动/设置页拉 `https://<pages-host>/update.json`（静态文件，无 API 限流）；
 /// - JSON 里的 `stamp` 与本机构建指纹（`FeedSecret.buildStamp`）不同 → 只**记状态**（2026-10-06 起零弹窗）；
-/// - 用户想看/想更时进设置页「检查更新」行 → 点一下走 LiveContainer 官方 URL scheme：
-///   `livecontainer://install?url=<IPA直链>` → LC 自动下载导入签名，新版替换旧版、数据不丢；
-/// - 本机没装 LC → fallback 打开 Pages 安装指南页（下载 IPA 自签 / TrollStore）。
+/// - **启动即自动升级（2026-10-10 主人钦定）**：启动静默检查 → 检测到新版本即
+///   **自动**走 LiveContainer 官方 URL scheme `livecontainer://install?url=<IPA直链>`
+///   → LC 自动下载导入签名，新版替换旧版、数据不丢；用户在本 App 内**零点击**。
+///   （iOS 硬约束：LC 会显下载/安装进度，这一步系统不允许隐藏——这是能做到的"最接近无感"。）
+/// - 设置页「检查更新」行仍保留手动入口；本机没装 LC → 回退打开 Pages 安装指南页。
 ///
 /// 静默原则（2026-10-06 强化到「彻底无感」）：**任何时候都不弹窗**；
 /// 本地是未注入 stamp 的调试包（`__BUILD_STAMP__`）或网络失败 → 也永不打扰。
@@ -40,6 +42,14 @@ public final class UpdateChecker: ObservableObject {
 
     @Published public private(set) var state: State = .idle
     @Published public private(set) var releaseNote = ""
+    /// 启动即自动升级开关（默认 **开**，2026-10-10 主人钦定）。
+    /// 关掉后回到旧行为：启动只静默检查，用户自己去设置页点「检查更新」。
+    @Published public var autoUpdateEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoUpdateEnabled, forKey: Self.autoUpdateKey) }
+    }
+    private static let autoUpdateKey = "filmcore.autoUpdateOnLaunch"
+    /// 每次进程内只自动触发一次（冷启动跳一次 LC 即可，避免同一会话反复跳）。
+    private var autoInstallTriggered = false
     // 2026-10-06 主人钦定「更新的那个提示彻底取消」→ 全流程零弹窗：
     // 启动静默检查只记 state（设置页那行仍会变成「新构建 xxx · 点此更新」），不再打扰任何人。
 
@@ -51,7 +61,10 @@ public final class UpdateChecker: ObservableObject {
     /// 同口径 —— 两个容器抢同一个 scheme 会把片源装错容器）。
     public var lcScheme: String = "livecontainer"
 
-    private init() {}
+    private init() {
+        // 默认开；若用户曾手动关过，则沿用其选择。
+        autoUpdateEnabled = (UserDefaults.standard.object(forKey: Self.autoUpdateKey) as? Bool) ?? true
+    }
 
     public var localStamp: String { FeedSecret.buildStamp }
 
@@ -93,6 +106,30 @@ public final class UpdateChecker: ObservableObject {
         }
     }
 
+    /// 启动即自动升级（2026-10-10 主人钦定「能不能实现静默无感更新」→ 采用"启动即自动升级"）。
+    ///
+    /// 流程：静默检查 → 检测到新版本 + 开关开启 + 本机装了 LiveContainer →
+    /// **自动唤起安装，用户在本 App 内零操作**（LC 会显下载/安装进度，这是 iOS 允许的极限）。
+    /// 检查失败 / 已是最新 / 开关关闭 / 没装 LC → 一律静默什么都不做，绝不打扰。
+    public func autoUpdateOnLaunch() async {
+        await check(silent: true)
+        guard case .available = state else { return }        // 已最新 or 检查失败 → 不动作
+        guard autoUpdateEnabled, !autoInstallTriggered else { return }
+        autoInstallTriggered = true                          // 同一会话只跳一次
+        guard canOpenInstaller() else {
+            // 没装 LC：自动跳只会把用户甩到网页，帮不上忙 → 静默不动（等用户自己处理）
+            return
+        }
+        installLatest()
+    }
+
+    /// 本机是否装了可用安装器（LiveContainer 容器 scheme 能被打开）。
+    /// 依赖 Info.plist 的 LSApplicationQueriesSchemes 已声明 livecontainer / livecontainer2。
+    private func canOpenInstaller() -> Bool {
+        guard let u = URL(string: "\(lcScheme)://") else { return false }
+        return UIApplication.shared.canOpenURL(u)
+    }
+
     /// 一键更新（2026-10-04 重修「LC不可用」，三处病根一次治）：
     /// ① Info.plist 未声明 LSApplicationQueriesSchemes → canOpenURL 恒 false，
     ///    永远掉进 GitHub 网页兜底（国内手机网络打不开）＝ 用户看到的「LC不可用」；
@@ -121,7 +158,7 @@ public final class UpdateChecker: ObservableObject {
     }
 
     /// 镜像竞速：与网页端 `scripts/pages/index.html` 同一套通道。
-    /// Range 1KB 探测、6 秒超时；取最快可达者。
+    /// 判据见下方 2026-10-10 说明（现为 **Range 512KB 真实吞吐**，取最快者）。
     /// 全挂时走**兜底阶梯**：阿里云字节中转 → 官方直链（永不返回 nil）。
     ///
     /// ⚠️ 2026-10-07 修 P0「赢了竞速然后卡死」：**官方直链已从竞速候选里剔除**，只作兜底。
@@ -135,6 +172,12 @@ public final class UpdateChecker: ObservableObject {
     /// 修法（与网页端 `pickMirror()` 同口径：官方直链垫底、不参与选优）：
     /// 竞速只在**三个镜像**之间进行；全挂时按**兜底阶梯**降级（阿里云中转 → 官方直链），
     /// 保证永不返回 nil。
+    ///
+    /// ⚠️ 2026-10-10 再修判据（主人问"镜像加速"）：旧判据是 **Range 1KB 首字节耗时**——
+    /// 会被"首字节快、之后掐速"的通道骗（官方直链就是这么混进来的）。改为
+    /// **Range 512KB 真实吞吐**计时，选出来的才是真快的那条。
+    /// 本机实测（512KB）：gh-proxy.com 298KB/s ≫ ghproxy.net 57 ≫ ghfast.top 35
+    /// ≫ 阿里云 /dl 21 ≫ 官方直链≈0。其余候选镜像（ghproxy.cc / llkk / moeyy / ghp.ci 等）本次全挂，不入池。
     static func fastestDirectURL(asset: String) async -> URL {
         let rel = URL(string: "https://github.com/\(repo)/releases/download/\(releaseTag)/\(asset)")!
         // ⛔ 这里**绝不能**再放 ""（官方直链）：首字节快、吞吐极慢，会把竞速带沟里。
@@ -143,19 +186,20 @@ public final class UpdateChecker: ObservableObject {
             "https://ghproxy.net/",
             "https://ghfast.top/",
         ]
-        let fastest = await withTaskGroup(of: (Int, URL?, Double).self) { group in
-            for (i, p) in mirrors.enumerated() {
+        // 竞速判据 = 真实吞吐（KB/s），取最大者。
+        let fastest = await withTaskGroup(of: (URL?, Double).self) { group in
+            for p in mirrors {
                 group.addTask {
-                    guard let u = URL(string: p + rel.absoluteString) else { return (i, nil, 0) }
-                    guard let secs = await Self.probe(u) else { return (i, nil, 0) }
-                    return (i, u, secs)
+                    guard let u = URL(string: p + rel.absoluteString) else { return (nil, 0) }
+                    guard let kbps = await Self.probeThroughput(u) else { return (nil, 0) }
+                    return (u, kbps)
                 }
             }
-            var best: (Int, URL, Double)? = nil
+            var best: (URL, Double)? = nil
             for await r in group {
-                if let u = r.1, best == nil || r.2 < best!.2 { best = (r.0, u, r.2) }
+                if let u = r.0, best == nil || r.1 > best!.1 { best = (u, r.1) }
             }
-            return best?.1
+            return best?.0
         }
         if let fastest { return fastest }
         // ② 三镜像全挂 → 阿里云字节中转兜底。实测 54 KB/s：比镜像慢 16 倍，所以**不进竞速**
@@ -204,6 +248,28 @@ public final class UpdateChecker: ObservableObject {
             guard let http = resp as? HTTPURLResponse,
                   http.statusCode == 206 || (200...299).contains(http.statusCode) else { return nil }
             return Date().timeIntervalSince(t0)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Range 512KB **真实吞吐**探测（2026-10-10 新增，替代"首字节耗时"判据）。
+    /// 返回 KB/s；不可达 / 非 2xx / 空体 → nil。
+    /// 为什么不用更小的探测：太小会被"首字节快"主导；512KB 已足够暴露"之后掐速"的通道，
+    /// 又不会让启动更新多等太久（与三镜像并行，最坏 ~8s 出结果）。
+    nonisolated static func probeThroughput(_ url: URL) async -> Double? {
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 8
+        req.setValue("bytes=0-524287", forHTTPHeaderField: "Range")   // 512KB
+        let t0 = Date()
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse,
+                  http.statusCode == 206 || (200...299).contains(http.statusCode),
+                  !data.isEmpty else { return nil }
+            let dt = Date().timeIntervalSince(t0)
+            guard dt > 0 else { return nil }
+            return Double(data.count) / dt / 1024.0                   // KB/s
         } catch {
             return nil
         }

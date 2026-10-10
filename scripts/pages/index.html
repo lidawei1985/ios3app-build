@@ -179,14 +179,22 @@
     </div>
   </div>
 
-  <h1>装上就<span class="hl">自动签名</span><br>不用电脑，不用你管</h1>
-  <p class="lead" id="site-sub">手机 Safari 直接装 · 全程免费 · 设一次，之后 7 天自己续，不掉签。</p>
+  <h1>手机点两下<span class="hl">就装好</span><br>不用签名，更新点一下换新版</h1>
+  <p class="lead" id="site-sub">手机 Safari 点两下就装好 · 全程免费 · 更新点一下就换新版，收藏和设置不丢</p>
 
   <div class="chips">
-    <span class="chip hot">✅ 内置<b>自动续签</b>，不用另装 App</span>
-    <span class="chip">💻 不用电脑</span>
+    <span class="chip hot">✅ 装 App 不用你签名 · 不用登账号</span>
+    <span class="chip">💻 日常不用电脑</span>
+    <span class="chip">🔄 更新点一下就换新版</span>
     <span class="chip">🆓 全程免费</span>
     <span class="chip">🚫 不进苹果商店</span>
+  </div>
+
+  <!-- 2026-10-07 加：把「做不到的事」写在最前面，不玩虚的 -->
+  <div class="card" style="border-color:rgba(255,201,60,.55);background:rgba(255,201,60,.07);padding:13px 15px;margin-top:12px">
+    <div style="font-size:14px;line-height:1.7">⏳ <b>先把话说在前面</b>：这个壳用的是苹果<b>免费证书</b>，<b>有效期只有 7 天</b>，到期得再签一次。
+    <b>「设一次管一年」做不到</b>——免费证书没有一年的。当前这张：<b>2026-10-06 签发，2026-10-13 05:33 到期</b>。
+    怎么续、能不能自动续，见下面「关于续签」那一节，写得清清楚楚。</div>
   </div>
 
   <div class="cta">
@@ -198,7 +206,7 @@
     <div class="step">
       <div class="n" style="background:linear-gradient(140deg,#e6a817,#ffc93c);box-shadow:0 4px 12px rgba(255,201,60,.3)">⚡</div>
       <div style="flex:1">
-        <div class="t">第一次装？就点这一个按钮<span class="tag" style="background:rgba(255,201,60,.14);color:#ffd479">不用电脑 · 约2分钟</span></div>
+        <div class="t">第一次装？就点这一个按钮<span class="tag" style="background:rgba(255,201,60,.14);color:#ffd479">已登记的手机：免电脑 · 约2分钟</span></div>
         <div class="d" style="margin-top:6px">点 <b>一键安装</b>，然后只做两个动作：<br>
           ① 弹「在“iTunes”中打开？」→ 点<b>【打开】</b>（别点取消）<br>
           ② 弹「想要安装“伟哥工作站”」→ 点<b>【安装】</b>，等进度走完就装好了。</div>
@@ -225,7 +233,7 @@
         <div class="n" style="background:linear-gradient(140deg,#2fae62,#4cd97e)">2</div>
         <div style="flex:1">
           <div class="t">这是别人的手机 / 提示装失败？用自己的 Apple ID 签一次<span class="tag">免费 · 只做这一次</span></div>
-          <div class="d">本站安装包用免费签名，目前只登记了<b>伟哥的 iPhone</b>，别的手机点「一键安装」苹果会拒绝（不是手机坏了）。<br>新手机想装：<b>数据线把手机连一次电脑</b>，照下面四步做，做完这台手机以后就是免电脑的：</div>
+          <div class="d">本站的<b>壳</b>是主人用自己的免费证书签好名的，<b>只登记了 2 台设备</b>（主人自己的两台）。别的手机点「一键安装」，苹果会在校验环节拒绝（不是手机坏了）。<br>新手机想装：<b>数据线把手机连一次电脑</b>，照下面四步做，做完这台手机以后就是免电脑的：</div>
           <div class="note">
             <b>① 电脑装 Sideloadly</b>：<a href="https://sideloadly.io/" target="_blank" rel="noopener" style="color:#7de8a5">官网下载</a>（提示缺驱动就装微软商店的 iTunes，装完重启电脑）<br>
             <b>② 手机连电脑</b>（手机上点「信任」），电脑打开这个地址下载安装包：<br><a href="https://gh-proxy.com/https://github.com/lidawei1985/ios3app-build/releases/download/latest/LiveContainer-signed.ipa" style="color:#7de8a5;word-break:break-all">下载 伟哥工作站.ipa</a><br>
@@ -249,18 +257,48 @@
   <h2><span class="bar"></span>应用列表</h2>
   <div id="apps"></div>
 
+  <!-- ===== 怎么更新（2026-10-07 新增：把真实更新路径写清楚，不玩虚的） ===== -->
+  <div class="card" style="border-color:rgba(49,196,141,.55);background:rgba(49,196,141,.05);margin-top:14px">
+    <div class="aname" style="font-size:15px">🔄 以后怎么更新？（三条路，按推荐顺序）</div>
+    <div class="step" style="margin-top:13px">
+      <div class="n" style="background:linear-gradient(140deg,#2fae62,#4cd97e)">1</div>
+      <div style="flex:1">
+        <div class="t">在 App 里点一下<span class="tag">推荐 · 最省事</span></div>
+        <div class="d">打开星幕 / 心屋 → <b>设置 → 「检查更新」</b> → 显示「新构建 xxxx · 点此更新」就点它。
+        壳（LiveContainer）会自动下载并把新版换上，<b>收藏、观看记录、设置都不丢</b>，不用电脑、不用重新导入片源。<br>
+        （判断新旧靠的是<b>构建指纹</b>，每次出包都不一样，所以认得出新版——这就是「更新点一下就换新版」的真实做法。）</div>
+      </div>
+    </div>
+    <div class="step" style="margin-top:14px">
+      <div class="n" style="background:linear-gradient(140deg,#2b6cd4,#3f86ff)">2</div>
+      <div style="flex:1">
+        <div class="t">回本页点「安装到手机」<span class="tag">最稳 · 一定管用</span></div>
+        <div class="d">本页上面的按钮永远指向<b>最新构建</b>。手机上打开本页 → 点对应卡片的「安装到手机」→ 装的是同一个包，覆盖旧版，数据同样保留。哪条路都行，这条最不会出岔子。</div>
+      </div>
+    </div>
+    <div class="step" style="margin-top:14px">
+      <div class="n" style="background:linear-gradient(140deg,#e6a817,#ffc93c)">3</div>
+      <div style="flex:1">
+        <div class="t">壳里「源」页点安装<span class="tag">便捷入口 · 会装不一定会提示</span></div>
+        <div class="d">如果按下面「一键添加更新源」设过，打开壳 → 底部「源」→ 点 App 旁的安装也能装上最新版。<b>但说清楚：源页不一定会主动提示「有新版本」</b>——我们的包版本号是固定的（1.0），源页没法靠它判断先后。<b>没看到提示就直接用第 1 或第 2 条</b>，别干等。</div>
+      </div>
+    </div>
+    <div class="note">💾 <b>想把 .ipa 存到电脑？</b>用电脑打开本页，卡片上的按钮会变成「下载 XX.ipa」，点一下就是最新包；也可以在电脑上直接拿 Release 直链。<br>
+    ⚠️ <b>只有一次要注意</b>：如果你手机上现在还是 <b>v78 或更早</b>，<b>第一次更新请走第 2 条（回本页点安装）</b>——旧版的自动选路有缺陷，约 1/4 概率会卡住不动。这次换成新版（v79）以后，第 1 条就随便用了。</div>
+  </div>
+
   <div class="card" id="addsource-card" style="border-color:rgba(76,141,255,.5);margin-top:14px">
     <div class="app">
       <div class="icon" style="background:linear-gradient(140deg,#2b6cd4,#3f86ff)">📡</div>
-      <div class="ainfo"><div class="aname">进阶：把「更新源」装进壳里（推荐，设一次）</div>
-      <div class="asub">设好以后，打开壳 → 底部「源」→ 点 App 旁的安装，就是最新版。不用再回这个网页。</div></div>
+      <div class="ainfo"><div class="aname">进阶：把「更新源」装进壳里（可选，装一次）</div>
+      <div class="asub">设好以后，打开壳 → 底部「源」→ 点 App 旁的安装也能装最新版；不过源页不一定主动提示新版本，更新请优先用上面的第 1 / 2 条。</div></div>
     </div>
-    <a class="btn" id="addsource-btn" style="margin-top:12px;background:linear-gradient(135deg,#2b6cd4,#3f86ff)" href="javascript:void(0)">📡 一键添加更新源（点一下就设好）</a>
-    <div class="note">弹「在“伟哥工作站”中打开？」→ 点<b>打开</b>。之后发新版本，壳里的「源」页会直接显示，点安装即可；<b>更新只换程序，收藏和设置不丢</b>。</div>
+    <a class="btn" id="addsource-btn" style="margin-top:12px;background:linear-gradient(135deg,#2b6cd4,#3f86ff)" href="javascript:void(0)">📡 一键添加更新源（可选，点一下就设好）</a>
+    <div class="note">弹「在“伟哥工作站”中打开？」→ 点<b>打开</b>，只设这一次。源页能装、能覆盖更新（数据保留），<b>但不保证主动提示「有新版本」</b>（我们的包版本号固定，源页判断不了先后）。所以更新还是优先用上面第 1 条「App 内检查更新」或第 2 条「回本页点安装」。</div>
   </div>
 
   <details style="margin-top:14px">
-    <summary>🔁 关于「自动续签」（设一次，每 7 天自动续，不用管）</summary>
+    <summary>🔁 关于「续签」：壳用免费证书，7 天要续一次（点开看真实情况）</summary>
   <div class="renew" id="renew-box" style="margin-top:10px"></div>
   </details>
 
@@ -268,22 +306,24 @@
 
   <details>
     <summary>在别的手机上点「一键安装」，桌面出现一个带叉的灰图标？</summary>
-    <p><b>那是安装失败的残留，不是手机坏了。</b>本站的安装包用免费证书签名，一次只能登记一台设备——目前登记的是<b>伟哥的 iPhone</b>。别的手机点安装，苹果会在校验环节拒绝，桌面就剩下那个装到一半的灰图标（长按删掉即可）。<br>
+    <p><b>那是安装失败的残留，不是手机坏了。</b>本站的壳用免费的 Apple 开发者证书签名，一张证书<b>只能登记极少数设备</b>——目前登记的是<b>主人自己的两台</b>。别的手机点安装，苹果会在校验环节拒绝，桌面就剩下那个装到一半的灰图标（长按删掉即可）。<br>
     想在另一台手机上装：用<b>那台手机</b>连电脑，照上面「装不上」里的<b>第 2 条</b>做一次（免费，5 分钟）。签完那台手机也被登记，之后就能在它上面正常用。</p>
   </details>
 
   <details>
     <summary>装签名器/App 时提示「无法验证其完整性」怎么办？</summary>
     <p><b>2026-10-06 真机实测结论：这不是你的操作问题。</b>原因是苹果吊销了共享签名证书，iOS 27 上「防掉签配置文件」也拦不住（实测无效）。<br>
-    <b>当前唯一稳定免费的路：用电脑 Sideloadly + 你自己的 Apple ID 装一次壳</b>（照上面「装不上」里的第 2 条做，5 分钟）。壳装好之后，手机上点「安装到手机」装一切，全自动。<br>
+    <b>当前唯一稳定免费的路：用电脑 Sideloadly + 你自己的 Apple ID 装一次壳</b>（照上面「装不上」里的第 2 条做，5 分钟）。壳装好之后，手机上点「安装到手机」装星幕/心屋/大伟歌，<b>都不用再签名</b>。<br>
     那些号称免电脑的签名器，背后都是租来的共享证书——随时可能被苹果成批吊销，吊销那天所有用户一起打不开。</p>
   </details>
 
   <details>
-    <summary>还需要另外装一个「续签 App」吗？</summary>
-    <p><b>不用。</b>续签引擎（SideStore）已经打包在安装文件里面了 —— 你装的「星幕 / 心屋」本身就是「App + 自动续签器」二合一，装一次就都齐了。<br>
-    你要做的只有一件事：打开 App，按引导<b>登录一次你自己的 Apple ID</b>（免费号就行），并允许它装一个 VPN 描述文件（只做本机续签通道，不监控你上网）。<br>
-    之后每 7 天它自己在后台续签，<b>不用电脑、不用回本页、不用你再点任何东西</b>。</p>
+    <summary>壳会掉签吗？现在能自动续吗？（说实话）</summary>
+    <p><b>会掉签。</b>壳是苹果<b>免费开发者证书</b>签的，<b>7 天到期</b>；到期不续，壳和里面的 App 会打不开 —— 不是坏了，是证书过期了。当前这张证书 <b>2026-10-06 签发，2026-10-13 05:33 到期</b>。</p>
+    <p><b>现在能不能全自动？还不行，别信以前的说法。</b>壳里<b>确实内置了 SideStore 续签引擎</b>（我们把你下载的那个壳逐文件核对过，<code>SideStore.framework</code> 与 <code>SideStoreApp.framework</code> 都在包里，不是吹的）；
+    但要让它跑起来，得先用<b>你自己的 Apple ID 登录一次</b> + 装一个 <b>VPN 描述文件</b>。这一步<b>目前还没做</b>（手机上 VPN 描述文件数 = 0、SideStore 未登录），所以现在还谈不上「自动」。</p>
+    <p>这步在国内还有个门槛：iOS 26 上 SideStore 刷新必须配 <b>LocalDevVPN</b>，而它<b>在中国区商店没有上架</b>，得用<b>外区 Apple ID</b>。</p>
+    <p><b>所以现在到期怎么办：人工续一次。用电脑的 Sideloadly 点一下，约 5 分钟；一次续完，星幕 / 心屋 / 大伟歌三个一起保住。</b></p>
   </details>
 
   <details>
@@ -293,15 +333,16 @@
   </details>
 
   <details>
-    <summary>为什么必须装一个签名器？不能点一下直接装吗？</summary>
-    <p>苹果不允许任何 App 绕过签名进 iPhone。「点一下就装」的通道，背后都是站方<b>花钱买的企业证书</b>替你签——所以那些站全靠广告和会员费赚钱，广告多、陷阱多就是这么来的。<br>
-    我们能做到的：把「直达安装」的按钮直接放进本页（跳过他们网页里的所有广告跳板），并把所有风险写在明面上。</p>
+    <summary>为什么不能「点一下直接装」，非要先装一个壳？</summary>
+    <p>苹果不允许未经签名的 App 直接进 iPhone。所以本站的做法是：<b>用一个签好名的「壳」（LiveContainer），壳里跑不用签名的内容包</b>。<br>
+    壳只签一次，之后星幕 / 心屋 / 大伟歌的<b>安装和更新都不用再签名</b>——这正是「更新点一下就换新版」能成立的原因。</p>
+    <p>市面上那些「点一下就装」的站，背后是<b>租来的企业证书</b>替你签，成本靠广告和会员费摊；证书被苹果成批吊销那天，所有用户一起打不开。我们不走那条路，风险也就写在明面上。</p>
   </details>
 
   <details>
     <summary>万一还是掉签了怎么办？</summary>
-    <p>回本页，按同样的步骤重装一次即可，<b>收藏、观看记录都保留</b>（App 数据存在手机本地，不会被清掉）。<br>
-    掉签的常见原因：长期没打开过 App（超过 7 天没联网，自动续签错过）、或苹果更新系统小版本。<b>每 7 天打开一次最保险。</b></p>
+    <p>直接回本页，点对应卡片的「安装到手机」重装一次即可 —— <b>收藏、观看记录、设置都保留</b>（App 数据存在手机本地，不会因为重装被清掉）。<br>
+    掉签最常见的原因就是上面说的<b>壳证书 7 天到期</b>；把壳续签一次，三个 App 一起恢复。</p>
   </details>
 
   <details>
@@ -311,7 +352,8 @@
 
   <div class="foot">
     <span id="foot-brand">伟哥智能工作站</span> · 一站式智能设备应用<br>
-    本站不收集你的 Apple ID，不收集通讯录、照片或位置。签名只在你的手机本地完成。
+    本站不收集你的 Apple ID，不收集通讯录、照片或位置。<br>
+    壳（LiveContainer）由本站用自己的免费证书签好；壳里的内容包不需要签名，导入即用。
   </div>
 
 </div>
@@ -356,55 +398,6 @@ function probe(url, ms) {
   });
 }
 
-/* ================= 签名器区块 ================= */
-function renderProfile() {
-  var p = S.signer && S.signer.profile;
-  if (!p) return;
-  $("profile-btn").href = p.url;
-  $("profile-btn").textContent = "① " + p.title;
-  $("profile-bak").href = p.backup;
-}
-
-function renderSigner() {
-  var sg = S.signer;
-  $("signer-title").innerHTML = '装「' + esc(sg.name) + '」签名器<span class="tag">只装这一次 · 全站通用</span>';
-  $("signer-why").textContent = sg.why;
-  var box = $("signer-btns");
-  box.innerHTML = "";
-  sg.slots.forEach(function (s, idx) {
-    var a = document.createElement("a");
-    a.className = "btn " + (idx === 0 ? "b" : "g sm");
-    a.id = "slot-" + s.n;
-    a.style.marginTop = idx === 0 ? "12px" : "8px";
-    a.href = "itms-services://?action=download-manifest&url=" + encodeURIComponent(s.plist);
-    a.textContent = s.label;
-    box.appendChild(a);
-  });
-  $("signer-integrity").innerHTML = '⚠️ ' + esc(sg.integrityNote || "");
-  $("signer-alts").innerHTML = '实在都不行，换备用签名器（打开后装同样要先装第 0 步配置文件）：<br>' +
-    sg.alts.map(function (a2) {
-      return '<a href="' + esc(a2.url) + '" target="_blank" rel="noopener" style="color:#ffd479">' + esc(a2.name) + '</a>';
-    }).join(" ｜ ");
-
-  Promise.all(sg.slots.map(function (s) {
-    return probe(s.plist + "?_t=" + Date.now(), 8000).then(function (t) { return { s: s, t: t }; });
-  })).then(function (rs) {
-    var ok = rs.filter(function (r) { return r.t >= 0; });
-    rs.forEach(function (r) {
-      var a = $("slot-" + r.s.n);
-      if (a && r.t < 0) { a.style.opacity = .45; a.textContent += "（不通）"; }
-    });
-    var note = $("probe-note");
-    if (!ok.length) {
-      note.innerHTML = "⚠️ 本次检测 " + rs.length + " 个点位都不通（多为网络波动）——直接点上面按钮试，装不上就过会儿再来。";
-      return;
-    }
-    var best = ok.sort(function (a, b) { return a.t - b.t; })[0];
-    note.innerHTML = "✅ 实时检测：" + ok.length + "/" + rs.length + " 个点位可用，最快 <b>点位 " + best.s.n +
-      "</b>（" + Math.round(best.t) + " ms）。哪个装不上就换下一个。";
-  });
-}
-
 /* ================= 自动续签区块 ================= */
 function renderRenew() {
   var r = S.renew;
@@ -435,13 +428,13 @@ function appCard(a) {
   } else if (a.ios) {
     if (IS_IOS) {
       btns =
-        '<a class="btn" id="imp-' + a.id + '" style="margin-top:12px" href="#">📱 安装到手机（点一下 · 约90秒 · 自动签名）</a>' +
+        '<a class="btn" id="imp-' + a.id + '" style="margin-top:12px" href="#">📱 安装到手机（点一下 · 约 90 秒）</a>' +
         '<div class="note">弹「在“伟哥工作站”中打开？」→ 点<b>打开</b>，进度走完就装好了。<b>没反应？</b>说明还没装壳——回顶部点「一键安装」装一次壳就好。</div>';
     } else {
       btns =
         '<a class="btn b" id="dl-' + a.id + '" style="margin-top:12px" href="#">下载 ' + esc(a.name) + '.ipa（' + (a.ios.sizeMB || "?") + ' MB）</a>' +
         '<div class="note" id="dlnote-' + a.id + '">正在选最快的下载通道…</div>' +
-        '<div class="note">下载完把 .ipa <b>拖进 Sideloadly</b> → 填你的 Apple ID → 点 Start。壳装好后，手机上打开本页点「安装到手机」即可，不再用电脑。</div>';
+        '<div class="note">下载完把 .ipa <b>拖进 Sideloadly</b> → 填你的 Apple ID → 点 Start。壳装好后，手机上打开本页点「安装到手机」即可，日常不用电脑（只有每 7 天续壳那一步要电脑）。</div>';
     }
   }
   card.innerHTML =
@@ -544,9 +537,8 @@ function pickMirror() {
         .catch(function () {});
     }
   } else {
+    /* 非 iOS：手机 OTA 一键安装的排障块不适用，隐藏（2026-10-07 清掉 signer-card / daily-card 两个不存在的死引用） */
     var tb = $("trouble"); if (tb) tb.style.display = "none";
-    var sc = $("signer-card"); if (sc) sc.style.display = "none";
-    var dc = $("daily-card"); if (dc) dc.style.display = "none";
   }
 
   renderApps();

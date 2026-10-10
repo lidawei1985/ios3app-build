@@ -40,11 +40,10 @@ struct XinwuApp: App {
                     .environment(\.filmTheme, theme)
                     .task { await store.boot() }
                     .task {
-                        // 2026-10-01 主人钦定「自动更新」：启动静默查一次。
-                        // 2026-10-06 主人钦定「更新的那个提示彻底取消」→ 不再挂 alert，纯静默。
+                        // 2026-10-10 主人钦定「启动即自动升级」：静默检查 → 检测到新版本即自动唤起 LC 安装。
                         UpdateChecker.shared.assetName = "XinwuISO.ipa"
                         UpdateChecker.shared.lcScheme = "livecontainer2"  // 心屋 = 第 2 容器实例（装错容器＝片源互窜）
-                        await UpdateChecker.shared.check(silent: true)
+                        await UpdateChecker.shared.autoUpdateOnLaunch()
                     }
             }
         }

@@ -1810,6 +1810,17 @@ private struct AboutGroupView: View {
             }
             .buttonStyle(.plain)
             hairline
+            // 2026-10-10 主人钦定「启动即自动升级」：默认开，可关（关＝回到"只静默检查、手动点更新"）。
+            HStack(spacing: 10) {
+                Text("启动自动更新")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textSecondary)
+                Spacer()
+                Toggle("", isOn: $updater.autoUpdateEnabled)
+                    .labelsHidden()
+            }
+            .padding(.vertical, 8)
+            hairline
             aboutRow(k: "内容定位", v: store.profile.tagline)
             hairline
             aboutRow(k: "数据适配器", v: CatalogCache.adapterVersion)

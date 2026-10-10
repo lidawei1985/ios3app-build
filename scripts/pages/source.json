@@ -1,0 +1,52 @@
+{
+ "name": "伟哥智能工作站",
+ "identifier": "com.lidawei.workstation.source",
+ "subtitle": "星幕 · 心屋 · 大伟歌 官方更新源",
+ "description": "装一次源，壳里多一个便捷入口；更新优先用 App 内「检查更新」或回网页点安装。",
+ "iconURL": "https://lidawei1985.github.io/ios3app-build/ota-icon120.png",
+ "tintColor": "#e0353f",
+ "website": "https://lidawei1985.github.io/ios3app-build/",
+ "apps": [
+  {
+   "name": "星幕",
+   "bundleIdentifier": "tv.filmcollector.iso.xingmu",
+   "developerName": "伟哥智能工作站",
+   "subtitle": "海量影视 · 免费看",
+   "localizedDescription": "电影/剧集/直播聚合。更新只替换程序，收藏和设置不丢。",
+   "iconURL": "https://lidawei1985.github.io/ios3app-build/icon_xingmu_512.png",
+   "tintColor": "#e0353f",
+   "version": "1.0",
+   "versionDate": "2026-10-07T02:39:58Z",
+   "versionDescription": "v79 · 构建 59bc33a3431d（2026-10-07）",
+   "downloadURL": "https://gh-proxy.com/https://github.com/lidawei1985/ios3app-build/releases/download/latest/XingmuISO.ipa",
+   "size": 33983477
+  },
+  {
+   "name": "心屋",
+   "bundleIdentifier": "tv.filmcollector.iso.xinwu",
+   "developerName": "伟哥智能工作站",
+   "subtitle": "儿童专区 · 放心看",
+   "localizedDescription": "儿童模式：过滤后的片库。更新只替换程序，收藏和设置不丢。",
+   "iconURL": "https://lidawei1985.github.io/ios3app-build/icon_xinwu_512.png",
+   "tintColor": "#4c8dff",
+   "version": "1.0",
+   "versionDate": "2026-10-07T02:39:58Z",
+   "versionDescription": "v79 · 构建 59bc33a3431d（2026-10-07）",
+   "downloadURL": "https://gh-proxy.com/https://github.com/lidawei1985/ios3app-build/releases/download/latest/XinwuISO.ipa",
+   "size": 29341588
+  },
+  {
+   "name": "大伟歌",
+   "bundleIdentifier": "tv.dwg.music",
+   "developerName": "伟哥智能工作站",
+   "subtitle": "13 万曲库 · 免费听",
+   "localizedDescription": "壳内导入即用，更新走源自动。",
+   "tintColor": "#7c5cff",
+   "version": "1.0",
+   "versionDate": "2026-10-06T08:00:00Z",
+   "versionDescription": "2026-10-06 最新构建",
+   "downloadURL": "https://gh-proxy.com/https://github.com/lidawei1985/ios3app-build/releases/download/latest/DWGMusic.ipa",
+   "size": 4424409
+  }
+ ]
+}

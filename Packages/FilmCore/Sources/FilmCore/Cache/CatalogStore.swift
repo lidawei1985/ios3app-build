@@ -39,12 +39,46 @@ public final class CatalogStore: ObservableObject {
 
     /// 懒加载 persons.json（一次/会话）。文件未上线或失败静默为空表——
     /// 头像属增强功能，绝不因它让详情页报错或重试轰炸。
+    ///
+    /// 2026-10-10 根修（用户：「为什么现在演员头像不显示了」）：
+    /// 根因＝persons.json 体积数 MB，而 feed 基址全走 GitHub 系 CDN
+    /// （jsDelivr / api.github.com / raw），对大文件卡死/限速；本函数又是
+    /// 「每会话只拉一次、失败不重试」→ 一次拉不完 → 整会话头像全空。
+    /// 修法（与目录同一套内嵌机制）：**随包内嵌一份 persons 快照做离线兜底**，
+    /// 网络版只当增量升级（更大才覆盖），失败静默不影响已上屏的内嵌表。
     public func loadPersonAvatarsIfNeeded() async {
         guard !personAvatarsLoaded else { return }
         personAvatarsLoaded = true
-        guard let m = try? await client.fetchPersons(mode: profile.mode), !m.isEmpty else { return }
-        personAvatars = m
-        FilmLog.i("PERSONS avatars loaded: \(m.count)")
+        // ① 先上内嵌兜底（离线/弱网也有头像）
+        if let local = Self.loadEmbeddedPersons(mode: profile.mode), !local.isEmpty {
+            personAvatars = local
+            FilmLog.i("PERSONS avatars (embedded): \(local.count)")
+        }
+        // ② 网络版尝试升级（失败静默；只在更全时覆盖，绝不降级）
+        if let m = try? await client.fetchPersons(mode: profile.mode), !m.isEmpty,
+           m.count >= personAvatars.count {
+            personAvatars = m
+            FilmLog.i("PERSONS avatars upgraded: \(m.count)")
+        }
+    }
+
+    /// 内嵌 persons 文件名（按端区分，与快照同口径）。
+    nonisolated private static func embeddedPersonsFile(mode: String) -> String {
+        switch mode {
+        case "child": return "persons_snapshot_child"
+        default: return "persons_snapshot_normal"
+        }
+    }
+
+    /// 读内嵌 persons 快照（离线兜底，nonisolated：读盘+解码可在后台线程）。
+    nonisolated private static func loadEmbeddedPersons(mode: String) -> [String: String]? {
+        let name = embeddedPersonsFile(mode: mode)
+        let u = Bundle.module.url(forResource: name, withExtension: "json",
+                                  subdirectory: "Resources")
+            ?? Bundle.module.url(forResource: name, withExtension: "json")
+        guard let u, let d = try? Data(contentsOf: u),
+              let m = try? JSONDecoder().decode([String: String].self, from: d) else { return nil }
+        return m.isEmpty ? nil : m
     }
 
     // MARK: - 启动

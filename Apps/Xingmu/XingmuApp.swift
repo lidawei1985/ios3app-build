@@ -43,12 +43,12 @@ struct XingmuApp: App {
                     .environment(\.filmTheme, theme)
                     .task { await store.boot() }
                     .task {
-                        // 2026-10-01 主人钦定「自动更新」：启动静默查一次。
-                        // 2026-10-06 主人钦定「更新的那个提示彻底取消」→ 这里**不再挂任何 alert**，
-                        // 查到新版只记 state，设置页那行变「新构建 xxx · 点此更新」，全流程无感。
+                        // 2026-10-10 主人钦定「启动即自动升级」：静默检查 → 检测到新版本即
+                        // **自动**唤起 LiveContainer 安装（用户在本 App 内零点击；LC 会显下载/安装进度）。
+                        // 检查失败 / 已最新 / 关掉开关 / 未装 LC → 全静默，绝不打扰。
                         UpdateChecker.shared.assetName = "XingmuISO.ipa"
                         UpdateChecker.shared.lcScheme = "livecontainer"   // 星幕 = 第 1 容器实例
-                        await UpdateChecker.shared.check(silent: true)
+                        await UpdateChecker.shared.autoUpdateOnLaunch()
                     }
             }
         }
