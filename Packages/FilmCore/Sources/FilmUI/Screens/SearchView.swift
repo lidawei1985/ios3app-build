@@ -305,7 +305,10 @@ public struct SearchView: View {
             guard !Task.isCancelled else { return }
             performSearch(q)
         }
-        startTVSearch(q)
+        // v87：纯拼音查询（llz/rdh）不在这里直发源搜——采集源只认中文，
+        // wd=llz 实测 78 源只回 4 条不相干垃圾（PC 侧全源压测 2026-10-11）。
+        // 等 performSearch 本地命中人名后，用「人名中文名」补一轮源搜（见 performSearch）。
+        if !PinyinIndex.isPinyinQuery(q) { startTVSearch(q) }
     }
 
     private func commitSearch() {
@@ -313,7 +316,9 @@ public struct SearchView: View {
         searchTask?.cancel()
         tvSearchTask?.cancel()
         performSearch(query)
-        startTVSearch(query)
+        // 同上：拼音查询的源搜由 performSearch 命中人名后接手（点联想「李丽珍 演员」
+        // 走到这里时 query 已是中文，不受影响）。
+        if !PinyinIndex.isPinyinQuery(query) { startTVSearch(query) }
         saveRecent(query)
     }
 
@@ -335,6 +340,17 @@ public struct SearchView: View {
                 self.badges = b
                 self.searching = false
                 self.suggestions = Self.makeSuggestions(from: found, query: q)
+                // v87：拼音查询命中人名 → 内置源改用「人名中文名」补一轮源搜。
+                // 采集源只认中文：wd=llz 实测 78 源只回 4 条不相干垃圾，wd=李丽珍 回 36 条
+                // （含《蜜桃成熟时》8 条）——这就是「以前打 LLZ 能看到蜜桃成熟时、现在没了」的根因。
+                // 找不到人名时退回原关键词，行为与旧版一致。
+                if PinyinIndex.isPinyinQuery(q) {
+                    if let cn = found.compactMap(\.matchedPerson).first {
+                        self.startTVSearch(cn)
+                    } else {
+                        self.startTVSearch(q)
+                    }
+                }
             }
         }
     }
