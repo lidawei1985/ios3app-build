@@ -77,11 +77,17 @@ public struct FeedBases: Sendable {
             b.append("https://raw.githubusercontent.com/lidawei1985/\(profile.feedRepo)/main")
             authToken = token
         } else {
-            // 公开仓：jsDelivr 国内近期不稳 → api.github.com contents 作中继。
-            // 同样注入 token：匿名 api.github.com 限额 60 次/时/IP 极易烧光（2026-09-20 真机复现），
-            // 带 token 提至 5000/h；LiveLoader 仅对 github.com 域带此头，jsDelivr 不受影响。
-            b.append("https://fastly.jsdelivr.net/gh/lidawei1985/\(profile.feedRepo)@main")
+            // 公开仓（2026-10-11 重排 —— 手机永远拉不到新库的根因修复）：
+            //  实测根因：fastly.jsdelivr 国内 KB 级龟速（真机 symptomsd：11 分钟仅 1.8MB，
+            //  430MB 库永远拉不完）；api.github 匿名限 60 次/时，且 App 自身重试流量
+            //  把家庭出口 IP 的配额烧穿（403 rate limit exceeded 实测，PC 同 IP 复现）；
+            //  raw 墙内首字节 47s 只配兜底。
+            //  修复：① CI 注入 FEED_TOKEN（api.github 5000 次/时）；
+            //        ② api.github 提到首位（国内直连实测 RTT 0.6s、分片 2.4MB/s）；
+            //        ③ contents API 对 >1MB 文件不回 base64 → FeedClient 对该域统一加
+            //          Accept: application/vnd.github.raw（raw 回包 ≤100MB，真分片 5.5MB 实测 2.3s）。
             b.append("https://api.github.com/repos/lidawei1985/\(profile.feedRepo)/contents")
+            b.append("https://fastly.jsdelivr.net/gh/lidawei1985/\(profile.feedRepo)@main")
             b.append("https://raw.githubusercontent.com/lidawei1985/\(profile.feedRepo)/main")
             authToken = token
         }

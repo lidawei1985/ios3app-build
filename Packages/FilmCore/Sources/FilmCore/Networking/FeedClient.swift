@@ -27,10 +27,18 @@ public actor FeedClient {
         for path in paths {
             for url in bases.url(for: path) {
                 do {
-                    // 私有 feed 仓（成人端）：raw.githubusercontent 需带 token，否则 404
+                    // 统一构造请求：
+                    //  - api.github.com contents API 对 >1MB 文件不回 base64 content（content:null）
+                    //    → 必须带 Accept: application/vnd.github.raw（≤100MB 原始字节直出；
+                    //      unwrapContents 收到非 JSON 原始字节时原样返回，天然兼容）。
+                    //    2026-10-11：分片 5.5MB 实测只有这条路能走通 api.github 基址。
+                    //  - 私有 feed 仓（成人端）：raw.githubusercontent 需带 token，否则 404
                     let data: Data
+                    var req = URLRequest(url: url)
+                    if url.host == "api.github.com" {
+                        req.setValue("application/vnd.github.raw", forHTTPHeaderField: "Accept")
+                    }
                     if let tok = bases.authToken {
-                        var req = URLRequest(url: url)
                         req.setValue("token \(tok)", forHTTPHeaderField: "Authorization")
                         let (d, resp) = try await session.data(for: req)
                         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
@@ -39,7 +47,7 @@ public actor FeedClient {
                         }
                         data = d
                     } else {
-                        let (d, resp) = try await session.data(from: url)
+                        let (d, resp) = try await session.data(for: req)
                         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
                             errors.append("\(url.host!):badStatus")
                             continue

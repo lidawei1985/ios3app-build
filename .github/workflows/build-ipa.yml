@@ -27,6 +27,7 @@ jobs:
       - name: Inject secret + build stamp (硬门禁)
         env:
           FC_VAULT_KEY: ${{ secrets.FC_VAULT_KEY }}
+          FEED_TOKEN: ${{ secrets.FEED_TOKEN }}
         run: |
           set -euo pipefail
           f="Packages/FilmCore/Sources/FilmCore/Product/ProductProfile.swift"
@@ -37,12 +38,32 @@ jobs:
           sed -i.bak "s|__FC_VAULT_KEY_B64__|$FC_VAULT_KEY|" "$f" && rm -f "$f.bak"
           echo "fc vault key injected (len=${#FC_VAULT_KEY})"
 
+          # 2026-10-11：FEED_TOKEN 必配。api.github 匿名限 60 次/时，App 自身重试就把
+          # 家庭 IP 配额烧穿（403 实测）→ 手机永远拉不到新库；带 token 5000 次/时。
+          if [ -z "${FEED_TOKEN:-}" ]; then
+            echo "::error::FEED_TOKEN 未配置 —— api.github 匿名限 60 次/时且已被重试烧穿，"
+            echo "        无 token = 手机永远拉不到新库。请在 repo Secrets 配置 FEED_TOKEN（PAT，公开仓读即可）。"
+            exit 1
+          fi
+          sed -i.bak "s|__FEED_TOKEN_PLACEHOLDER__|$FEED_TOKEN|" "$f" && rm -f "$f.bak"
+          echo "feed token injected (len=${#FEED_TOKEN})"
+
+          # token 有效性自检：只打印限额数字，不回显 token。非 200 = token 失效，当场红灯。
+          code=$(curl -s -o /tmp/rl.json -w '%{http_code}' \
+            -H "Authorization: token $FEED_TOKEN" https://api.github.com/rate_limit)
+          rem=$(python3 -c "import json;print(json.load(open('/tmp/rl.json'))['resources']['core']['remaining'])" 2>/dev/null || echo '?')
+          echo "api.github token check: HTTP $code, core remaining=$rem (期望 200 且 rem≈5000)"
+          if [ "$code" != "200" ]; then
+            echo "::error::FEED_TOKEN 无效（HTTP $code）—— 注入无效 token 等于没修"
+            exit 1
+          fi
+
           STAMP=$(git rev-parse --short=12 HEAD)
           sed -i.bak "s|__BUILD_STAMP__|$STAMP|" "$f" && rm -f "$f.bak"
           echo "$STAMP" > /tmp/build_stamp.txt
           echo "build stamp = $STAMP  (commit: $(git log -1 --pretty=%s))"
 
-          left=$(grep -c "__FC_VAULT_KEY_B64__\|__BUILD_STAMP__" "$f" || true)
+          left=$(grep -c "__FC_VAULT_KEY_B64__\|__BUILD_STAMP__\|__FEED_TOKEN_PLACEHOLDER__" "$f" || true)
           if [ "$left" != "0" ]; then echo "::error::$left 个占位符未替换"; exit 1; fi
 
       - name: Ensure xcodegen (预装优先 + 官方包兜底，绕开 brew 网络依赖)
