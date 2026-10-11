@@ -397,6 +397,10 @@ public struct HomeView: View {
         var n: Int = 0
         /// 产出本结果时的**产品模式**（v77）：换模式后旧内容一律作废（不同模式的目录规模本来就不同）。
         var mode: String = ""
+        /// 产出本结果时的**目录数据版本**（2026-10-11）：护栏从「比条目数」升级为
+        /// 「比换代」——治理合法缩容（89,817→73,969）曾被旧护栏误判成「中间态」永久丢弃，
+        /// 已下架条目（音乐夏令营占位图）因此永远钉在首页货架（真机 livediag 四次实锤）。
+        var feedVer: String = ""
     }
 
     /// 货架缓存（34包）：原 shelves 是计算属性——每次 body 求值都对 13 万条全量 filter+sort，
@@ -422,6 +426,9 @@ public struct HomeView: View {
         var mode: String = ""
         var savedAt: Date = Date()
         var n: Int = 0
+        /// 产出本结果时的目录数据版本（2026-10-11 护栏换代判据；旧文件无此键 → 解码得 ""，
+        /// 恰好触发「换代放行」完成一次自愈重建）。
+        var feedVer: String = ""
         var hero: [FeedItem] = []
         var rails: [Rail] = []
         struct Rail: Codable {
@@ -445,13 +452,14 @@ public struct HomeView: View {
         s.rails = c.rails.map { (title: $0.title, items: $0.items) }
         s.n = c.n
         s.mode = c.mode
+        s.feedVer = c.feedVer
         return s
     }
 
     /// 写缓存：由**主线程在护栏之后**甩到后台执行（不碰主线程）。
     /// 模式/目录规模直接取 `s` 自带的两项，避免「文件里写的」和「结果里记的」两处不一致。
     private static func writeShelvesCache(_ s: HomeShelves) {
-        let c = ShelvesCacheFile(mode: s.mode, n: s.n, hero: s.hero,
+        let c = ShelvesCacheFile(mode: s.mode, n: s.n, feedVer: s.feedVer, hero: s.hero,
                                  rails: s.rails.map { ShelvesCacheFile.Rail(title: $0.title, items: $0.items) })
         guard let data = try? JSONEncoder().encode(c) else { return }
         try? data.write(to: shelvesCacheURL, options: .atomic)
@@ -471,6 +479,10 @@ public struct HomeView: View {
         let items = store.catalog.items
         let cats = store.catalog.categories
         let mode = TVBoxConfigStore.currentProductMode()
+        // 2026-10-11 护栏换代判据的三个输入（主线程取快照，传值进后台任务）：
+        // 目录数据版本 + 台账源数（判断「这是不是全量级目录」，home.json 首屏池只有 500 条）
+        let feedVer = store.ledger.version ?? ""
+        let srcCount = store.ledger.sourceCount
         shelfTask?.cancel()
         let t0 = Date()
         // v77：首屏**已经有内容可滑**吗（缓存命中 / 上次算完的结果，且是同一模式的）。
@@ -488,6 +500,8 @@ public struct HomeView: View {
             HeavyWork.begin("货架计算")
             defer { HeavyWork.end() }
             let (s, perf) = Self.computeShelves(items: items, categories: cats, mode: mode)
+            var s = s
+            s.feedVer = feedVer
             // v76：货架计算耗时进黑匣子（items 规模 × 计算时长，判断是否需要再瘦身）
             // v76.3：追加**排名 + 头一部片名** —— 性能优化后要能一眼核对「片子有没有变」，
             //   不必再靠截图比对（本行就是「零语义变更」的现场证据）。
@@ -504,11 +518,26 @@ public struct HomeView: View {
         // ★ v77 护栏：**不许用「更小的目录」算出的结果去覆盖已有的更好内容**。
         //   冷启动目录是先小后大的（内置包几百条 → 磁盘快照 → 全量同步 8.9 万），
         //   若中途先算出「小目录版本」就替换，首屏会从「缓存的好货架」闪成「小目录的差货架」。
-        //   判据：同模式下，新结果的目录规模 < 当前屏上内容的规模 ⇒ 丢弃。
-        //   （换模式不算「变小」—— 不同模式目录规模本来就不同，旧内容应作废，故 mode 不同直接放行。）
+        //   ★ 2026-10-11 根修（真机 livediag 四次实锤）：只比条目数会把「治理合法缩容」
+        //   （89,817→73,969，每次全量同步完成后的真全量目录）误判成中间态永久丢弃 ——
+        //   新货架每次都算对了又被丢，已下架条目（音乐夏令营占位图）永远钉在首页。
+        //   判据升级为「换代放行」：
+        //     · 放行 = 本次结果来自「全量级目录」（条数 ≥ 台账源数 90%，挡掉 home.json
+        //       首屏 500 条池 / 内嵌 2 万条档）且其数据版本 == 最近一次成功全量同步的版本
+        //       （挡掉内嵌档）且与缓存**不同代**（缓存还是旧版本算的，含旧库已下架条目）；
+        //     · 同代里更小（合并中间态）或非全量级 → 照旧丢弃，闪劣化防护原样保留。
+        //   旧缓存文件无 feedVer（解码得 ""）→ 首次重算必然「换代」→ 自愈重建一次。
         if !shelvesCache.hero.isEmpty, s.mode == shelvesCache.mode, s.n < shelvesCache.n {
-            LiveDiag.write("首页·货架丢弃(目录更小 \(s.n) < \(shelvesCache.n)) 保留屏上内容")
-            return
+            let lastVer = CatalogStore.lastFullSyncVersion
+            let fullOK = !s.feedVer.isEmpty
+                && s.feedVer == (lastVer ?? "\0")
+                && (srcCount <= 0 || s.n >= srcCount * 9 / 10)
+            let sameGeneration = shelvesCache.feedVer == s.feedVer
+            if !fullOK || sameGeneration {
+                LiveDiag.write("首页·货架丢弃(目录更小 \(s.n) < \(shelvesCache.n) ver=\(s.feedVer)) 保留屏上内容")
+                return
+            }
+            LiveDiag.write("首页·货架换代放行(缩容 \(s.n) < \(shelvesCache.n) ver=\(s.feedVer))")
         }
         MainThreadMark.set("货架上屏 rails=\(s.rails.count) hero=\(s.hero.count)")
         shelvesCache = s

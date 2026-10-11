@@ -64,6 +64,10 @@ public enum GlobalSiteSearch {
             var seen = Set<String>()
             let deadline = Date().addingTimeInterval(budget)
             while let r = await group.next() {
+                // ★ 2026-10-11 预算修正：空结果源原来走 `guard let r else continue`
+                //   把 deadline 检查一起跳过了——当池里大量源返回空（常见！）时预算形同虚设，
+                //   网搜要等最慢源跑完才收口（搜索转圈久的一部分就在这）。先查预算再吸收。
+                if Date() > deadline { group.cancelAll() }
                 guard let r else { continue }
                 var added = false
                 for it in r where acc.count < totalLimit {
@@ -71,7 +75,7 @@ public enum GlobalSiteSearch {
                     if seen.insert(k).inserted { acc.append(it); added = true }
                 }
                 if added { onBatch?(acc) }
-                if acc.count >= totalLimit || Date() > deadline { group.cancelAll() }
+                if acc.count >= totalLimit { group.cancelAll() }
             }
             return acc
         }

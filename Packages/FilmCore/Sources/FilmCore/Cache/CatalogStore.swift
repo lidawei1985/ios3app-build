@@ -285,6 +285,15 @@ public final class CatalogStore: ObservableObject {
     private static let lastSyncVersionKey = "catalog.lastFullSyncVersion"
     private static let lastSyncAtKey = "catalog.lastFullSyncAt"
 
+    /// 最近一次成功全量同步的 feed 版本（公开只读）。
+    ///
+    /// 2026-10-11：首页货架护栏需要它区分「冷启动中间态的小目录」（丢弃）与
+    /// 「治理合法缩容后的真全量」（放行）——只比条目数会把换代的真全量永久挡在门外，
+    /// 已下架条目（如音乐夏令营占位图）会永远钉在首页货架（真机实锤）。
+    public static var lastFullSyncVersion: String? {
+        UserDefaults.standard.string(forKey: lastSyncVersionKey)
+    }
+
     public func syncAll(force: Bool = false) async {
         guard !syncing else { return }           // 单飞
         syncing = true

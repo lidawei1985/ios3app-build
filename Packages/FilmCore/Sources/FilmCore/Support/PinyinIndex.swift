@@ -52,8 +52,12 @@ public enum PinyinIndex {
             let k = Self.compute(text)
 
             lock.lock()
-            // 片库标题 + 演员名数量级有限；上限兜底防异常数据把内存撑爆
-            if cache.count > 20_000 { cache.removeAll(keepingCapacity: true) }
+            // 上限兜底防异常数据把内存撑爆。
+            // ★ 2026-10-11 搜索卡死根修：旧上限 20,000 远小于工作集
+            //   （星幕 7.4 万片名 + 几十万演员名）→ 缓存刚攒满就被 removeAll 清空，
+            //   每次拼音搜索都对几十万字符串重跑 CFStringTransform（真机实测搜索转圈 2 分钟+）。
+            //   按 25 万条目内存 ≈ 30~50MB 量级，iPhone 完全可承受；超出才清。
+            if cache.count > 250_000 { cache.removeAll(keepingCapacity: true) }
             cache[text] = k
             lock.unlock()
             return k
