@@ -139,21 +139,36 @@ public enum PinyinIndex {
     }
 
     /// 并行批量预计算（去重后的文本集）。并行切片 + 一次加锁合并，避免逐条锁往返。
+    ///
+    /// 注意：`DispatchQueue.concurrentPerform` 的闭包签名是 `(Int) -> Void`，
+    /// 不能直接 `return [(String, Key)]`（CI 实测编译错：declared closure result
+    /// '[(String, Key)]' is incompatible with contextual type 'Void'）→ 用 Sendable 盒子收集。
     public static func warmUp(texts: [String]) {
         let targets = texts.filter { !$0.isEmpty }
         guard !targets.isEmpty else { return }
         let n = targets.count
         let chunks = max(1, min(n, ProcessInfo.processInfo.activeProcessorCount * 2))
         let per = (n + chunks - 1) / chunks
-        let batches = DispatchQueue.concurrentPerform(iterations: chunks) { c -> [(String, Key)] in
+        let box = BatchBox()
+        box.reserve(n)
+        DispatchQueue.concurrentPerform(iterations: chunks) { c in
             let lo = c * per, hi = min(n, lo + per)
-            guard lo < hi else { return [] }
+            guard lo < hi else { return }
             var out: [(String, Key)] = []
             out.reserveCapacity(hi - lo)
             for i in lo..<hi { out.append((targets[i], Store.compute(targets[i]))) }
-            return out
+            box.add(out)
         }
-        store.insertBatch(batches.flatMap { $0 })
+        store.insertBatch(box.all())
+    }
+
+    /// 并行预热的收集盒（NSLock 保护；闭包跨线程写入需要 Sendable）。
+    private final class BatchBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var buf: [(String, Key)] = []
+        func reserve(_ n: Int) { lock.lock(); buf.reserveCapacity(n); lock.unlock() }
+        func add(_ xs: [(String, Key)]) { lock.lock(); buf.append(contentsOf: xs); lock.unlock() }
+        func all() -> [(String, Key)] { lock.lock(); defer { lock.unlock() }; return buf }
     }
 
     /// 查询串是否可作为拼音查询（纯 ASCII 字母/数字，可含空格）。
