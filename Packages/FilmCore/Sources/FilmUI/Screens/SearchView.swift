@@ -346,6 +346,12 @@ public struct SearchView: View {
         let q = raw.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { tvResults = []; tvSearching = false; return }
         tvSearching = true
+        // v82 保险丝：网搜位硬上限 20s —— 预算哨兵（GlobalSiteSearch v82）之下网搜最多 6s+源超时，
+        // 任何未预期路径挂死也保证「搜索中…/还在搜更多源…」不会永久挂着不放。
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            if q == self.query { self.tvSearching = false }
+        }
         tvSearchTask = Task {
             // 复位网搜位：取消 / 过期 / 正常结束**每条退出路径**都要复位，
             // 否则「还在搜更多源…」会一直挂着不放（用户会以为搜索卡死）。

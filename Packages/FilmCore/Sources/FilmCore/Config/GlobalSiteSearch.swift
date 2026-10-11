@@ -35,6 +35,18 @@ public enum GlobalSiteSearch {
     ///  - **边收边上屏**：`group.next()` 回来一个就 absorb 一个、回调一次，
     ///    首屏时间 = 最快那个源（实测 **0.38s**），不再是"第一批 12 个全回来"。
     ///  - **预算到点就走**：`budget` 秒后 `cancelAll()`，不再为长尾源干等。
+    ///
+    /// 2026-10-11 v82「搜索一直转圈」二次根修：预算检查原来放在 `while let r = await group.next()`
+    /// 循环体内 —— 它只能在「任务返回的间隙」生效。当快源都回完、剩余坏源全部挂起时，
+    /// `group.next()` 本身就阻塞到下一个源超时（8s 短会话）才返回，`cancelAll` 根本没机会执行
+    /// → 实际收口 = 预算 6s + 最后一个坏源超时 ≈ 10~15s，弱网更久。
+    /// 现在加一个**哨兵任务**：睡满 budget 后返回 `.budgetExhausted`，主循环收到立即
+    /// `cancelAll()` 并收口 —— 预算变成真正的硬上限。
+    private enum SearchEvent: Sendable {
+        case hits([FeedItem])
+        case budgetExhausted
+    }
+
     @discardableResult
     public static func search(
         _ raw: String, mode: String,
@@ -45,7 +57,7 @@ public enum GlobalSiteSearch {
         guard !q.isEmpty else { return [] }
         let sites = pool(forMode: mode)
 
-        return await withTaskGroup(of: [FeedItem]?.self) { group in
+        return await withTaskGroup(of: SearchEvent.self) { group in
             for site in sites {
                 group.addTask {
                     // 只捕获不可变量（site/q/mode/perSourceLimit），可变状态一律留在 group 体内——
@@ -56,19 +68,22 @@ public enum GlobalSiteSearch {
                                              sourceCategory: $0.aggregateCategoryName,
                                              mode: mode)
                     }
-                    return r.isEmpty ? nil : Array(r.prefix(perSourceLimit))
+                    return .hits(r.isEmpty ? [] : Array(r.prefix(perSourceLimit)))
                 }
+            }
+            // 哨兵：预算硬上限（与源任务同池竞争，到点立即唤醒主循环收口）
+            group.addTask {
+                let ns = UInt64(max(0, budget) * 1_000_000_000)
+                if ns > 0 { try? await Task.sleep(nanoseconds: ns) }
+                return .budgetExhausted
             }
 
             var acc: [FeedItem] = []
             var seen = Set<String>()
-            let deadline = Date().addingTimeInterval(budget)
-            while let r = await group.next() {
-                // ★ 2026-10-11 预算修正：空结果源原来走 `guard let r else continue`
-                //   把 deadline 检查一起跳过了——当池里大量源返回空（常见！）时预算形同虚设，
-                //   网搜要等最慢源跑完才收口（搜索转圈久的一部分就在这）。先查预算再吸收。
-                if Date() > deadline { group.cancelAll() }
-                guard let r else { continue }
+            var exhausted = false
+            while let ev = await group.next() {
+                if case .budgetExhausted = ev { exhausted = true; group.cancelAll() }
+                guard case .hits(let r) = ev, !r.isEmpty, !exhausted else { continue }
                 var added = false
                 for it in r where acc.count < totalLimit {
                     let k = it.title + "|" + (it.year ?? "")

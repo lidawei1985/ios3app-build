@@ -168,6 +168,17 @@ public final class CatalogStore: ObservableObject {
         }
         await syncAll()          // 后台全量（版本闸门内建，内容未变不再重拉）
         stage("boot done (syncAll returned)", catalog.items.count)
+
+        // v82 搜索转圈根修：拼音索引冷预热。
+        // 首次拼音搜索（如 llz）要对几十万字符串串行跑 CFStringTransform（真机实测转圈 50~80s，
+        // 且每次冷启动都从零开始）→ 库一就绪就在 .utility 后台**并行**预建全部键，
+        // 用户搜索时全部命中缓存、首搜即秒回。纯后台，不与首屏/交互抢核。
+        let itemsForPinyin = catalog.items
+        Task.detached(priority: .utility) {
+            let t0 = Date()
+            PinyinIndex.warmUp(items: itemsForPinyin)
+            LiveDiag.write("拼音预热·完成 n=\(itemsForPinyin.count) 耗时=\(Int(Date().timeIntervalSince(t0) * 1000))ms")
+        }
     }
 
     /// 双端内嵌快照（35包起全端覆盖）：

@@ -63,7 +63,17 @@ public enum PinyinIndex {
             return k
         }
 
-        private static func compute(_ text: String) -> Key {
+        /// v82 预热专用：批量写入（一次加锁；不覆盖已有键——与并发搜索的现算结果兼容）。
+        func insertBatch(_ pairs: [(String, Key)]) {
+            guard !pairs.isEmpty else { return }
+            lock.lock()
+            for (t, k) in pairs where cache[t] == nil { cache[t] = k }
+            // 上限兜底同 key(for:)：异常数据撑爆内存才清
+            if cache.count > 250_000 { cache.removeAll(keepingCapacity: true) }
+            lock.unlock()
+        }
+
+        fileprivate static func compute(_ text: String) -> Key {
             let raw = latinizeWithTones(text)                       // 例：吕 → "lǚ"
             let plain = stripDiacritics(raw).replacingOccurrences(of: " ", with: "")
             let vForm = stripDiacritics(vMapped(raw)).replacingOccurrences(of: " ", with: "")
@@ -109,6 +119,42 @@ public enum PinyinIndex {
 
     /// 取文本的拼音键（带缓存）。
     public static func key(for text: String) -> Key { store.key(for: text) }
+
+    /// v82 搜索转圈根修：冷启动并行预热。
+    ///
+    /// 此前首次拼音搜索（如 `llz`）要对「片名 + 演员 + 导演」几十万个字符串**串行**现算
+    /// 拼音键（每个都要跑 CFStringTransform），真机实测整屏「搜索中…」转圈 50~80 秒；
+    /// 且 App 每次冷启动缓存都从零开始，第一次搜索必付全额 —— 用户感知就是「搜索一直转圈」。
+    /// 现改为：库就绪后（CatalogStore.boot 末尾）后台并行预建全部键，用户搜索时全部命中缓存。
+    /// compute 是纯函数（无共享可变状态），可放心并行；并发度 = 活跃核数。
+    public static func warmUp(items: [FeedItem]) {
+        var texts = Set<String>(minimumCapacity: items.count * 8)
+        for it in items {
+            let t = it.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { texts.insert(t) }
+            for a in (it.actors ?? []) where !a.isEmpty { texts.insert(a) }
+            for d in (it.directors ?? []) where !d.isEmpty { texts.insert(d) }
+        }
+        warmUp(texts: Array(texts))
+    }
+
+    /// 并行批量预计算（去重后的文本集）。并行切片 + 一次加锁合并，避免逐条锁往返。
+    public static func warmUp(texts: [String]) {
+        let targets = texts.filter { !$0.isEmpty }
+        guard !targets.isEmpty else { return }
+        let n = targets.count
+        let chunks = max(1, min(n, ProcessInfo.processInfo.activeProcessorCount * 2))
+        let per = (n + chunks - 1) / chunks
+        let batches = DispatchQueue.concurrentPerform(iterations: chunks) { c -> [(String, Key)] in
+            let lo = c * per, hi = min(n, lo + per)
+            guard lo < hi else { return [] }
+            var out: [(String, Key)] = []
+            out.reserveCapacity(hi - lo)
+            for i in lo..<hi { out.append((targets[i], Store.compute(targets[i]))) }
+            return out
+        }
+        store.insertBatch(batches.flatMap { $0 })
+    }
 
     /// 查询串是否可作为拼音查询（纯 ASCII 字母/数字，可含空格）。
     /// 中文查询不触发拼音通道，保证常规搜索零额外开销。
