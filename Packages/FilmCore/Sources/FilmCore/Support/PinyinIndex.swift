@@ -59,7 +59,7 @@ public enum PinyinIndex {
             // ★ 2026-10-11 v83：工作集实测 60 万+ 唯一文本（7.4 万片名 + 几十万演员/导演名），
             //   旧上限 25 万 < 工作集 → 写满就 removeAll 全清 → 每次搜索大量现算（转圈 30~40s 实锤）。
             //   阈值必须高于「读盘填充后的常驻量」，否则新键一插就触发全清。
-            if cache.count > 900_000 { cache = Dictionary(cache.prefix(600_000), uniquingKeysWith: { a, _ in a }) }
+            if cache.count > 900_000 { cache = Dictionary(cache.prefix(600_000).map { ($0.key, $0.value) }, uniquingKeysWith: { a, _ in a }) }
             cache[text] = k
             lock.unlock()
             return k
@@ -76,7 +76,7 @@ public enum PinyinIndex {
             for (t, k) in pairs where cache[t] == nil { cache[t] = k; added += 1 }
             addedSincePersist += added
             if cache.count > 900_000 { // 物理兜底：只会在数据规模异常膨胀时触发
-                cache = Dictionary(cache.prefix(600_000), uniquingKeysWith: { a, _ in a })
+                cache = Dictionary(cache.prefix(600_000).map { ($0.key, $0.value) }, uniquingKeysWith: { a, _ in a })
             }
             lock.unlock()
         }
