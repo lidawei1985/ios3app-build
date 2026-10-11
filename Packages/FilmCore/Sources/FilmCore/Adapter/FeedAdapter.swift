@@ -264,10 +264,11 @@ public struct FeedAdapter {
             var tier = PinyinIndex.titleTier(PinyinIndex.key(for: it.title), needle: needle)
             var personName: String? = nil
             var personRole: String? = nil
-            // 片名命中优先；片名只是「包含」级时才看人名（人名的「前缀命中」比片名的「包含命中」更相关）
-            if tier.rawValue > PinyinIndex.Tier.person.rawValue {
+            // 片名命中优先；片名只是「包含」级及以下时才看人名
+            //（v84：人名前缀命中 personPrefix 已置顶为最高档，片名前缀命中（ini/fullPrefix）仍高于人名包含命中）
+            if tier.rawValue >= PinyinIndex.Tier.iniContains.rawValue {
                 if let p = firstPersonPinyinMatch(it, needle: needle) {
-                    tier = .person
+                    tier = p.2
                     personName = p.0
                     personRole = p.1
                 }
@@ -279,7 +280,7 @@ public struct FeedAdapter {
                                                         matchedRole: personRole))
         }
 
-        for tier in [PinyinIndex.Tier.iniPrefix, .fullPrefix, .person, .iniContains, .fullContains] {
+        for tier in [PinyinIndex.Tier.personPrefix, .iniPrefix, .fullPrefix, .person, .iniContains, .fullContains] {
             guard let arr = buckets[tier], !arr.isEmpty else { continue }
             out += rankedHits(arr)
         }
@@ -308,10 +309,17 @@ public struct FeedAdapter {
         return nil
     }
 
-    /// 拼音人名命中（`llz` → 李丽珍；`wujing` → 吴京）。返回 (人名, 身份)。
-    private static func firstPersonPinyinMatch(_ it: FeedItem, needle: String) -> (String, String)? {
-        for n in (it.actors ?? []) where PinyinIndex.personTier(n, needle: needle) != .none { return (n, "演员") }
-        for n in (it.directors ?? []) where PinyinIndex.personTier(n, needle: needle) != .none { return (n, "导演") }
+    /// 拼音人名命中（`llz` → 李丽珍；`wujing` → 吴京）。返回 (人名, 身份, 档位)。
+    /// v84：演员优先于导演；档位随 personTier（前缀命中 personPrefix 置顶 / 包含命中 person）。
+    private static func firstPersonPinyinMatch(_ it: FeedItem, needle: String) -> (String, String, PinyinIndex.Tier)? {
+        for n in (it.actors ?? []) {
+            let t = PinyinIndex.personTier(n, needle: needle)
+            if t != .none { return (n, "演员", t) }
+        }
+        for n in (it.directors ?? []) {
+            let t = PinyinIndex.personTier(n, needle: needle)
+            if t != .none { return (n, "导演", t) }
+        }
         return nil
     }
 }

@@ -27,13 +27,20 @@ public enum PinyinIndex {
     }
 
     /// 命中档位（rawValue 越小越靠前）。用于把「最像用户想要的那条」顶到前面。
+    /// ★ 2026-10-11 v84 重排（用户实测反馈：搜 llz 出来的全是「拦路贼/恋老症/连理枝/流浪者」
+    ///   这类片名首字母碰巧匹配的杂片，李丽珍参演的片一条看不见）：
+    ///   旧表把人名命中统一压在片名前缀命中之后 —— 库 2 万条时人名还能挤进前排，
+    ///   7.4 万条后片名首字母命中暴涨、人名全被压出首屏。对齐大牌口径：
+    ///   **人名「前缀」命中置顶**（搜 llz 第一眼就是李丽珍参演的片，带「演员 李丽珍」标）；
+    ///   人名「包含」命中仍在片名前缀档之后。
     public enum Tier: Int, Comparable {
-        case iniPrefix = 0        // 片名首字母前缀（lldq → 流浪地球）
-        case fullPrefix = 1       // 片名全拼前缀（liulang → 流浪地球）
-        case person = 2           // 演员 / 导演命中（大牌：搜 llz 出李丽珍参演的片）
-        case iniContains = 3      // 片名首字母包含
-        case fullContains = 4     // 片名全拼包含
-        case fuzzy = 5            // 跳字容错（漏字/片名带「的」等连接字仍可命中）
+        case personPrefix = 0    // 人名首字母/全拼前缀命中（llz → 李丽珍）——置顶
+        case iniPrefix = 1       // 片名首字母前缀（lldq → 流浪地球）
+        case fullPrefix = 2      // 片名全拼前缀（liulang → 流浪地球）
+        case person = 3          // 演员 / 导演包含命中
+        case iniContains = 4     // 片名首字母包含
+        case fullContains = 5    // 片名全拼包含
+        case fuzzy = 6           // 跳字容错（漏字/片名带「的」等连接字仍可命中）
         case none = 99
 
         public static func < (a: Tier, b: Tier) -> Bool { a.rawValue < b.rawValue }
@@ -323,12 +330,12 @@ public enum PinyinIndex {
         return true
     }
 
-    /// 人名（演员/导演）档位：前缀与包含同档（大牌里人名命中统一排在片名命中之后）。
+    /// 人名（演员/导演）档位：**前缀命中置顶（v84）**，包含命中人名档。
     public static func personTier(_ name: String, needle: String) -> Tier {
         guard !needle.isEmpty else { return .none }
         let k = key(for: name)
         guard !k.initials.isEmpty else { return .none }
-        if k.initials.hasPrefix(needle) || k.full.hasPrefix(needle) || k.fullV.hasPrefix(needle) { return .person }
+        if k.initials.hasPrefix(needle) || k.full.hasPrefix(needle) || k.fullV.hasPrefix(needle) { return .personPrefix }
         if k.initials.contains(needle) || k.full.contains(needle) || k.fullV.contains(needle) { return .person }
         return .none
     }
