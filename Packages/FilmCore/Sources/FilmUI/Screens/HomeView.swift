@@ -499,8 +499,7 @@ public struct HomeView: View {
             // 有了这个标记，黑匣子里那条「卡 Nms」能直接对上责任重活，不必再靠推测。
             HeavyWork.begin("货架计算")
             defer { HeavyWork.end() }
-            let (s, perf) = Self.computeShelves(items: items, categories: cats, mode: mode)
-            var s = s
+            var (s, perf) = Self.computeShelves(items: items, categories: cats, mode: mode)
             s.feedVer = feedVer
             // v76：货架计算耗时进黑匣子（items 规模 × 计算时长，判断是否需要再瘦身）
             // v76.3：追加**排名 + 头一部片名** —— 性能优化后要能一眼核对「片子有没有变」，
