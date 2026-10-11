@@ -293,6 +293,13 @@ public struct SearchView: View {
         searchTask?.cancel()
         tvSearchTask?.cancel()
         let q = query
+        // v83 保险丝：本地过滤位硬上限 20s。此前只有网搜位（tvSearching）有兜底——
+        // 真机实测（2026-10-11 16:42）拼音冷键场景 searchHits 现算 30~40s，
+        // 转圈挂住的是 searching 位、没有任何东西会把它关掉。
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            if q == self.query { self.searching = false }
+        }
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }

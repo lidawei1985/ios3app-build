@@ -171,13 +171,23 @@ public final class CatalogStore: ObservableObject {
 
         // v82 搜索转圈根修：拼音索引冷预热。
         // 首次拼音搜索（如 llz）要对几十万字符串串行跑 CFStringTransform（真机实测转圈 50~80s，
-        // 且每次冷启动都从零开始）→ 库一就绪就在 .utility 后台**并行**预建全部键，
-        // 用户搜索时全部命中缓存、首搜即秒回。纯后台，不与首屏/交互抢核。
+        // 且每次冷启动都从零开始）→ 库一就绪就在后台**并行**预建全部键，用户搜索时全部命中缓存。
+        // v83（2026-10-11）：预热结果**落盘持久化**——v82 实测预热 106s 算完后被缓存上限清空
+        // （等于白算），且每次冷启动都重付 106s。现在 boot 先读盘（秒级）填充缓存、
+        // 只对库新增文本补算，差量足够时才重写盘文件。首搜从此即命中。
         let itemsForPinyin = catalog.items
         Task.detached(priority: .utility) {
+            let doc = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? ""
+            let cachePath = doc + "/pinyin_cache.bin"
             let t0 = Date()
-            PinyinIndex.warmUp(items: itemsForPinyin)
-            LiveDiag.write("拼音预热·完成 n=\(itemsForPinyin.count) 耗时=\(Int(Date().timeIntervalSince(t0) * 1000))ms")
+            let loaded = PinyinIndex.loadPersisted(from: cachePath)
+            if loaded > 0 {
+                LiveDiag.write("拼音缓存·读盘 n=\(loaded) 耗时=\(Int(Date().timeIntervalSince(t0) * 1000))ms")
+            }
+            PinyinIndex.warmUp(items: itemsForPinyin)   // 内部只补缺失键（读盘成功后通常近乎空跑）
+            // 差量大（首次/库大换代）才重写 70MB 级文件，日常冷启动不折腾盘
+            let missing = PinyinIndex.persistIfDirty(to: cachePath, minNewEntries: 1_000)
+            LiveDiag.write("拼音预热·完成 n=\(itemsForPinyin.count) 落盘=\(missing) 耗时=\(Int(Date().timeIntervalSince(t0) * 1000))ms")
         }
     }
 

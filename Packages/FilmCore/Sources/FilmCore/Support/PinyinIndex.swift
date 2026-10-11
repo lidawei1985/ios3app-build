@@ -43,6 +43,8 @@ public enum PinyinIndex {
     private final class Store: @unchecked Sendable {
         private let lock = NSLock()
         private var cache: [String: Key] = [:]
+        /// v83：自上次落盘后新现算的键数（读盘填充的不算）——决定冷启动要不要重写盘文件。
+        private var addedSincePersist = 0
 
         func key(for text: String) -> Key {
             lock.lock()
@@ -52,24 +54,30 @@ public enum PinyinIndex {
             let k = Self.compute(text)
 
             lock.lock()
+            if cache[text] == nil { addedSincePersist += 1 }
             // 上限兜底防异常数据把内存撑爆。
-            // ★ 2026-10-11 搜索卡死根修：旧上限 20,000 远小于工作集
-            //   （星幕 7.4 万片名 + 几十万演员名）→ 缓存刚攒满就被 removeAll 清空，
-            //   每次拼音搜索都对几十万字符串重跑 CFStringTransform（真机实测搜索转圈 2 分钟+）。
-            //   按 25 万条目内存 ≈ 30~50MB 量级，iPhone 完全可承受；超出才清。
-            if cache.count > 250_000 { cache.removeAll(keepingCapacity: true) }
+            // ★ 2026-10-11 v83：工作集实测 60 万+ 唯一文本（7.4 万片名 + 几十万演员/导演名），
+            //   旧上限 25 万 < 工作集 → 写满就 removeAll 全清 → 每次搜索大量现算（转圈 30~40s 实锤）。
+            //   阈值必须高于「读盘填充后的常驻量」，否则新键一插就触发全清。
+            if cache.count > 900_000 { cache = Dictionary(cache.prefix(600_000), uniquingKeysWith: { a, _ in a }) }
             cache[text] = k
             lock.unlock()
             return k
         }
 
         /// v82 预热专用：批量写入（一次加锁；不覆盖已有键——与并发搜索的现算结果兼容）。
+        /// ★ 2026-10-11 v83 致命 bug 修复：旧写法写入后 `count > 25万` 触发 removeAll——
+        ///   预热一次性写入 60 万键，**写完立刻把自己全清了**（106 秒预热归零，真机 livediag 实锤）。
+        ///   上限已提至 60 万（≥工作集），并改成只清"超出部分"不再整表清空。
         func insertBatch(_ pairs: [(String, Key)]) {
             guard !pairs.isEmpty else { return }
             lock.lock()
-            for (t, k) in pairs where cache[t] == nil { cache[t] = k }
-            // 上限兜底同 key(for:)：异常数据撑爆内存才清
-            if cache.count > 250_000 { cache.removeAll(keepingCapacity: true) }
+            var added = 0
+            for (t, k) in pairs where cache[t] == nil { cache[t] = k; added += 1 }
+            addedSincePersist += added
+            if cache.count > 900_000 { // 物理兜底：只会在数据规模异常膨胀时触发
+                cache = Dictionary(cache.prefix(600_000), uniquingKeysWith: { a, _ in a })
+            }
             lock.unlock()
         }
 
@@ -82,7 +90,10 @@ public enum PinyinIndex {
                 .compactMap { $0.first }
                 .map(String.init)
                 .joined()
-            return Key(full: plain, fullV: vForm, initials: initials)
+            // v83 内存优化：99.9% 文本无 ü，vForm == plain 时直接复用同一 String
+            //（Swift String 赋值是 COW 引用共享，不产生第二份存储）→ 全量键省 ~1/3 内存。
+            let v = (vForm == plain) ? plain : vForm
+            return Key(full: plain, fullV: v, initials: initials)
         }
 
         /// 中文 → 带声调拉丁，转小写。非中文字符原样保留（数字/英文同样可用）。
@@ -98,7 +109,7 @@ public enum PinyinIndex {
             return (m as String)
         }
 
-        /// 把带分音符（ü/ǖ/ǘ/ǚ/ǜ）的音节映射为 v：lǚ → lv。
+        /// 把中文 → 带分音符（ü/ǖ/ǘ/ǚ/ǜ）的音节映射为 v：lǚ → lv。
         /// 判据用 Unicode 规范分解里是否含组合分音符 U+0308，
         /// 这样声调符号（如 ǚ 同时带 caron 与 diaeresis）也能被识别。
         private static func vMapped(_ s: String) -> String {
@@ -112,6 +123,102 @@ public enum PinyinIndex {
                 }
             }
             return out
+        }
+
+        // MARK: 持久化（v83）
+
+        /// v83：返回 texts 中尚未进缓存的部分（差集），供 warmUp 只补缺、不重算。
+        func filterMissing(_ texts: [String]) -> [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !cache.isEmpty else { return texts }
+            return texts.filter { cache[$0] == nil }
+        }
+
+        /// 把当前缓存全量写盘。格式：magic "PYI1" + Int32 ver + Int32 count + N×(4 长度前缀 UTF-8 串)。
+        func persist(to path: String) -> Int {
+            lock.lock()
+            let entries = Array(cache)
+            lock.unlock()
+            guard !entries.isEmpty else { return 0 }
+
+            var buf = Data()
+            buf.reserveCapacity(entries.count * 120 + 16)
+            func putInt(_ v: Int32) {
+                withUnsafeBytes(of: v.littleEndian) { buf.append(contentsOf: $0) }
+            }
+            func putStr(_ s: String) {
+                let d = Array(s.utf8)
+                putInt(Int32(d.count))
+                buf.append(contentsOf: d)
+            }
+            buf.append(Data("PYI1".utf8))
+            putInt(1)
+            putInt(Int32(entries.count))
+            for (t, k) in entries {
+                putStr(t); putStr(k.full); putStr(k.fullV); putStr(k.initials)
+            }
+            do {
+                let tmp = path + ".tmp"
+                try buf.write(to: URL(fileURLWithPath: tmp), options: .atomic)
+                if FileManager.default.fileExists(atPath: path) {
+                    try FileManager.default.removeItem(atPath: path)
+                }
+                try FileManager.default.moveItem(atPath: tmp, toPath: path)
+                return entries.count
+            } catch {
+                try? FileManager.default.removeItem(atPath: path + ".tmp")
+                return 0
+            }
+        }
+
+        /// 仅当新增键数达到阈值才重写盘文件（日常冷启动白写 70MB 没意义）。
+        func persistIfDirty(to path: String, minNewEntries: Int) -> Int {
+            lock.lock()
+            let dirty = addedSincePersist
+            lock.unlock()
+            guard dirty >= minNewEntries else { return 0 }
+            let n = persist(to: path)
+            if n > 0 {
+                lock.lock()
+                addedSincePersist = 0
+                lock.unlock()
+            }
+            return n
+        }
+
+        /// 读盘填充缓存（合并语义，不覆盖已有键）。返回读入条数（0 = 无文件/损坏）。
+        func loadPersisted(from path: String) -> Int {
+            guard let data = FileManager.default.contents(atPath: path), data.count > 12,
+                  data[0] == UInt8(ascii: "P"), data[1] == UInt8(ascii: "Y"),
+                  data[2] == UInt8(ascii: "I"), data[3] == UInt8(ascii: "1") else { return 0 }
+            var off = 0
+            func rdInt() -> Int32? {
+                guard off + 4 <= data.count else { return nil }
+                let b0 = UInt32(data[off]), b1 = UInt32(data[off + 1])
+                let b2 = UInt32(data[off + 2]), b3 = UInt32(data[off + 3])
+                off += 4
+                return Int32(bitPattern: b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+            }
+            func rdStr() -> String? {
+                guard let n = rdInt(), n >= 0, off + Int(n) <= data.count else { return nil }
+                let s = String(data: data.subdata(in: off..<off + Int(n)), encoding: .utf8)
+                off += Int(n)
+                return s
+            }
+            off = 4
+            guard rdInt() == 1, let cnt = rdInt(), cnt > 0, cnt < 5_000_000 else { return 0 }
+            var pairs: [(String, Key)] = []
+            pairs.reserveCapacity(Int(cnt))
+            for _ in 0..<cnt {
+                guard let t = rdStr(), let f = rdStr(), let v = rdStr(), let i = rdStr() else { break }
+                pairs.append((t, Key(full: f, fullV: v, initials: i)))
+            }
+            guard !pairs.isEmpty else { return 0 }
+            lock.lock()
+            for (t, k) in pairs where cache[t] == nil { cache[t] = k }
+            lock.unlock()
+            return pairs.count
         }
     }
 
@@ -144,7 +251,8 @@ public enum PinyinIndex {
     /// 不能直接 `return [(String, Key)]`（CI 实测编译错：declared closure result
     /// '[(String, Key)]' is incompatible with contextual type 'Void'）→ 用 Sendable 盒子收集。
     public static func warmUp(texts: [String]) {
-        let targets = texts.filter { !$0.isEmpty }
+        // v83：已缓存的（含读盘填充的）直接跳过——库换代后只补差集，冷启动不重复付 106s 全额。
+        let targets = store.filterMissing(texts.filter { !$0.isEmpty })
         guard !targets.isEmpty else { return }
         let n = targets.count
         let chunks = max(1, min(n, ProcessInfo.processInfo.activeProcessorCount * 2))
@@ -224,4 +332,26 @@ public enum PinyinIndex {
         if k.initials.contains(needle) || k.full.contains(needle) || k.fullV.contains(needle) { return .person }
         return .none
     }
+
+    // MARK: - 预热结果落盘持久化（v83）
+    //
+    // 冷启动每次重算 60 万键（真机实测 106 秒）不可接受 → 预热完成后整体写盘，
+    // 下次冷启动直接读盘填充缓存（秒级就绪），首搜即命中、不再转圈。
+    // 键是纯函数结果（同文本同键），与库版本无关，不随换代失效；
+    // 库新增条目 → 新文本现算进缓存，下次冷启动全量重存覆盖。
+
+    /// 把当前缓存全量写盘（先写 .tmp 再原子替换）。返回写入条数（0 = 失败）。
+    @discardableResult
+    public static func persist(to path: String) -> Int { store.persist(to: path) }
+
+    /// 仅当「自上次落盘后新增键数 ≥ minNewEntries」时才重写盘文件（避免日常冷启动白写 70MB）。
+    /// 返回写入条数（0 = 不需要写/失败）。
+    @discardableResult
+    public static func persistIfDirty(to path: String, minNewEntries: Int) -> Int {
+        store.persistIfDirty(to: path, minNewEntries: minNewEntries)
+    }
+
+    /// 从盘上读入缓存（与已有缓存合并、不覆盖）。返回读入条数（0 = 无文件/损坏）。
+    @discardableResult
+    public static func loadPersisted(from path: String) -> Int { store.loadPersisted(from: path) }
 }
