@@ -284,6 +284,15 @@ public struct FeedAdapter {
             guard let arr = buckets[tier], !arr.isEmpty else { continue }
             out += rankedHits(arr)
         }
+        // v85 诊断（rdh 失灵定位）：打出运行时关键人名的实际键值与各档位桶计数，
+        // 只在 needle 命中诊断名单时写一条，无额外开销。定位后移除。
+        if needle == "rdh" || needle == "llz" {
+            let probe = needle == "rdh" ? "任达华" : "李丽珍"
+            let k = PinyinIndex.key(for: probe)
+            let counts = buckets.map { "\($0.key): \($0.value.count)" }.sorted().joined(separator: " ")
+            let inPP = buckets[PinyinIndex.Tier.personPrefix]?.contains { ($0.matchedPerson ?? "").contains(probe) } ?? false
+            LiveDiag.write("拼音诊断·\(needle) 探针[\(probe)] full=\(k.full) ini=\(k.initials) tier=\(PinyinIndex.personTier(probe, needle: needle).rawValue) personPrefix含探针=\(inPP) 桶=[\(counts)]")
+        }
         return Array(out.prefix(limit))
     }
 
