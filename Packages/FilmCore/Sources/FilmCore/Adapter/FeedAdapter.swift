@@ -225,7 +225,12 @@ public struct FeedAdapter {
         var loose: [FeedItem] = []                          // 跳字容错档（漏「的」等连接字仍可命中）
         var personOf: [String: (String, String)] = [:]      // dedupId → (人名, 身份)
         let qLoose = q.replacingOccurrences(of: " ", with: "")
-        let looseON = qLoose.count >= 3                     // 太短的 query 做跳字匹配会误命中泛滥
+        // v87：跳字容错只对「非拼音查询」开放。纯字母查询（rdh/llz/lcw）时，
+        // 子序列会在英文片名的拉丁字母里大量误命中（Hard Truths → 去空格后 r..d..h 按序命中），
+        // 而中文通道整体排在拼音档之前 → 几十条噪声把 personPrefix（任达华 411 条）压出第一屏，
+        // 用户感知就是「rdh 搜不到任达华」。v85 探针实锤：桶序正确、展示序错误。
+        // 中文查询（杀人者的购物中心漏「的」）不受影响，原容错能力保留。
+        let looseON = qLoose.count >= 3 && !PinyinIndex.isPinyinQuery(q)
         for it in items {
             if it.title.hasPrefix(q) { prefix.append(it) }
             else if it.title.contains(q) { contains.append(it) }
