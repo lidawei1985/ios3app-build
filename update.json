@@ -1,7 +1,7 @@
 {
-  "stamp": "0a535ee58a14",
-  "note": "relay sync: v96 \u56de\u6eda\u5230 v87 \u57fa\u7ebf\uff0c\u53ea\u7559\u96c6\u6570/\u6362\u6e90/\u500d\u901f\u4e09\u9879\u4fee\u590d [build-fix]",
-  "builtAt": "2026-10-17T13:20:22Z",
+  "stamp": "848e4a44c7b0",
+  "note": "fix(poster): \u70b9\u64ad\u6e90\u6d77\u62a5\u4e0d\u51fa\u56fe/\u4e00\u76f4\u8f6c\u5708\u6839\u4fee\uff08\u8865\u56fe\u94fe\u8def+\u56fe\u5e8a\u8bf7\u6c42\u7b56\u7565\uff09[build-fix]",
+  "builtAt": "2026-10-17T15:15:44Z",
   "apps": {
     "xingmu": {
       "asset": "XingmuISO.ipa"
