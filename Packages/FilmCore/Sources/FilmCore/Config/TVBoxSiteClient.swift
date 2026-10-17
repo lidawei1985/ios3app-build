@@ -112,11 +112,12 @@ public actor TVBoxSiteClient {
         s.timeoutIntervalForResource = 12
         searchSession = URLSession(configuration: s)
         // 2026-10-17 实测（10 个内置点播源 ac=detail&ids=）：0.6s / 0.8s / 1.3s / 3.1s 属正常，
-        // 但天涯 15s 无响应、索倪 detail 70s 才回、部分源 Cloudflare 直接 403。
-        // 补图走**5s/8s 极短会话**：5s 拿不到就当没图，绝不用长会话（30s/60s）去等一张装饰图。
+        // 索倪 detail 三次采样 1.2s / 7.2s / 10s 超时（同一时刻不同请求，源站本身在抖），
+        // 天涯 15s 无响应、部分请求被 Cloudflare 直接 403。
+        // 补图走**6s/10s 极短会话**：拿不到就当没图，绝不用长会话（30s/60s）去等一张装饰图。
         let p = URLSessionConfiguration.default
-        p.timeoutIntervalForRequest = 5
-        p.timeoutIntervalForResource = 8
+        p.timeoutIntervalForRequest = 6
+        p.timeoutIntervalForResource = 10
         p.httpMaximumConnectionsPerHost = 8
         posterSession = URLSession(configuration: p)
     }
