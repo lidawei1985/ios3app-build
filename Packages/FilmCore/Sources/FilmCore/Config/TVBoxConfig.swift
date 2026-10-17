@@ -187,8 +187,11 @@ public enum TVBoxFetcher {
         let session = URLSession(configuration: cfg)
         for url in candidateURLs(urlString) {
             var req = URLRequest(url: url)
-            // TVBox 原版以 okhttp UA 出请求；部分 CMS/订阅服务对空/默认 UA 返回空体或 403
-            req.setValue("okhttp/4.10.0", forHTTPHeaderField: "User-Agent")
+            // TVBox 原版以 okhttp UA 出请求；部分 CMS/订阅服务对空/默认 UA 返回空体或 403。
+            // 2026-10-17：`okhttp/4.10.0` 这条字符串已被部分站的 Cloudflare WAF 直接拦（实测索倪
+            // 返回 403 挑战页，换 Safari / okhttp3 均正常）→ 订阅拉取同样改浏览器 UA。
+            req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
             if let tok = authToken, !tok.isEmpty,
                url.host?.contains("github") == true {
                 req.setValue("token \(tok)", forHTTPHeaderField: "Authorization")

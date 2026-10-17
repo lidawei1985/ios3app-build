@@ -90,6 +90,9 @@ public actor TVBoxSiteClient {
     private let session: URLSession
     /// 搜索专用短会话（见 init 注释：78 源实测，慢源能把整批拖死 → 搜索必须短超时）
     private let searchSession: URLSession
+    /// 补图专用极短会话（2026-10-17「点播源海报一直转圈」根修）。
+    /// 补图是**装饰性**请求：拿不到图顶多没图，绝不允许它把整页拖住。
+    private let posterSession: URLSession
 
     public init(site: TVBoxSite) {
         self.site = site
@@ -108,6 +111,14 @@ public actor TVBoxSiteClient {
         s.timeoutIntervalForRequest = 8
         s.timeoutIntervalForResource = 12
         searchSession = URLSession(configuration: s)
+        // 2026-10-17 实测（10 个内置点播源 ac=detail&ids=）：0.6s / 0.8s / 1.3s / 3.1s 属正常，
+        // 但天涯 15s 无响应、索倪 detail 70s 才回、部分源 Cloudflare 直接 403。
+        // 补图走**5s/8s 极短会话**：5s 拿不到就当没图，绝不用长会话（30s/60s）去等一张装饰图。
+        let p = URLSessionConfiguration.default
+        p.timeoutIntervalForRequest = 5
+        p.timeoutIntervalForResource = 8
+        p.httpMaximumConnectionsPerHost = 8
+        posterSession = URLSession(configuration: p)
     }
 
     // MARK: - 客户端复用（2026-10-03「搜索加速 / 内置源加载加速」根修）
@@ -134,19 +145,49 @@ public actor TVBoxSiteClient {
         TVBoxClientPool.shared(for: site)
     }
 
+    /// 主用 UA（2026-10-17）：
+    /// 实测 `suoniapi.com`（索倪）的 Cloudflare 对 **`okhttp/4.10.0` 这一条字符串**直接拦——
+    /// 同一 URL：`okhttp/4.10.0` → 8s 零字节超时 / 403 "Attention Required"；
+    /// `okhttp/3.12.0` → 2.4s 200；iPhone Safari UA → 3.0s 200。旧的硬编码 UA 让索倪
+    /// **每一个请求都在超时**（列表慢、搜索结果为空、海报补不出来，全是这一个头造成的）。
+    /// 故主用浏览器 UA（实测 非凡/360/猫眼/金鹰/新浪/豪华 全部 200），异常再兜底。
+    private static let browserUA =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    /// 兜底 UA：只在「服务器应答了但非 200」（403/406/WAF 挑战）时换它重试一次。
+    private static let fallbackUA = "okhttp/3.12.0"
+
+    /// 单次出网：返回 (数据, 服务器是否应答过)。
+    /// `answered=false` 表示超时/连接失败——这种情况**不重试**（重试只会把超时翻倍）。
+    private func fetch(_ url: URL, ua: String, session s: URLSession) async -> (data: Data?, answered: Bool) {
+        var req = URLRequest(url: url)
+        req.setValue(ua, forHTTPHeaderField: "User-Agent")
+        req.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        req.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+        do {
+            let (data, resp) = try await s.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            return (code == 200 && !data.isEmpty ? data : nil, true)
+        } catch {
+            return (nil, false)
+        }
+    }
+
     private func api(_ query: [String: String], via sess: URLSession? = nil) async -> Data? {
         guard var comps = URLComponents(string: site.api), comps.scheme != nil else { return nil }
         var items = comps.queryItems ?? []
         for (k, v) in query { items.append(URLQueryItem(name: k, value: v)) }
         comps.queryItems = items
         guard let url = comps.url else { return nil }
-        var req = URLRequest(url: url)
-        // TVBox 原版以 okhttp UA 出请求；部分 CMS 对空/默认 UA 返回空体
-        req.setValue("okhttp/4.10.0", forHTTPHeaderField: "User-Agent")
-        if let (data, resp) = try? await (sess ?? session).data(for: req),
-           (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
+        let s = sess ?? session
+        let first = await fetch(url, ua: Self.browserUA, session: s)
+        if let data = first.data {
             // GBK 源归一化为 UTF-8（FilmJSON 解码只认 UTF-8；TVBox 原版自动转码）
             return Self.normalizeUTF8(data) ?? data
+        }
+        // 被 WAF 挡（有应答但非 200）→ 换兜底 UA 再试一次；超时则不重试
+        if first.answered {
+            let second = await fetch(url, ua: Self.fallbackUA, session: s)
+            if let data = second.data { return Self.normalizeUTF8(data) ?? data }
         }
         return nil
     }
@@ -340,46 +381,101 @@ public actor TVBoxSiteClient {
 
     // MARK: - 列表补图（34包根修「内置源海报不显示」）
 
-    /// ac=list 的 vod_pic 全空（8 内置源 2026-09-22 并发实测全空；图只在 ac=detail 返回）。
-    /// 对无 poster 的条目并发补 detail 仅取图；picCache 防翻页/重进重复拉。
+    /// ac=list 的 vod_pic 全空（2026-09-22 实测 8 源、2026-10-17 复测 10 源全部如此；
+    /// 图只在 ac=detail 返回）。对无 poster 的条目补 detail 仅取图。
+    ///
+    /// ★ 2026-10-17 根修「点播源海报不出来、一直转圈」（用户原话：
+    ///   「点播源海报不出来不要跟我说是源本身的问题…很多点播源都是这样」）：
+    ///   旧实现有三个硬伤，与源站好坏无关，全是客户端自己造的：
+    ///   ① 补图 detail 走的是 `session`（**30s 请求 / 60s 资源**）—— 装饰图用了"正片级"超时。
+    ///      一页 20~24 条、6 并发 → 4 波 × 30s = **最长 120s 全页空白转圈**；
+    ///   ② 补图失败调的是 `detail()`，它内部会 `SourceHealth.record(ok:false)`。
+    ///      一次翻页失败 24 次 → 连挂 3 次即熔断 10 分钟 → **源在搜索/浏览里整体消失**
+    ///      （这正是"内置源不显示"的暗雷）。补图失败 ≠ 源坏，绝不该改健康度；
+    ///   ③ 失败没有负缓存，滚回原处 / 再翻回来会**整套重拉一遍**，用户看到的就是"永远在转圈"。
+    ///
+    ///   现在的口径：
+    ///   · 先吃 picCache，再吃 **本地片库片名兜底**（`TitlePosterIndex`，零网络秒出图）；
+    ///   · 真的没有的才发 detail，走 `posterSession`（**5s/8s**）；
+    ///   · 整页补图**总预算 6s**，到点就带着已拿到的部分返回，剩下的留占位；
+    ///   · 连挂 3 条判定该源 detail 端点当前不可用 → 立即收工（不再白等第 4 波）；
+    ///   · 失败记 `picMiss` 负缓存（10 分钟），期间同一条目不再重试。
     private var picCache: [String: String] = [:]
+    private var picMiss: [String: Date] = [:]
+
+    /// 单页补图总预算（秒）。装饰性请求，宁可少几张图，也不让用户盯着转圈。
+    private static let posterBudget: TimeInterval = 6
+    /// 补图并发（detail 是轻请求，单条实测 0.6~3.1s；10 并发一页约 2~3 波）
+    private static let posterConcurrency = 10
+    /// 负缓存时长（秒）：失败的条目 10 分钟内不再发 detail
+    private static let posterMissTTL: TimeInterval = 600
+
+    /// 补图专用 detail：**不写 SourceHealth**（补图失败是装饰问题，不能把源判死）。
+    private func detailForPic(_ vodId: String) async -> String? {
+        guard let data = await api(["ac": "detail", "ids": vodId], via: posterSession),
+              let rsp = decodeCMS(data),
+              let first = rsp.list?.first else { return nil }
+        return normalizedPic(first.vodPic)
+    }
 
     public func enrichPosters(_ items: [FeedItem], limit: Int = 24) async -> [FeedItem] {
         var out = items
         func noPic(_ it: FeedItem) -> Bool { (it.poster?.url ?? "").isEmpty }
-        // 先吃缓存
+        let now = Date()
+
+        // ① 已被本地片库命中的（片名一致）：直接出图，零网络、零等待
+        for i in out.indices where noPic(out[i]) {
+            if let pic = TitlePosterIndex.shared.poster(for: out[i].title, year: out[i].year) {
+                out[i] = out[i].withPoster(pic)
+            }
+        }
+        // ② 本会话已补过的（含翻页回来/重进页面）
         for i in out.indices where noPic(out[i]) {
             if let pic = picCache[vodIdOf(out[i])], !pic.isEmpty {
                 out[i] = out[i].withPoster(pic)
             }
         }
-        let targets = out.indices.filter { noPic(out[$0]) }.prefix(limit)
+        // ③ 剩下的才发 detail；负缓存期内、超出 limit 的不发
+        var candidates: [Int] = []
+        for i in out.indices where noPic(out[i]) {
+            let vid = vodIdOf(out[i])
+            if let t = picMiss[vid], now.timeIntervalSince(t) < Self.posterMissTTL { continue }
+            candidates.append(i)
+        }
+        let targets = Array(candidates.prefix(limit))
         guard !targets.isEmpty else { return out }
-        await withTaskGroup(of: (Int, String?).self) { group in
-            // 限流 6 并发；回收的结果必须当场落盘应用，直接丢弃会白拉（34包修正）
-            func apply(_ idx: Int, _ pic: String?) {
-                guard let pic, !pic.isEmpty else { return }
-                picCache[vodIdOf(out[idx])] = pic
-                out[idx] = out[idx].withPoster(pic)
-            }
-            var inFlight = 0
-            for idx in targets {
-                if inFlight >= 6 {
-                    if let (doneIdx, pic) = await group.next() { apply(doneIdx, pic) }
-                    inFlight -= 1
+
+        let deadline = Date().addingTimeInterval(Self.posterBudget)
+        var pending = targets
+        var consecutiveFail = 0
+        while !pending.isEmpty, Date() < deadline, consecutiveFail < 3 {
+            let wave = Array(pending.prefix(Self.posterConcurrency))
+            pending.removeFirst(wave.count)
+            await withTaskGroup(of: (Int, String?).self) { group in
+                for idx in wave {
+                    let vid = vodIdOf(out[idx])
+                    group.addTask { [weak self] in
+                        guard let self else { return (idx, nil) }
+                        return (idx, await self.detailForPic(vid))
+                    }
                 }
-                let vodId = vodIdOf(out[idx])
-                group.addTask { [weak self] in
-                    guard let self else { return (idx, nil) }
-                    let d = await self.detail(vodId: vodId)
-                    return (idx, d?.poster?.url)
+                for await (idx, pic) in group {
+                    let vid = vodIdOf(out[idx])
+                    if let pic, !pic.isEmpty {
+                        picCache[vid] = pic
+                        picMiss[vid] = nil
+                        out[idx] = out[idx].withPoster(pic)
+                        consecutiveFail = 0
+                    } else {
+                        picMiss[vid] = Date()
+                        consecutiveFail += 1
+                    }
                 }
-                inFlight += 1
             }
-            for await (idx, pic) in group { apply(idx, pic) }
         }
         return out
     }
+
 
     /// dedupId = tvbox:<siteId>:<vodId>，siteId 可含冒号（builtin:xxx）——去两段前缀取 vodId。
     private func vodIdOf(_ it: FeedItem) -> String {
@@ -388,12 +484,15 @@ public actor TVBoxSiteClient {
         return rest.hasPrefix(prefix) ? String(rest.dropFirst(prefix.count)) : rest
     }
 
-    /// vod_pic 归一化：空 → nil；相对路径 → 拼源站 host；绝对 → 原样。
+    /// vod_pic 归一化：空 → nil；协议相对 `//host/x.jpg` → 补 scheme；相对路径 → 拼源站 host；绝对 → 原样。
     private func normalizedPic(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         if raw.hasPrefix("http") { return raw }
         if let comps = URLComponents(string: site.api), let host = comps.host {
             let scheme = comps.scheme ?? "https"
+            // 2026-10-17：`//cdn.xxx/x.jpg` 这种协议相对地址以前会被拼成 `https://源站///cdn.xxx/...`
+            // （必然 404 → 海报永远出不来），这里先按自身 host 补协议。
+            if raw.hasPrefix("//") { return "\(scheme):\(raw)" }
             return "\(scheme)://\(host)\(raw.hasPrefix("/") ? "" : "/")\(raw)"
         }
         return nil

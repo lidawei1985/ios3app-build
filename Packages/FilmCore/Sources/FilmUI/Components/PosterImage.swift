@@ -13,6 +13,13 @@ public final class PosterLoader {
     private let session: URLSession
     private let inflight = NSLock()
     private var inflightTasks: [String: Task<Data?, Never>] = [:]
+
+    /// 失败负缓存（2026-10-17「海报一直转圈」根修）：
+    /// 一个 URL 拉挂了，10 分钟内再遇到同一 URL **直接落占位**，不再发起请求、不再转圈。
+    /// 否则：滚走再滚回来、退出再进页面、翻页翻回来 —— 每个都重新走一遍完整重试阶梯，
+    /// 用户看到的就是"这几张图永远在转"。10 分钟后自动放行（弱网恢复后还能自愈）。
+    private var failedUntil: [String: Date] = [:]
+    private static let failTTL: TimeInterval = 600
     /// 35包：主视觉 15 张打进 APK（hbn_manifest.json：海报URL→包内文件名），打开就有，不依靠网络
     /// 做成 **static let**（懒加载 + `swift_once`，天然线程安全）而不是纯实例属性：
     /// 主视觉选片跑在后台 `Task.detached`（见 `HomeView.computeShelves`），要判「这张图有没有
@@ -47,8 +54,19 @@ public final class PosterLoader {
         Task.detached(priority: .background) { try? FileManager.default.removeItem(at: legacy) }
         let cfg = URLSessionConfiguration.default
         // 34包提速：超时 15→8s（慢图快速失败落占位，不堵整面墙）；每 host 并发 6→12（60 张墙排队减半）
-        cfg.timeoutIntervalForRequest = 8
+        // 2026-10-17 根修「点播源海报一直转圈」：
+        //   · 请求级 6s、资源级 12s **硬上限** —— 旧配置只有 request 8s，且重试阶梯 3 轮 × 2 次
+        //     等于单个格子最坏 **48s** 都在转圈（一张图把整面墙的观感拖死）；
+        //   · 补 UA / Accept —— 旧实现一个头都不发（裸 URLSession），部分图床对
+        //     非浏览器 UA 直接挂起/403（实测同一张图：无 UA 3.9s 失败，Safari UA 0.85s 成功）。
+        cfg.timeoutIntervalForRequest = 6
+        cfg.timeoutIntervalForResource = 12
         cfg.httpMaximumConnectionsPerHost = 12
+        cfg.httpAdditionalHeaders = [
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        ]
         cfg.urlCache = URLCache(memoryCapacity: 32 << 20, diskCapacity: 256 << 20, directory: dir)
         session = URLSession(configuration: cfg)
         primeBundledToDisk()
@@ -166,6 +184,8 @@ public final class PosterLoader {
         // 内存键带档位：同一张图小格/大图各存一份解码结果（磁盘只存一份原图，不重复下载）
         let memKey = PosterLoader.memKey(key, maxSide)
         if let hit = memory.object(forKey: memKey as NSString) { return hit }
+        // 负缓存命中 → 立刻返回 nil（落占位图），**不进网络、不转圈**
+        if isRecentlyFailed(key) { return nil }
         // ★ v76.1 取证：下面三段（包内解码 / 磁盘读+解码 / 降采样）都是**同步阻塞**。
         //   async 函数不保证离开了调用方所在线程 —— 若调用点在 @MainActor（如 HeroTintStore /
         //   SwiftUI 视图 .task），这几段就可能整段压在主线程上，而主视觉走的是 **原图档 maxSide=0**。
@@ -211,15 +231,22 @@ public final class PosterLoader {
             defer {
                 self.inflight.lock(); self.inflightTasks[key] = nil; self.inflight.unlock()
             }
+            let t1 = Date()
             var data = await self.downloadData(urlString)
-            // 重试退避（2026-09-21 增强：弱网/拥塞场景 1→3 轮；被墙 IP 重试仍失败则落占位）
-            for backoff in [400_000_000.0, 2_000_000_000.0] where data == nil {
-                try? await Task.sleep(nanoseconds: UInt64(backoff))
+            // 重试口径（2026-10-17 收口）：旧实现 1→3 轮 × 内部 2 次 = 单格最坏 **48s 转圈**。
+            // 现在只有「**快速失败**」（<3s 就断：连接被重置、源站瞬时 5xx）才补一次；
+            // 若是**超时**（6s 才断），说明这个图床就是死的，再等一次毫无意义 → 直接落占位。
+            // 配合 6s/12s 硬超时，单格最坏 ≈6.5s，绝大多数 1~2s 出图。
+            if data == nil, Date().timeIntervalSince(t1) < 3 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
                 data = await self.downloadData(urlString)
             }
-            // 10-01 P0：磁盘**存原始数据**（旧实现把降采样后的 UIImage 再压 JPEG 0.82 存盘，
-            // 等于"永久降质"——这就是越用越糊的第二根因）。
-            if let data { self.saveDisk(key, data) }
+            if let data {
+                self.clearFailed(key)
+                self.saveDisk(key, data)
+            } else {
+                self.markFailed(key)
+            }
             return data
         }
         inflightTasks[key] = task
@@ -237,13 +264,33 @@ public final class PosterLoader {
 
     private func downloadData(_ urlString: String) async -> Data? {
         guard let url = URL(string: urlString) else { return nil }
-        for _ in 0..<2 {
-            if let (data, resp) = try? await session.data(from: url),
-               (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
-                return data
-            }
+        // 单次尝试（不再内部 for 0..<2 双打——外层已有一次重试，双打会把最坏耗时乘 2）
+        if let (data, resp) = try? await session.data(from: url),
+           (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
+            return data
         }
         return nil
+    }
+
+    // MARK: - 失败负缓存
+
+    private func isRecentlyFailed(_ key: String) -> Bool {
+        inflight.lock(); defer { inflight.unlock() }
+        guard let until = failedUntil[key] else { return false }
+        if Date() < until { return true }
+        failedUntil[key] = nil
+        return false
+    }
+
+    private func markFailed(_ key: String) {
+        inflight.lock(); defer { inflight.unlock() }
+        if failedUntil.count > 800 { failedUntil.removeAll() }   // 防无界增长
+        failedUntil[key] = Date().addingTimeInterval(Self.failTTL)
+    }
+
+    private func clearFailed(_ key: String) {
+        inflight.lock(); defer { inflight.unlock() }
+        failedUntil[key] = nil
     }
 
     /// 入库（带字节成本，交给 NSCache 按内存量淘汰）。

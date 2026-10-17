@@ -15,7 +15,17 @@ public final class CatalogStore: ObservableObject {
     }
 
     @Published public private(set) var phase: Phase = .idle
-    @Published public private(set) var catalog: Catalog = Catalog(items: [], categories: [])
+    /// 目录一落地就把它登记进「片名 → 海报」兜底索引（`TitlePosterIndex`）。
+    /// 2026-10-17：点播源列表页 `ac=list` 不带图、只能逐条发 detail 补图，慢源一多整页转圈；
+    /// 有了这份索引，凡本地片库已有的片名，点播源页**零网络**立刻出图。
+    @Published public private(set) var catalog: Catalog = Catalog(items: [], categories: []) {
+        didSet {
+            // 后台建索引：9 万条一次遍历不能压在主线程（目录更新有 4 个赋值点）
+            let items = catalog.items
+            guard !items.isEmpty else { return }
+            Task.detached(priority: .utility) { TitlePosterIndex.shared.remember(items) }
+        }
+    }
     @Published public private(set) var ledger = DataLedger()
     @Published public private(set) var networkOffline = false
     /// 演员头像映射（演员名 → TMDB 头像 URL，persons.json）。
