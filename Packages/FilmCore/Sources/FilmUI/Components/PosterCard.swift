@@ -141,12 +141,19 @@ public struct PosterGrid: View {
     var badges: [String: String] = [:]
     /// 点击痕迹标注（2026-10-02「点 1 得 2」取证：区分自有片库 / 内置源结果）
     var traceTag: String = ""
+    /// 「滑到最后一张」回调（2026-10-17）：翻页触发的**正确挂点**。
+    /// LazyVGrid 的 cell 是真懒加载（只创建视口附近的），所以把触发挂在最后一格上，
+    /// 语义就是「用户真的滑到底了」。旧写法把触发挂在外层 footer 的 `.onAppear` 上，
+    /// 而外层是**非懒** ScrollView → footer 一插入就 onAppear，只触发一次，
+    /// 后续再也不会 fire → 底部永远停在「正在加载更多…」（主人 2026-10-17 报的现象）。
+    var onReachEnd: (() -> Void)? = nil
     @EnvironmentObject private var router: DetailRouter
 
     public init(items: [FeedItem], columns: Int = 3, badges: [String: String] = [:],
-                traceTag: String = "") {
+                traceTag: String = "", onReachEnd: (() -> Void)? = nil) {
         self.items = items; self.columns = columns; self.badges = badges
         self.traceTag = traceTag
+        self.onReachEnd = onReachEnd
     }
 
     /// 去重后的真实渲染列表（身份唯一，见 `dedupKeepOrder`）
@@ -161,6 +168,7 @@ public struct PosterGrid: View {
                     PosterCard(item: item, badge: badges[item.dedupId])
                 }
                 .buttonStyle(.plain)
+                .onAppear { if i == shown.count - 1 { onReachEnd?() } }
                 // 2026-10-03 主人：电视剧页第一列卡片经常点不动 / 像没点到。
                 // 真机 taptrace 证实 Button action 根本没触发，推测是 iOS 屏幕左缘系统返回手势区
                 // 把落在第一列的轻触当拖拽吞掉。contentShape 保证整卡都是命中区，配合 leading

@@ -636,7 +636,10 @@ public struct SiteBrowseView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16).padding(.top, 10)
                 }
-                PosterGrid(items: display, columns: 3)
+                PosterGrid(items: display, columns: 3,
+                           // 翻页触发挂在**最后一格**（LazyVGrid 真懒加载）：
+                           // 只有用户真滑到底才 fire；追加完新的一格在屏幕外，不会连环触发。
+                           onReachEnd: { if searchResults == nil { Task { await loadMore() } } })
                     .padding(.vertical, 12)
                 if searchResults == nil { loadMoreFooter }
             }
@@ -645,8 +648,13 @@ public struct SiteBrowseView: View {
         }
     }
 
-    /// 列表底部（2026-10-17 取代 35 包的「上一页/下一页」翻页条）：
-    /// 露出就自动追加下一页，用户只管往下滑 —— 不该让人按「下一页」。
+    /// 列表底部（2026-10-17 取代 35 包的「上一页/下一页」翻页条）。
+    ///
+    /// ★ 这里**只做状态显示，不做触发**。触发已经移到 `PosterGrid.onReachEnd`
+    ///   （挂在最后一格上，真懒加载）。旧实现把 `.onAppear` 挂在这里，而外层 ScrollView
+    ///   是**非懒**容器 → 这一行一插入布局就 onAppear，只响一次，之后再也不会响：
+    ///   用户滑到底只看到「正在加载更多…」永远转圈，下一页永远不来（主人 2026-10-17 报的现象）。
+    ///   顺带把文案改成如实反映状态 —— 不在加载中就不许显示"正在加载"。
     @ViewBuilder
     private var loadMoreFooter: some View {
         if reachedEnd {
@@ -656,15 +664,20 @@ public struct SiteBrowseView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
             }
-        } else {
+        } else if loadingMore || paging {
             HStack(spacing: 8) {
                 ProgressView().scaleEffect(0.75)
                 Text("正在加载更多…").font(.caption2).foregroundStyle(theme.textSecondary)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
-            // 触发器本体：这一行只在滚到底时才 appear（LazyVGrid 撑高后自然出屏）
-            .onAppear { Task { await loadMore() } }
+        } else {
+            Text(pageCount > 0 && totalCount > items.count
+                 ? "上滑继续加载 · 还有 \(totalCount - items.count) 部"
+                 : "上滑继续加载")
+                .font(.caption2).foregroundStyle(theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
         }
     }
 
@@ -797,6 +810,9 @@ public struct SiteBrowseView: View {
         defer { loadingMore = false }
         let n = page + 1
         let r = await client.listPage(categoryId: selectedCategory?.id, page: n)
+        // 2026-10-17：**网络失败 ≠ 没有下一页**。旧实现只要 items 为空就判「到底」，
+        // 一次抖动就把这个源的分页永久判死（之后怎么滑都不再加载，只留「正在加载更多」）。
+        if !r.ok && r.items.isEmpty { return }          // 这一页没拉成：保持可继续加载
         if r.items.isEmpty {
             if n > 1 { pageCount = max(1, n - 1) }
             reachedEnd = true
@@ -821,8 +837,10 @@ public struct SiteBrowseView: View {
         var seen = Set(items.map(\.dedupId))
         var pageCounts: [Int] = []
         var added = 0
+        var anyOk = false
         for cat in cats {
             let r = await cli.listPage(categoryId: cat.id, page: n)
+            if r.ok { anyOk = true }
             if r.pageCount > 0 { pageCounts.append(r.pageCount) }
             var fresh: [FeedItem] = []
             for it in r.items where seen.insert(it.dedupId).inserted { fresh.append(it) }
@@ -832,6 +850,8 @@ public struct SiteBrowseView: View {
                 added += kept.count
             }
         }
+        // 2026-10-17 同 `loadMore`：全组都没应答（网络抖动）→ 不判到底，保留继续加载
+        guard anyOk else { return }
         page = n
         if let m = pageCounts.min() { pageCount = m }
         if added == 0 { reachedEnd = true }
