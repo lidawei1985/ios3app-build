@@ -2642,8 +2642,8 @@ public final class PlayerViewModel: NSObject, ObservableObject {
                     // ★ 2026-10-17：真正开始播放时把用户选的倍速补应用一次
                     //   （暂停中设的倍速不会即时生效，见 setRate 注释）。
                     //   `!boostActive` 守卫：长按加速期间 player.rate 是临时的 2.0，别抢它。
-                    if !self.boostActive, self.rate != 1.0, p.rate != Float(self.rate) {
-                        p.rate = Float(self.rate)
+                    if let s = self, !s.boostActive, s.rate != 1.0, p.rate != Float(s.rate) {
+                        p.rate = Float(s.rate)
                     }
                     self?.switchingLine = false
                     self?.recordQualitySuccessIfNeeded()   // v69：首次真正起播 → 落一条成功样本
