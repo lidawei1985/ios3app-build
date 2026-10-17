@@ -181,8 +181,17 @@ public actor TVBoxSiteClient {
         comps.queryItems = items
         guard let url = comps.url else { return nil }
         let s = sess ?? session
+        // v99「点完半天没海报」根修之一：UA 记忆。索倪类 WAF 源对 browserUA 先挡一刀（~2s 403），
+        // 旧实现**每一条** detail 补图都重新付这笔税 → 一页 24 条白等 48s。
+        // 某条 UA 成功过就记住，后续直接用；失效（应答非 200/超时）则丢弃记忆落回标准流程。
+        if let ua = stickyUA {
+            let hit = await fetch(url, ua: ua, session: s)
+            if let d = hit.data { return Self.normalizeUTF8(d) ?? d }
+            stickyUA = nil
+        }
         let first = await fetch(url, ua: Self.browserUA, session: s)
         if let data = first.data {
+            stickyUA = Self.browserUA
             // GBK 源归一化为 UTF-8（FilmJSON 解码只认 UTF-8；TVBox 原版自动转码）
             return Self.normalizeUTF8(data) ?? data
         }
@@ -191,7 +200,10 @@ public actor TVBoxSiteClient {
         // 403 在浏览/详情场景下等价于「该源当前不可达」，直接失败更体面。
         if allowUAFallback, first.answered {
             let second = await fetch(url, ua: Self.fallbackUA, session: s)
-            if let data = second.data { return Self.normalizeUTF8(data) ?? data }
+            if let data = second.data {
+                stickyUA = Self.fallbackUA
+                return Self.normalizeUTF8(data) ?? data
+            }
         }
         return nil
     }
@@ -406,6 +418,8 @@ public actor TVBoxSiteClient {
     ///   · 失败记 `picMiss` 负缓存（10 分钟），期间同一条目不再重试。
     private var picCache: [String: String] = [:]
     private var picMiss: [String: Date] = [:]
+    /// v99：实测可用 UA 记忆（见 api()），挂在 client 实例上 = 按源记忆（client 按 site 共享）。
+    private var stickyUA: String?
 
     /// 单页补图总预算（秒）。装饰性请求，宁可少几张图，也不让用户盯着转圈。
     private static let posterBudget: TimeInterval = 6
@@ -422,7 +436,11 @@ public actor TVBoxSiteClient {
         return normalizedPic(first.vodPic)
     }
 
-    public func enrichPosters(_ items: [FeedItem], limit: Int = 24) async -> [FeedItem] {
+    /// - Parameter onItem: v99「点完半天没海报」根修之二——**单条出图即回调**（旧实现要等
+    ///   一整批 10 条 detail 全回来才上屏，批内最慢那条决定用户等多久；现在谁先到谁先上屏，
+    ///   海报一张一张冒出来）。回调在非主线程触发，调用方自行跳 MainActor。
+    public func enrichPosters(_ items: [FeedItem], limit: Int = 24,
+                              onItem: ((FeedItem) -> Void)? = nil) async -> [FeedItem] {
         var out = items
         func noPic(_ it: FeedItem) -> Bool { (it.poster?.url ?? "").isEmpty }
         let now = Date()
@@ -470,6 +488,7 @@ public actor TVBoxSiteClient {
                         picMiss[vid] = nil
                         out[idx] = out[idx].withPoster(pic)
                         consecutiveFail = 0
+                        onItem?(out[idx])   // v99：单条出图即上屏，不等整批
                     } else {
                         picMiss[vid] = Date()
                         consecutiveFail += 1

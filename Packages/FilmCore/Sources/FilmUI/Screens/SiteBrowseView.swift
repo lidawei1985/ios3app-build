@@ -246,7 +246,15 @@ public struct SiteBrowseView: View {
                 let end = min(start + 10, list.count)
                 let chunk = Array(list[start..<end])
                 start = end
-                let enriched = await client.enrichPosters(chunk, limit: chunk.count)
+                let enriched = await client.enrichPosters(chunk, limit: chunk.count) { hit in
+                    // v99：搜索结果同款——单条出图即上屏
+                    Task { @MainActor in
+                        guard let u = hit.poster?.url, !u.isEmpty, let cur0 = searchResults else { return }
+                        searchResults = cur0.map { x in
+                            (x.dedupId == hit.dedupId && (x.poster?.url ?? "").isEmpty) ? x.withPoster(u) : x
+                        }
+                    }
+                }
                 var pics: [String: String] = [:]
                 for it in enriched {
                     if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }
@@ -573,7 +581,7 @@ public struct SiteBrowseView: View {
         } else if let error = loadError {
             VStack(spacing: 12) {
                 EmptyStateView(icon: "exclamationmark.triangle", title: "该源暂时不可用", subtitle: error)
-                Button("换个源试试") { Task { await bootstrap() } }
+                Button("重新加载") { Task { await bootstrap() } }
                     .font(.footnote).foregroundStyle(theme.accent)
             }
         } else {
@@ -745,6 +753,15 @@ public struct SiteBrowseView: View {
         async let firstAsync = client.listPage(categoryId: nil, page: 1)
         if needCats { categories = await client.categories() }
         let first = await firstAsync
+        // v99 根修「该源暂时没有内容」误报（主人 2026-10-18：索倪翻页/改源动不动就"没有内容"）：
+        // 首屏**网络失败**（超时/WAF 拦截）与「源真的没内容」原来不分——失败落进空态文案，
+        // 用户以为源废了。`!ok` = 网络层没拉成（reload/loadMore 都有同款守卫，bootstrap 漏了），
+        // 给失败态+重试入口，绝不冒充空源。
+        if !first.ok, first.items.isEmpty {
+            loading = false
+            loadError = "网络不给力，第一页没拉下来（不是源没内容）。点下方按钮重试。"
+            return
+        }
         selectedBucket = nil
         selectedCategory = nil
         subCategory = nil
@@ -770,6 +787,13 @@ public struct SiteBrowseView: View {
         skipNote = nil
         var cat = selectedCategory
         var first = await client.listPage(categoryId: cat?.id, page: 1)
+        // v99：与 bootstrap 同款守卫——分类首包网络失败不得冒充「分类/源没内容」，
+        // 否则索倪这类 Cloudflare 抖动源一抖就弹空态文案（主人实测投诉）。
+        if !first.ok, first.items.isEmpty {
+            loading = false
+            loadError = "网络不给力，列表没拉下来（不是源没内容）。点下方按钮重试。"
+            return
+        }
         // 35包·空分类自动跳过（用户钦定 2026-09-22：「分类里比如电影就一部…那道源里就一部电影」）：
         // 上游**确实**存在空分类（实测：无尽资源「电影/动漫/资讯/头条/体育赛事」、
         // 360资源「篮球/反转爽剧」=0 条；金鹰资源则无一空分类）。
@@ -976,7 +1000,15 @@ public struct SiteBrowseView: View {
                 let end = min(start + 10, snapshot.count)
                 let chunk = Array(snapshot[start..<end])
                 start = end
-                let enriched = await client.enrichPosters(chunk, limit: chunk.count)
+                let enriched = await client.enrichPosters(chunk, limit: chunk.count) { hit in
+                    // v99：单条出图即上屏——海报一张一张冒出来，不等一批 10 条里最慢的那条
+                    Task { @MainActor in
+                        guard let u = hit.poster?.url, !u.isEmpty else { return }
+                        items = items.map { x in
+                            (x.dedupId == hit.dedupId && (x.poster?.url ?? "").isEmpty) ? x.withPoster(u) : x
+                        }
+                    }
+                }
                 var pics: [String: String] = [:]
                 for it in enriched {
                     if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }

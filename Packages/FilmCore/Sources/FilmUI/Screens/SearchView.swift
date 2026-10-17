@@ -341,14 +341,23 @@ public struct SearchView: View {
                 self.searching = false
                 self.suggestions = Self.makeSuggestions(from: found, query: q)
                 // v87：拼音查询命中人名 → 内置源改用「人名中文名」补一轮源搜。
-                // 采集源只认中文：wd=llz 实测 78 源只回 4 条不相干垃圾，wd=李丽珍 回 36 条
-                // （含《蜜桃成熟时》8 条）——这就是「以前打 LLZ 能看到蜜桃成熟时、现在没了」的根因。
-                // 找不到人名时退回原关键词，行为与旧版一致。
+                // v99 根修「llz 搜不出蜜桃成熟时」（主人 2026-10-18 实测）——旧实现两处致命：
+                // ① 只取**第一个**命中人名：llz 同时命中刘亮佐/李丽珍/Rammellzee，取到谁看排序
+                //    运气，真机上第一个成了刘亮佐 → 全源搜错人，蜜桃成熟时永远出不来；
+                // ② startTVSearch 拿中文名当防过期键（`q == self.query`），拼音查询时中文名 ≠
+                //    输入框原文 → 守卫把整个接力结果**直接丢弃** → 人名接力事实上从未生效过。
+                // 现在：命中人名按本地命中数排序取前 3（李丽珍 44 条 > 刘亮佐），全部并发搜全源
+                // 合并去重；防过期键改用「输入框原文」（见 startTVSearch(names:typed:)）。
                 if PinyinIndex.isPinyinQuery(q) {
-                    if let cn = found.compactMap(\.matchedPerson).first {
-                        self.startTVSearch(cn)
-                    } else {
+                    var counts: [String: Int] = [:]
+                    for h in found {
+                        if let p = h.matchedPerson { counts[p, default: 0] += 1 }
+                    }
+                    let names = counts.sorted { $0.value > $1.value }.map(\.key)
+                    if names.isEmpty {
                         self.startTVSearch(q)
+                    } else {
+                        self.startTVSearch(names: Array(names.prefix(3)), typed: q)
                     }
                 }
             }
@@ -365,36 +374,69 @@ public struct SearchView: View {
     /// 实现：按端选源池（成人端＝索倪+成人源 / 心屋＝共通源 / 星幕＝剧集源），
     /// 并发搜 → 结果过 `NavPolicy.allowsItem` 端隔离 → 多源合并去重（成人源多，取前 14 个）。
     private func startTVSearch(_ raw: String) {
+        startTVSearch(names: [raw], typed: raw)
+    }
+
+    /// 多人名并发搜全源（v99）：主名（本地命中数最多的人名）渐进上屏，补充名并发收口后合并去重。
+    /// - Parameter typed: 输入框原文，作防过期键——旧版误用「中文人名」当键，拼音查询时
+    ///   中文名 ≠ 输入框内容，`q == self.query` 守卫把接力结果整个丢弃（从未生效的根因）。
+    private func startTVSearch(names rawNames: [String], typed: String) {
         let mode = store.profile.mode
-        let q = raw.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { tvResults = []; tvSearching = false; return }
+        let typedKey = typed.trimmingCharacters(in: .whitespaces)
+        let names = rawNames.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard let primary = names.first else { tvResults = []; tvSearching = false; return }
         tvSearching = true
         // v82 保险丝：网搜位硬上限 20s —— 预算哨兵（GlobalSiteSearch v82）之下网搜最多 6s+源超时，
         // 任何未预期路径挂死也保证「搜索中…/还在搜更多源…」不会永久挂着不放。
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 20_000_000_000)
-            if q == self.query { self.tvSearching = false }
+            if typedKey == self.query.trimmingCharacters(in: .whitespaces) { self.tvSearching = false }
         }
         tvSearchTask = Task {
             // 复位网搜位：取消 / 过期 / 正常结束**每条退出路径**都要复位，
             // 否则「还在搜更多源…」会一直挂着不放（用户会以为搜索卡死）。
             // 只在仍是当前关键词时才复位，避免把新一次搜索刚置上的位误关。
-            defer { Task { @MainActor in if q == self.query { self.tvSearching = false } } }
+            defer { Task { @MainActor in
+                if typedKey == self.query.trimmingCharacters(in: .whitespaces) { self.tvSearching = false }
+            } }
             try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled, q == self.query else { return }
+            guard !Task.isCancelled, typedKey == self.query.trimmingCharacters(in: .whitespaces) else { return }
             // 2026-10-01 用户钦定「全部带搜索都搜全部源内容」：不再 prefix(14) 截流，
             // 全量内置源分批并发（健康源优先、先到先上屏）。
             self.tvResults = []
-            let hits = await GlobalSiteSearch.search(q, mode: mode, onBatch: { all in
+            // v99：补充人名（第 2、3 个）与主名**并发**搜，收口后合并去重；
+            // 主名结果边收边上屏，不等补充名。
+            async let extraHits = Self.searchExtraNames(Array(names.dropFirst().prefix(2)), mode: mode)
+            let hits = await GlobalSiteSearch.search(primary, mode: mode, onBatch: { all in
                 Task { @MainActor in
-                    guard q == self.query else { return }
+                    guard typedKey == self.query.trimmingCharacters(in: .whitespaces) else { return }
                     self.tvResults = Array(all.prefix(36))
                 }
             })
+            let extras = await extraHits
             await MainActor.run {
-                guard q == self.query else { return }   // 用户已继续输入：过期结果丢弃
-                self.tvResults = Array(hits.prefix(36))
+                guard typedKey == self.query.trimmingCharacters(in: .whitespaces) else { return }
+                var seen = Set(hits.map(\.dedupId))
+                var merged = hits
+                for it in extras where !seen.contains(it.dedupId) {
+                    seen.insert(it.dedupId)
+                    merged.append(it)
+                }
+                self.tvResults = Array(merged.prefix(36))
             }
+        }
+    }
+
+    /// 补充人名并发检索（无渐进回调，收口一次性返回）。v99 多人名接力用。
+    private static func searchExtraNames(_ names: [String], mode: String) async -> [FeedItem] {
+        guard !names.isEmpty else { return [] }
+        return await withTaskGroup(of: [FeedItem].self) { group in
+            for n in names {
+                group.addTask { await GlobalSiteSearch.search(n, mode: mode) }
+            }
+            var acc: [FeedItem] = []
+            for await h in group { acc.append(contentsOf: h) }
+            return acc
         }
     }
 
