@@ -1,7 +1,7 @@
 {
-  "stamp": "7d07191a7bf1",
-  "note": "fix(list): \u70b9\u64ad\u6e90\u7ffb\u9875\u6839\u4fee\uff08\u89e6\u53d1\u70b9/\u5047\u52a0\u8f7d/\u5931\u8d25\u53ef\u91cd\u8bd5\uff09 [build-fix]",
-  "builtAt": "2026-10-17T15:28:16Z",
+  "stamp": "7aa9b99a3553",
+  "note": "feat(sites): \u6e90\u6c60 +3 \u6761\u5b9e\u6d4b\u5408\u683c\u6e90\uff08\u6309\u5185\u5bb9\u5206\u7ea7\u5206\u6c60\uff09 [build-fix]",
+  "builtAt": "2026-10-17T16:04:14Z",
   "apps": {
     "xingmu": {
       "asset": "XingmuISO.ipa"
