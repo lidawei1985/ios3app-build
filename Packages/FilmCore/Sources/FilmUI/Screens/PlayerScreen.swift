@@ -2477,7 +2477,10 @@ public final class PlayerViewModel: NSObject, ObservableObject {
 
     public func setRate(_ r: Double) {
         rate = r
-        player?.rate = Float(r)          // 播放中直接改速率；暂停时静默记录
+        // ★ 2026-10-17：暂停状态下**不要**写 `player.rate` —— rate > 0 在 AVPlayer 里
+        //   等价于「开始播放」，旧写法会让用户只是选了个倍速，画面自己动起来。
+        //   暂停时只记在 `rate` 属性上，等真正播放时由 timeControlStatus 观察补应用。
+        if let p = player, isPlaying, !boostActive { p.rate = Float(r) }
     }
 
     // MARK: - 长按加速（大牌标配：长按 2x，松手回原速）
@@ -2531,7 +2534,6 @@ public final class PlayerViewModel: NSObject, ObservableObject {
         detachObservers()            // 旧会话观察者必须先拆，避免悬挂
         let p = AVPlayer(url: url)
         p.allowsExternalPlayback = true
-        if rate != 1.0 { p.rate = Float(rate) }
         // 2026-10-01 三修：显式赋值（旧写法只在 >0 时覆盖）——否则上一次遗留的
         // `pendingResume` 会在「切集从头播」时被误用，把新一集跳到旧一集的点位上。
         pendingResume = resumeSeconds > 0 ? resumeSeconds : 0
@@ -2541,6 +2543,16 @@ public final class PlayerViewModel: NSObject, ObservableObject {
         startAdDetection(for: url)   // v61：异步识别本线路的插播广告段（识别不到就不做任何事）
         isBuffering = true
         p.play()
+        // ★★★ 2026-10-17（主人：「我现在是两倍速播放 下一集还要点一次」）★★★
+        //   病根两条，都在这一小段：
+        //   ① 旧版把 `p.rate = 2.0` 写在 `p.play()` **前面** —— 而 `AVPlayer.play()`
+        //      的语义就是「rate = 1.0」，于是刚设的倍速立刻被它抹掉；
+        //   ② 新建 player 的 item 此刻还没 readyToPlay，此时设 rate 本来也会被丢弃。
+        //   结果：切下一集 / 自动连播 / 换线路之后，实际速率回到 1.0，
+        //   但 `model.rate` 仍是 2.0（UI 档位条还高亮 2.0x）→ 用户必须再点一次 2.0x
+        //   才"真的"变 2 倍 —— 完全对得上「还要点一次」这句描述。
+        //   现在：play() 之后立刻补设一次；item 真就绪后再兜一次（见 registerObservers）。
+        if rate != 1.0 { p.rate = Float(rate) }
         if reconnectTries == 0 { startedAt = Date() }   // 只有真起播算宽限，重连不算
     }
 
@@ -2588,8 +2600,16 @@ public final class PlayerViewModel: NSObject, ObservableObject {
                     // 进去还是从头」。正解三条：① 容差交回系统（±0.5s，HLS 容忍到邻近可 seek 点即可）；
                     // ② **以 seek 完成回调为准**，finished=false 就重试（最多 3 次）；
                     // ③ 确认落点后才清 `pendingResume`，不再"先清后做"（清了但没跳成就彻底丢了）。
-                    if it.status == .readyToPlay, self.pendingResume > 0 {
-                        self.seekToResume(it, seconds: self.pendingResume, attempt: 0)
+                    if it.status == .readyToPlay {
+                        // ★ 2026-10-17 倍速跨集保持（主人：「两倍速播放 下一集还要点一次」）：
+                        //   item 就绪后再兜一次 rate —— 起播瞬间设的那一次，在 HLS 尚未
+                        //   readyToPlay 时可能被系统丢弃，这里补上，切集后就不必再点一次。
+                        if self.rate != 1.0, let pl = self.player, pl.rate != Float(self.rate) {
+                            pl.rate = Float(self.rate)
+                        }
+                        if self.pendingResume > 0 {
+                            self.seekToResume(it, seconds: self.pendingResume, attempt: 0)
+                        }
                     }
                     guard it.status == .failed else { return }
                     filmLog.error("player: item FAILED err=\(it.error?.localizedDescription ?? "nil") url=\(it.asset as? AVURLAsset != nil ? "ok" : "?")")
@@ -2619,6 +2639,12 @@ public final class PlayerViewModel: NSObject, ObservableObject {
                 //（此前 isBuffering 只在 play() 置 true 无人复位，导致"缓冲中"永久卡屏）
                 self?.isBuffering = (p.timeControlStatus == .waitingToPlayAtSpecifiedRate)
                 if p.timeControlStatus == .playing {
+                    // ★ 2026-10-17：真正开始播放时把用户选的倍速补应用一次
+                    //   （暂停中设的倍速不会即时生效，见 setRate 注释）。
+                    //   `!boostActive` 守卫：长按加速期间 player.rate 是临时的 2.0，别抢它。
+                    if !self.boostActive, self.rate != 1.0, p.rate != Float(self.rate) {
+                        p.rate = Float(self.rate)
+                    }
                     self?.switchingLine = false
                     self?.recordQualitySuccessIfNeeded()   // v69：首次真正起播 → 落一条成功样本
                 }

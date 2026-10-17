@@ -50,7 +50,7 @@ public enum GlobalSiteSearch {
     @discardableResult
     public static func search(
         _ raw: String, mode: String,
-        perSourceLimit: Int = 12, totalLimit: Int = 120, budget: TimeInterval = 6.0,
+        perSourceLimit: Int = 12, totalLimit: Int = 120, budget: TimeInterval = 9.0,
         onBatch: (([FeedItem]) -> Void)? = nil
     ) async -> [FeedItem] {
         let q = raw.trimmingCharacters(in: .whitespaces)
@@ -58,7 +58,22 @@ public enum GlobalSiteSearch {
         let sites = pool(forMode: mode)
 
         return await withTaskGroup(of: SearchEvent.self) { group in
-            for site in sites {
+            // ★★★ 2026-10-17 三次修复（主人：「只搜索到了自有片库的！源的那？没有啊」）★★★
+            //
+            // 旧写法 `for site in sites { group.addTask }` = **54 个源同一瞬间全捅出去**。
+            // 实测（`ios_ctrl/_probe_all.py`）：50 源 12 并发时好源也集体假超时 ——
+            // 自家链路先被打爆，跟源站无关；串行复测同一批源立刻恢复正常。
+            // 于是 6s 预算内**一条公网结果都收不到** → 用户只看到自有片库，
+            // 「还在搜更多源…」一直挂着，最后什么都没有。
+            //
+            // 改成**滚动限流**：同时在飞最多 10 个，回来一个立刻补一个。
+            // 优点：链路不被压垮、快源照样先上屏、6s 内能扫完几十个源。
+            var iterator = sites.makeIterator()
+            var running = 0
+            let maxInFlight = 10
+
+            func submitOne() {
+                guard let site = iterator.next() else { return }
                 group.addTask {
                     // 只捕获不可变量（site/q/mode/perSourceLimit），可变状态一律留在 group 体内——
                     // 并发闭包里改共享状态既不安全，Swift 严格并发下也过不了编译
@@ -70,7 +85,11 @@ public enum GlobalSiteSearch {
                     }
                     return .hits(r.isEmpty ? [] : Array(r.prefix(perSourceLimit)))
                 }
+                running += 1
             }
+
+            for _ in 0..<maxInFlight { submitOne() }
+
             // 哨兵：预算硬上限（与源任务同池竞争，到点立即唤醒主循环收口）
             group.addTask {
                 let ns = UInt64(max(0, budget) * 1_000_000_000)
@@ -82,15 +101,24 @@ public enum GlobalSiteSearch {
             var seen = Set<String>()
             var exhausted = false
             while let ev = await group.next() {
-                if case .budgetExhausted = ev { exhausted = true; group.cancelAll() }
-                guard case .hits(let r) = ev, !r.isEmpty, !exhausted else { continue }
-                var added = false
-                for it in r where acc.count < totalLimit {
-                    let k = it.title + "|" + (it.year ?? "")
-                    if seen.insert(k).inserted { acc.append(it); added = true }
+                switch ev {
+                case .budgetExhausted:
+                    exhausted = true
+                    group.cancelAll()
+                case .hits(let r):
+                    running = max(0, running - 1)
+                    guard !exhausted else { continue }
+                    if !r.isEmpty {
+                        var added = false
+                        for it in r where acc.count < totalLimit {
+                            let k = it.title + "|" + (it.year ?? "")
+                            if seen.insert(k).inserted { acc.append(it); added = true }
+                        }
+                        if added { onBatch?(acc) }
+                        if acc.count >= totalLimit { group.cancelAll() }
+                    }
+                    submitOne()   // 滚动补位：回来一个立刻补下一个
                 }
-                if added { onBatch?(acc) }
-                if acc.count >= totalLimit { group.cancelAll() }
             }
             return acc
         }

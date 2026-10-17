@@ -1007,8 +1007,17 @@ public struct DetailView: View {
     /// 没有集名信息 —— 所以它天然不可能提供「第 N 集」。旧版没区分这一点：
     /// 点「源3」选中了，但点选集格仍然拿 `ep.index`（中台源的线路）起播 →
     /// 用户看到的就是「换了源完全没变化」。现在按这一位显式分流。
+    ///
+    /// ★ 2026-10-17 实机修正：旧判据 `firstIdx >= playCandidates.count` 会**误判片源自带线路**
+    ///   （真机《深渊2026》明明 200 集，却提示「源1 只提供整片直链」）。
+    ///   现在改成「到选集网格里找这个下标」：找得到 = 有分集；找不到 = 纯直链。
     private var selectedChipIsWholeFilm: Bool {
-        selectedChipFirstIdx >= item.playCandidates.count
+        let gs = sourceChipGroups
+        guard gs.indices.contains(selectedChip) else { return false }
+        // 第一个 chip 恒为片源自带线路（`allSourceLines` 先放 playCandidates），必有分集
+        if selectedChip == 0 { return false }
+        let idx = selectedChipFirstIdx
+        return !episodeGroups.contains { grp in grp.eps.contains { $0.index == idx } }
     }
 
     /// 详情页「播放源」：一行 chips，**一个大源一个 chip**（片名下挂它聚合到的各 CMS 源站），
