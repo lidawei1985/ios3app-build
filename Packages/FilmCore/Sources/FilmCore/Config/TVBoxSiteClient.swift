@@ -441,18 +441,56 @@ public actor TVBoxSiteClient {
     }
 
     /// 搜索（ac=detail&wd=）。空结果≠源坏（可能真没这片），只有网络层失败才记熔断。
+    ///
+    /// ★ 2026-10-17 修复（主人：「换了索倪源……现在搜索不到了，也不显示内置源搜索结果」）：
+    ///   索倪源站把 `wd=` 搜索接口封了 —— `ac=detail&wd=蜜桃` 恒 HTTP 403 + Cloudflare 拦截页，
+    ///   6 种 UA 全 403；而同一分钟 `ac=list&pg=1`（浏览）200 正常。
+    ///   对照组 `wd=蜜桃`：非凡 6 条 / 猫眼 11 条 / 红牛3 17 条，全 200。
+    ///   ⇒ 是源站侧策略，不是我们参数写错；但界面表现是「点了没反应、内置源一条都没有」。
+    ///   现在探测到 403 就打 `SearchGate` 标记（7 天自动过期），后续直接跳过，
+    ///   不再每次搜索都白等它一个超时。
     public func search(_ keyword: String) async -> [FeedItem] {
+        let host = SearchGate.host(of: site.api)
+        if SearchGate.isSearchBlocked(host) { return [] }
         // 走短会话（8s）：慢源不再拖住整屏搜索，见 init 注释里的实测数据
         guard let data = await api(["ac": "detail", "wd": keyword], via: searchSession),
               let rsp = decodeCMS(data) else {
             // 空结果≠源坏（可能真没这片），只有网络层失败才记熔断。
             // 但**被预算取消**不算失败（见 GlobalSiteSearch 的 budget：到点就 cancelAll），
             // 否则每轮搜完都会把"还没轮到"的源误判成坏源、沉底后再也浮不上来。
-            if !Task.isCancelled { SourceHealth.shared.record(site.key, ok: false) }
+            if !Task.isCancelled {
+                // 先分清「源站封搜索」和「链路抖了一下」：只有真的 403 才贴封禁标签，
+                // 否则一个抖动就把源永久从搜索池里摘掉（这正是 10-17 那批假死源的教训）。
+                if let u = searchURL(keyword),
+                   await Self.statusCode(u, session: searchSession) == 403 {
+                    SearchGate.markSearchBlocked(host)
+                } else {
+                    SourceHealth.shared.record(site.key, ok: false)
+                }
+            }
             return []
         }
         SourceHealth.shared.record(site.key, ok: true)
         return (rsp.list ?? []).compactMap { map($0) }
+    }
+
+    /// 搜索用的完整 URL（只用于 403 探测，与 `api()` 里的拼法保持一致）。
+    private func searchURL(_ keyword: String) -> URL? {
+        guard var comps = URLComponents(string: site.api) else { return nil }
+        var items = comps.queryItems ?? []
+        items.append(URLQueryItem(name: "ac", value: "detail"))
+        items.append(URLQueryItem(name: "wd", value: keyword))
+        comps.queryItems = items
+        return comps.url
+    }
+
+    /// 只取状态码（区分 403 封禁 vs 超时/断流）。失败返回 -1。
+    private static func statusCode(_ url: URL, session: URLSession) async -> Int {
+        var req = URLRequest(url: url)
+        req.setValue("okhttp/4.10.0", forHTTPHeaderField: "User-Agent")
+        req.setValue("*/*", forHTTPHeaderField: "Accept")
+        guard let (_, resp) = try? await session.data(for: req) else { return -1 }
+        return (resp as? HTTPURLResponse)?.statusCode ?? -1
     }
 
     // MARK: - 列表补图（34包根修「内置源海报不显示」）
@@ -525,6 +563,11 @@ public actor TVBoxSiteClient {
     private func map(_ raw: CMSItem) -> FeedItem? {
         guard let vodId = raw.vodId?.value, !vodId.isEmpty,
               let name = raw.vodName, !name.isEmpty else { return nil }
+        // ★ 2026-10-17：凡是从源里经手的标题都喂给本地标题拼音库。
+        //   目的：让「LLZ」这类拼音查询将来能反查出中文片名（见 TitlePinyinCache 注释）。
+        //   实测依据：采集源 `wd=` 只匹配**片名**、不匹配演员（wd=李丽珍 → 4 个源全 0 条），
+        //   所以拼音搜索唯一的落地办法就是本地攒一份「标题 ↔ 拼音」映射。
+        TitlePinyinCache.record(name)
         let (defaultURL, lines) = TVBoxPlayParser.parse(playURL: raw.vodPlayUrl ?? "",
                                                         playFrom: raw.vodPlayFrom)
         let typeName = raw.typeName ?? raw.vodClass

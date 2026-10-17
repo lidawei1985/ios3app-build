@@ -20,7 +20,9 @@ public enum GlobalSiteSearch {
     public static func pool(forMode mode: String) -> [TVBoxSite] {
         var p = DefaultSites.tvDramaSources + DefaultSites.builtinVodSources(forMode: mode)
         p.sort { SourceHealth.shared.sortKey($0.key) < SourceHealth.shared.sortKey($1.key) }
-        return p.filter { $0.type != 3 }
+        // ★ 2026-10-17：已被判定「源站封了 wd= 搜索」的源不再入池（见 SearchGate）。
+        // 索倪实测恒 403，留着它只会每轮白烧一个超时，还让用户以为搜索卡死。
+        return p.filter { $0.type != 3 && !SearchGate.isSearchBlocked(api: $0.api) }
     }
 
     /// 跨全源搜索。
