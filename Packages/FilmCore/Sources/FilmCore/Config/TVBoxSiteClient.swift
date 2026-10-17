@@ -90,6 +90,10 @@ public actor TVBoxSiteClient {
     private let session: URLSession
     /// 搜索专用短会话（见 init 注释：78 源实测，慢源能把整批拖死 → 搜索必须短超时）
     private let searchSession: URLSession
+    /// ★ 2026-10-17：已经证实「HTTPS 握手被掐、HTTP 秒回」的 host。
+    /// 记下来之后同 host 的后续请求（分类 → 首页 → 翻页 → 补图）**直接走 http**，
+    /// 不再每条都先撞一次 6 秒的握手超时 —— 换源首屏从「26 秒」回到「一两个 RTT」。
+    private var preferHTTP: Set<String> = []
 
     public init(site: TVBoxSite) {
         self.site = site
@@ -99,8 +103,11 @@ public actor TVBoxSiteClient {
         //   同一批源站 **HTTP 明文 4.3s 就回、HTTPS 并发握手 25s 直接超时**
         //   （_probe_sites.py 十路并发对照，见台账）。30s 的超时在这里不是"耐心"，
         //   而是**把一次握手失败拖成半分钟白屏**。收到 15s/25s：够慢源回，又不至于长转。
-        cfg.timeoutIntervalForRequest = 9
-        cfg.timeoutIntervalForResource = 20
+        // ★ 2026-10-17：HTTPS 握手被掐时是**直接卡住**（实测 25s 才报 timeout），
+        //   所以这里的超时值 = 用户白等多久。正常源 1~4s 就回，6s 足够；
+        //   超时后立刻降级 http（4s 回），首屏最坏 ≈ 10s，且第二个请求起命中 host 记忆直接 4s。
+        cfg.timeoutIntervalForRequest = 6
+        cfg.timeoutIntervalForResource = 15
         // 同 host 连接池 6 条：与 enrichPosters 的并发上限对齐（并发握手正是被源站掐的那个点）
         cfg.httpMaximumConnectionsPerHost = 6
         session = URLSession(configuration: cfg)
@@ -144,6 +151,15 @@ public actor TVBoxSiteClient {
         for (k, v) in query { items.append(URLQueryItem(name: k, value: v)) }
         comps.queryItems = items
         let s = sess ?? session
+        let host = comps.host ?? ""
+        let isHTTPS = (comps.scheme ?? "").lowercased() == "https"
+
+        // ★ 2026-10-17 命中已知「HTTPS 被掐」的 host → 直接 http，省掉一次 6 秒空等。
+        if isHTTPS, preferHTTP.contains(host) {
+            comps.scheme = "http"
+            if let data = await Self.fetch(comps, session: s) { return data }
+            comps.scheme = "https"      // http 也不通 → 回 https 再给一次机会
+        }
         if let data = await Self.fetch(comps, session: s) { return data }
 
         // ★ 2026-10-17（主人：「换源不要说是源的问题，我用别的方式很快就打开」）——
@@ -153,12 +169,12 @@ public actor TVBoxSiteClient {
         //     https://suoniapi.com/…/vod?ac=list&pg=1         → 25.4s 超时
         //     http ://suoniapi.com（同参数）                   →  4.3s 有数据
         //   十路并发里 **全部 HTTPS 失败、全部 HTTP 成功**（`ios_ctrl/_probe_sites.py`）。
-        //   所以：同 host 一律保留 HTTPS 优先（安全），**失败立刻降级 http 重试一次**。
-        //   这一条就是「换源后一直转圈」的直接解药 —— 不再拿 15s 去等一个被掐的握手。
-        guard (comps.scheme ?? "").lowercased() == "https" else { return nil }
+        //   所以：同 host 保留 HTTPS 优先（安全），**失败立刻降级 http 重试一次**并记住该 host。
+        guard isHTTPS else { return nil }
         comps.scheme = "http"
         if let data = await Self.fetch(comps, session: s) {
-            LiveDiag.write("源请求降级 http 命中 host=\(comps.host ?? "?")")
+            preferHTTP.insert(host)
+            LiveDiag.write("源请求降级 http 并记住 host=\(host)")
             return data
         }
         return nil
