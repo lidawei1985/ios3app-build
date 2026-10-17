@@ -57,6 +57,10 @@ public struct DetailView: View {
     //   主人看到的「续播从第一集开始」的成因。现在只有 `playRequest` 一个来源。
     @State private var sourceIdx = 0        // 当前选集网格展示的线路（换源循环）
     @State private var lastEpName: String?  // 换源时保持同一集
+    /// ★ 2026-10-17（主人「源1 2 3…点源1直接播放了什么啊」）：播放源 chip 的**选中态**。
+    /// 旧实现高亮硬编码 `idx == 0`，且点一下就直接起播 → 用户只是想看看这个源有哪些集，
+    /// 结果画面直接被顶走。现在点 chip 只切「选中态 + 下方选集网格」，起播只由选集格/播放键决定。
+    @State private var selectedChip = 0
     @State private var summaryExpanded = false
     @State private var refreshingPlay = false
     /// 详情页取色（2026-09-23 用户钦定原型 `home_v2.html` 详情浮层一比一搬真机）：
@@ -846,7 +850,63 @@ public struct DetailView: View {
             let idx = URL(string: l.url).flatMap { u in cands.firstIndex(of: u) } ?? i
             groups[g, default: []].append((idx, n))
         }
-        return order.map { ($0, groups[$0] ?? []) }
+        let raw: [(line: String, eps: [(index: Int, name: String)])] = order.map { g in
+            let eps: [(index: Int, name: String)] = (groups[g] ?? []).map { (index: $0.0, name: $0.1) }
+            return (g, eps)
+        }
+        // ★ 2026-10-17：组内再切线路块（见 splitEpisodeBlocks 注释）。
+        //   只有真的切出 2 块以上才改名「线路N」；能切成 1 块时原样返回 → 正常剧零回归。
+        var out: [(line: String, eps: [(index: Int, name: String)])] = []
+        for (g, eps) in raw {
+            let blocks = Self.splitEpisodeBlocks(eps)
+            if blocks.count <= 1 {
+                out.append((g, eps))
+            } else {
+                for (i, b) in blocks.enumerated() {
+                    out.append(("线路\(i + 1)", b))
+                }
+            }
+        }
+        return out
+    }
+
+    /// 集名里的第一个数字（「第12集」「12」「EP12」→ 12）；没有数字 → nil。
+    static func episodeOrdinal(_ name: String) -> Int? {
+        guard let r = name.range(of: "[0-9]+", options: .regularExpression) else { return nil }
+        return Int(name[r])
+    }
+
+    /// ★ 2026-10-17 二次修复（主人：「集数还是错乱的」）——
+    /// 把「一个分组里被整段拼进来的多条线路」切开，每块 = **一条线路的整季**。
+    ///
+    /// 病根：中台 `play.lines` 里 `quality` 恒空 → 详情页只能归成 1 个 group，
+    /// 而源站把**多条线路的整季首尾相接**灌进同一个数组 → 网格 96 格长这样：
+    /// `第1集…第9集 | 02集…08集 | 17集 | 02集 … | 第41集 | 第56集 | 第80集 | 第88集`
+    /// （用户看到的「集数怎么变成这样了」）。
+    ///
+    /// 判据 = **集名序号回退**（新的比当前块最后一条还小 = 换线路了，重新从第1集起）。
+    /// 实测两条硬证据（`ios_ctrl/_probe_split.py`，ffzy 真数据）：
+    ///   · 《豆腐妈妈》213 集单线路：集名 01→213 单调递增 → **切 1 块，不误切** ✅
+    ///   · **不能按 URL 域名切**：这 213 集里 CDN 轮换了 3 个域名
+    ///     （super.ffzy-online6.com / svip.feifei-play.com / vip.ffzy-play10.com），
+    ///     按域名切会把一条完整线路劈成 65+71+77 三段 —— 已实测排除了这条路。
+    /// 用严格 `<`（不是 `<=`）：同序号的「第10集（下）」不会被误切开。
+    static func splitEpisodeBlocks(_ eps: [(index: Int, name: String)]) -> [[(index: Int, name: String)]] {
+        var out: [[(index: Int, name: String)]] = []
+        var cur: [(index: Int, name: String)] = []
+        var last: Int?
+        for ep in eps {
+            if let o = episodeOrdinal(ep.name) {
+                if let l = last, o < l, !cur.isEmpty {
+                    out.append(cur)
+                    cur = []
+                }
+                last = o
+            }
+            cur.append(ep)
+        }
+        if !cur.isEmpty { out.append(cur) }
+        return out
     }
 
     /// 是否电视剧：类型标记 tv，或**真分集**。
@@ -909,22 +969,26 @@ public struct DetailView: View {
                 LazyHStack(spacing: 10) {
                     ForEach(Array(sourceChipGroups.enumerated()), id: \.offset) { idx, g in
                         Button {
+                            // ★ 2026-10-17（主人「点源1直接播放了什么啊」）——
+                            //   点 chip **不再直接起播**：只切「选中态 + 下方选集网格」。
+                            //   起播一律交给「选集格 / 播放键」，避免误触把正在看的画面顶走。
+                            selectedChip = idx
                             lastEpName = nil
-                            // 用户主动选源 = 明确「从头播这一条源」（不续播、不按历史跳集）。
-                            ResumeTrace.note("pick·源chip 源\(idx + 1) line=\(g.firstIdx)")
-                            playRequest = PlayRequest(resume: false, line: g.firstIdx)
+                            if let gi = episodeGroups.firstIndex(where: { grp in
+                                grp.eps.contains { $0.index == g.firstIdx }
+                            }) {
+                                sourceIdx = gi
+                            }
+                            ResumeTrace.note("view·源chip 源\(idx + 1) line=\(g.firstIdx)（仅切换，不起播）")
                         } label: {
                             HStack(spacing: 5) {
                                 // ★ v69 显示口径（主人 2026-10-04「不要出现名字网址之类的 只显示源1源2源3」）：
-                                //   chip 只写「源N」，**不露源站名/网址**；N = 质量优先级顺位（源1 = 最快最稳，
-                                //   也是点开默认起播的那个）。真实品牌仍留在 SourceLine.source 里给账本记账。
+                                //   chip 只写「源N」，**不露源站名/网址**；N = 质量优先级顺位。
+                                // ★ 2026-10-17（主人「不要出现什么几条线」）：撤掉「N线」小角标 ——
+                                //   那个数字对用户没有任何决策价值，只会让 chip 变长变糊。
                                 Text("源\(idx + 1)")
                                     .font(.subheadline.weight(.semibold))
                                     .lineLimit(1)
-                                if g.count > 1 {
-                                    Text("\(g.count)线").font(.caption2)
-                                        .foregroundStyle(theme.textSecondary)
-                                }
                             }
                             .padding(.horizontal, 18).padding(.vertical, 11)
                             // ★ v60（主人 2026-10-04「源1 源2 也有框，但感觉不是纯玻璃、是深灰」）：
@@ -933,8 +997,8 @@ public struct DetailView: View {
                             //   只要还挂着材质，白度怎么调都还是灰的）。默认线路 accent 描边标出。
                             //   正解＝`.clear` 档（不挂任何材质、只叠极淡均匀白）→ 底色连同色相原样透出。
                             .filmGlass(cornerRadius: 999, tint: 0.08, strokeOpacity: 0.13, weight: .clear)
-                            .overlay(Capsule().stroke(idx == 0 ? theme.accent.opacity(0.55) : .white.opacity(0.13), lineWidth: idx == 0 ? 1 : 0.5))
-                            .foregroundStyle(idx == 0 ? theme.accent : theme.textPrimary)
+                            .overlay(Capsule().stroke(idx == selectedChip ? theme.accent.opacity(0.55) : .white.opacity(0.13), lineWidth: idx == selectedChip ? 1 : 0.5))
+                            .foregroundStyle(idx == selectedChip ? theme.accent : theme.textPrimary)
                         }
                         .buttonStyle(.plain)
                     }

@@ -90,10 +90,22 @@ public actor TVBoxSiteClient {
     private let session: URLSession
     /// 搜索专用短会话（见 init 注释：78 源实测，慢源能把整批拖死 → 搜索必须短超时）
     private let searchSession: URLSession
-    /// ★ 2026-10-17：已经证实「HTTPS 握手被掐、HTTP 秒回」的 host。
-    /// 记下来之后同 host 的后续请求（分类 → 首页 → 翻页 → 补图）**直接走 http**，
-    /// 不再每条都先撞一次 6 秒的握手超时 —— 换源首屏从「26 秒」回到「一两个 RTT」。
-    private var preferHTTP: Set<String> = []
+    /// ★ 2026-10-17：已证实**只有 https 能通**的 host（明文连接被拒）。
+    /// 持久化到 UserDefaults —— 实例内的 Set 靠不住（日志里同一 host 被"记住"三次仍每次重撞），
+    /// 而 UserDefaults 跨实例、跨进页面、跨冷启动都有效。
+    private static let httpsOnlyKey = "TVBoxHTTPSOnlyHosts"
+
+    private var httpsOnlyHosts: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: Self.httpsOnlyKey) ?? [])
+    }
+
+    private func markHTTPSOnly(_ host: String) {
+        guard !host.isEmpty else { return }
+        var a = UserDefaults.standard.stringArray(forKey: Self.httpsOnlyKey) ?? []
+        guard !a.contains(host) else { return }
+        a.append(host)
+        UserDefaults.standard.set(a, forKey: Self.httpsOnlyKey)
+    }
 
     public init(site: TVBoxSite) {
         self.site = site
@@ -106,8 +118,8 @@ public actor TVBoxSiteClient {
         // ★ 2026-10-17：HTTPS 握手被掐时是**直接卡住**（实测 25s 才报 timeout），
         //   所以这里的超时值 = 用户白等多久。正常源 1~4s 就回，6s 足够；
         //   超时后立刻降级 http（4s 回），首屏最坏 ≈ 10s，且第二个请求起命中 host 记忆直接 4s。
-        cfg.timeoutIntervalForRequest = 6
-        cfg.timeoutIntervalForResource = 15
+        cfg.timeoutIntervalForRequest = 8
+        cfg.timeoutIntervalForResource = 20
         // 同 host 连接池 6 条：与 enrichPosters 的并发上限对齐（并发握手正是被源站掐的那个点）
         cfg.httpMaximumConnectionsPerHost = 6
         session = URLSession(configuration: cfg)
@@ -146,43 +158,79 @@ public actor TVBoxSiteClient {
     }
 
     private func api(_ query: [String: String], via sess: URLSession? = nil) async -> Data? {
-        guard var comps = URLComponents(string: site.api), comps.scheme != nil else { return nil }
+        // ★ 2026-10-17（主人「看下日志源加载超级慢」）——
+        //   此前请求层**一个耗时都不落盘**：日志里全是「取图」，源请求记录被 600 行环形缓冲整个刷掉，
+        //   于是「慢」只能靠猜。现在每条请求都记：源名 / ac / pg / 实际毫秒 / 成败 / 走的 http 还是 https。
+        let t0 = Date()
+        var hit = false
+        var usedScheme = "-"
+        var lastErr = ""
+        defer {
+            let ms = Int(Date().timeIntervalSince(t0) * 1000)
+            LiveDiag.writeSite("源·请求 \(site.name) ac=\(query["ac"] ?? "-") pg=\(query["pg"] ?? "-") 用时=\(ms)ms 结果=\(hit ? "ok" : "失败") \(usedScheme)\(lastErr)")
+        }
+        guard var comps = URLComponents(string: site.api), comps.scheme != nil else {
+            lastErr = " api非法"
+            return nil
+        }
         var items = comps.queryItems ?? []
         for (k, v) in query { items.append(URLQueryItem(name: k, value: v)) }
         comps.queryItems = items
         let s = sess ?? session
         let host = comps.host ?? ""
         let isHTTPS = (comps.scheme ?? "").lowercased() == "https"
+        usedScheme = comps.scheme ?? "-"
+        guard let origin = comps.url else { lastErr = " url非法"; return nil }
 
-        // ★ 2026-10-17 命中已知「HTTPS 被掐」的 host → 直接 http，省掉一次 6 秒空等。
-        if isHTTPS, preferHTTP.contains(host) {
-            comps.scheme = "http"
-            if let data = await Self.fetch(comps, session: s) { return data }
-            comps.scheme = "https"      // http 也不通 → 回 https 再给一次机会
+        // ★★ 2026-10-17（主人：「10秒出内容以前几秒就出来了 现在40秒都有！你自己看日志吧」）
+        //
+        // 实盘日志（livediag.txt）三次连打，**同一个 host 记住三次**：
+        //   18:38:41 源请求降级 http 并记住 host=suoniapi.com
+        //   18:38:59 源请求降级 http 并记住 host=suoniapi.com
+        //   18:39:06 源请求降级 http 并记住 host=suoniapi.com
+        // 结论：① 「记住」没有跨请求生效（实例内 Set 靠不住）；② 每条请求都先白等一次握手超时。
+        // 进一个分类页要发 2~4 条请求（分类 / 第一页 / 详情 / 补图），一条 6s+4s = 10s，
+        // 串起来正好 30~40s —— 与用户体感完全对得上。
+        //
+        // 处置：不再"HTTPS 优先、失败再降级"，改成 **http 优先**（安全兜底仍在）。
+        // 依据是同一秒十路并发实测（ios_ctrl/_probe_sites.py）：
+        //   https://www.hongniuzy4.com/…/?ac=list&pg=1 → 25.4s 握手超时，0 字节
+        //   http ://www.hongniuzy4.com/…/?ac=list&pg=1 →  4.3s，200 / 6465 字节
+        //   https://suoniapi.com/…/?ac=list&pg=1        → 25.4s 超时
+        //   http ://suoniapi.com（同参数）              →  4.3s 有数据
+        // 首次就把 10s 的等待砍成 4s；且走过的结果**持久化**（UserDefaults），冷启动后依然有效。
+        if isHTTPS, var pc = URLComponents(url: origin, resolvingAgainstBaseURL: false) {
+            if httpsOnlyHosts.contains(host) {
+                // 这条源已证实只有 https 能通 → 别再浪费时间试明文
+                usedScheme = "https(记忆)"
+                if let data = await Self.fetchURL(origin, session: s) { hit = true; return data }
+                usedScheme = "http(重试)"
+            } else {
+                pc.scheme = "http"
+                usedScheme = "http(优先)"
+                if let pu = pc.url, let data = await Self.fetchURL(pu, session: s) { hit = true; return data }
+                usedScheme = "https(回退)"
+            }
+            // 明文不通 → 回 https（只支持 https 的源照常可用），成功则记住它是 https-only
+            if let data = await Self.fetchURL(origin, session: s) {
+                hit = true
+                markHTTPSOnly(host)
+                return data
+            }
+            lastErr = " 双协议均失败"
+            return nil
         }
-        if let data = await Self.fetch(comps, session: s) { return data }
-
-        // ★ 2026-10-17（主人：「换源不要说是源的问题，我用别的方式很快就打开」）——
-        //   **HTTPS 握手被掐，不是源站没内容**。实测同一源站同一秒：
-        //     https://www.hongniuzy4.com/…/vod/?ac=list&pg=1  → 25.4s 握手超时，0 字节
-        //     http ://www.hongniuzy4.com/…/vod/?ac=list&pg=1  →  4.3s，HTTP 200 / 6465 字节
-        //     https://suoniapi.com/…/vod?ac=list&pg=1         → 25.4s 超时
-        //     http ://suoniapi.com（同参数）                   →  4.3s 有数据
-        //   十路并发里 **全部 HTTPS 失败、全部 HTTP 成功**（`ios_ctrl/_probe_sites.py`）。
-        //   所以：同 host 保留 HTTPS 优先（安全），**失败立刻降级 http 重试一次**并记住该 host。
-        guard isHTTPS else { return nil }
-        comps.scheme = "http"
-        if let data = await Self.fetch(comps, session: s) {
-            preferHTTP.insert(host)
-            LiveDiag.write("源请求降级 http 并记住 host=\(host)")
-            return data
-        }
+        // 源本身就配成 http：单发即可
+        if let data = await Self.fetchURL(origin, session: s) { hit = true; return data }
+        lastErr = " http失败"
         return nil
     }
 
+    /// 实测「HTTPS 与 HTTP 并发竞速」不采用：这批 CMS 站对同 host 并发握手极不友好
+    /// （十路并发里 TLS 全挂），多开一条连接反而拖慢首包。故只做单发 + 协议优先级记忆。
+
     /// 单次 GET（200 且非空才算成功）；GBK 源在此归一化为 UTF-8。
-    private static func fetch(_ comps: URLComponents, session: URLSession) async -> Data? {
-        guard let url = comps.url else { return nil }
+    private static func fetchURL(_ url: URL, session: URLSession) async -> Data? {
         var req = URLRequest(url: url)
         // TVBox 原版以 okhttp UA 出请求；部分 CMS 对空/默认 UA 返回空体
         req.setValue("okhttp/4.10.0", forHTTPHeaderField: "User-Agent")

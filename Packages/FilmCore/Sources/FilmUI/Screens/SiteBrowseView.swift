@@ -709,9 +709,14 @@ public struct SiteBrowseView: View {
         //   实测这批 CMS 站（hongniuzy4 / suoniapi）对**同 host 并发 TLS 握手**极不友好 ——
         //   十路并发探测里 HTTPS 全挂（25s 握手超时）、HTTP 全过（4s）。并发两条请求正是
         //   把换源卡死的那一下。串行共用同一条 keep-alive 连接：多一个 RTT，换来能出内容。
+        // ★ 2026-10-17 回滚：上一版为躲「同 host 并发握手被掐」把这里改成了**串行**，
+        //   结果首屏变成 2 个 RTT 相加（分类 10s + 第一页 10s = 20s 起步）——
+        //   用户实测「现在 40 秒都有」有它一半责任。协议问题已在 TVBoxSiteClient.api 根治
+        //   （http 优先，不再有 TLS 握手），这里恢复并发：首屏 = max(分类, 第一页)。
         let needCats = categories.isEmpty
+        async let firstAsync = client.listPage(categoryId: nil, page: 1)
         if needCats { categories = await client.categories() }
-        let first = await client.listPage(categoryId: nil, page: 1)
+        let first = await firstAsync
         selectedBucket = nil
         selectedCategory = nil
         subCategory = nil

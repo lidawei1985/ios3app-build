@@ -223,7 +223,10 @@ public struct PlayerScreen: View {
             var last: Int? = nil
             for ep in g.eps {
                 if let o = Self.episodeOrdinal(ep.name) {
-                    if let l = last, o <= l, !cur.isEmpty {   // 序号回退 = 跨到了下一条线路的第 1 集
+                    if let l = last, o < l, !cur.isEmpty {   // 序号回退 = 跨到了下一条线路的第 1 集
+                        // ★ 2026-10-17：判据由 `<=` 收紧为 `<`（与 DetailView.splitEpisodeBlocks 完全对齐）。
+                        //   相等不算换线 —— 「第10集（上）」「第10集（下）」这种同序号续集不能被劈开；
+                        //   两处判据必须逐字一致，否则详情页网格与播放器面板会切出不同的块数、集数对不上。
                         out.append(cur)
                         cur = []
                     }
@@ -958,7 +961,7 @@ public struct PlayerScreen: View {
             var last: Int? = nil
             for ep in g.eps {
                 if let o = Self.episodeOrdinal(ep.name) {
-                    if let l = last, o <= l, !cur.isEmpty {
+                    if let l = last, o < l, !cur.isEmpty {
                         out.append(cur)
                         cur = []
                     }
