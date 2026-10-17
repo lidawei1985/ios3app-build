@@ -116,6 +116,9 @@ public struct PlayerScreen: View {
     @State private var gestureHintTask: Task<Void, Never>?
     @State private var showLinePanel = false
     @State private var showEpisodePanel = false
+    /// ★ 2026-10-17（主人图 1「集数怎么变成这样了？」）：选集面板当前显示的是**第几条线路的整季**。
+    /// 中台把多条线路的整季拼进同一条 `play.lines`，面板若平铺就会出「第1…第9集 → 02集 → 17集」的乱序重号。
+    @State private var selectedBlock = 0
     // 51包：原画面比例面板已删（比例改为底栏点一下循环切换 cycleAspect）
     /// 长按加速结束时刻（用于挡住"松手被当成单击→误暂停"）
     @State private var lastBoostEnd = Date.distantPast
@@ -937,6 +940,44 @@ public struct PlayerScreen: View {
         episodeGroups.map { $0.eps.count }.max() ?? 0
     }
 
+    // MARK: - ★ 2026-10-17 选集分块（主人图 1：「集数怎么变成这样了？」）
+
+    /// 把 `episodeGroups` 切成**真正的线路块**（每块 = 一条线路的整季）。
+    ///
+    /// 病根（复用 v78.2 `lineBlocks` 的同一条判据）：中台 `play.lines` 里 **每条不是一集**，
+    /// 而是"一条线路的整季 URL"，多条线路被整段拼在同一个数组里；`quality` 又恒空 →
+    /// 详情页只能归成 1 个 group。面板旧实现按 group 平铺 → 96 格长这样：
+    /// ```
+    /// 第1集 … 第9集 | 02集 03集 … 08集 | 17集 | 02集 …
+    /// ```
+    /// 用户看到的就是「集数乱、编号重复」。切块判据 = **集名序号回退**（`o <= last` = 换线了）。
+    private var episodeBlocks: [[(index: Int, name: String)]] {
+        var out: [[(index: Int, name: String)]] = []
+        for g in episodeGroups {
+            var cur: [(index: Int, name: String)] = []
+            var last: Int? = nil
+            for ep in g.eps {
+                if let o = Self.episodeOrdinal(ep.name) {
+                    if let l = last, o <= l, !cur.isEmpty {
+                        out.append(cur)
+                        cur = []
+                    }
+                    last = o
+                }
+                cur.append((ep.index, ep.name))
+            }
+            if !cur.isEmpty { out.append(cur) }
+        }
+        return out
+    }
+
+    /// 面板当前显示的那一块（下标越界自动收口，杜绝空面板）。
+    private var activeBlockEps: [(index: Int, name: String)] {
+        let blocks = episodeBlocks
+        guard !blocks.isEmpty else { return [] }
+        return blocks[min(max(0, selectedBlock), blocks.count - 1)]
+    }
+
     // MARK: - v78 当前集回显（主人 2026-10-05：「我看电视剧 我选了第几集 但是选集按钮上却不显示
     //        播放时播放器上也看不到 播放器上的剧集表里也看不到是第几集！这个应该是所有影视类APP都有的吧！」）
 
@@ -1105,7 +1146,13 @@ public struct PlayerScreen: View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text("选集").font(.headline)
-                Text("共 \(episodeCount) 集").font(.caption).foregroundStyle(.secondary)
+                // ★ 2026-10-17：集数口径改为「当前线路这一块」的集数。
+                //   旧值 = 跨线路最大组（96）= 把几条线路加在一起，看着像一部 96 集的剧。
+                Text("共 \(activeBlockEps.count) 集").font(.caption).foregroundStyle(.secondary)
+                if episodeBlocks.count > 1 {
+                    Text("线路 \(selectedBlock + 1)/\(episodeBlocks.count)")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 // v78（主人：「播放器上的剧集表里也看不到是第几集」）：表头直接写「正在播放 第N集」。
                 if let e = currentEpisode {
                     Text("正在播放 \(e.name)")
@@ -1130,53 +1177,63 @@ public struct PlayerScreen: View {
             // 高亮格在屏外，用户体感就是「看不到是第几集」（主人本次反馈的第三条）。
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(Array(episodeGroups.enumerated()), id: \.offset) { _, g in
-                        VStack(alignment: .leading, spacing: 10) {
-                            if episodeGroups.count > 1 {
-                                Text("线路：\(g.line)").font(.footnote.bold())
-                                    .foregroundStyle(.secondary)
-                            }
-                            // 2026-09-30 用户：「选集里面多少集多大框好不好 明明一半大小就够弄那么大」
-                            // 旧参数 minimum: 64 在竖屏 430pt 上只排 6 列、每格 ≈60pt 宽（内容常只有「1」「2」），
-                            // 空得离谱。改 minimum: 34（每行 ≈11 格）、纵向内边距 9→7、字号 caption2、
-                            // 长集名自动缩字 —— 密度翻倍且不挤。
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 34), spacing: 6)], spacing: 6) {
-                                ForEach(g.eps, id: \.index) { ep in
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                    // ★ 2026-10-17（主人图 1）：多条线路被整季拼在一条 lines 里 → 先按线路分块，
+                    //   块 >1 时给一排 chips，一次只看一条线路的整季（不再 96 格乱序重号平铺）。
+                    if episodeBlocks.count > 1 {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(Array(episodeBlocks.enumerated()), id: \.offset) { bi, blk in
                                     Button {
-                                        showEpisodePanel = false
-                                        // 2026-09-30 用户「面板…点不上」：原有一句
-                                        // `guard ep.index != model.currentLine else { return }`，
-                                        // 只要点到的正是**当前正在播的那条**就**静默返回**（面板关了、
-                                        // 屏幕没任何动静）→ 体感就是"点不上"。改为照常重播并给提示，
-                                        // 点哪一集都有明确反馈。
-                                        model.playEpisode(ep.index)
-                                        onEpisodeChange?(ep.name)
-                                        showSeekToast("正在播放：\(ep.name)")
-                                        scheduleHide()
+                                        selectedBlock = bi
                                     } label: {
-                                        Text(ep.name)
-                                            .font(.caption2.weight(.medium))
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.75)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 7)
-                                            // 2026-09-30 用户：「全局都是毛玻璃为什么要用黑框」。
-                                            // 未选中格原用 systemGray6 —— 不透明实心灰，在毛玻璃面板上
-                                            // 就是一块块"实心方块"（深色态下尤其像黑框）。改成白色低透明，
-                                            // 让面板材质透上来，与播放器其余浮层同一套语言。
-                                            .background(model.currentLine == ep.index
+                                        Text("线路\(bi + 1) · \(blk.count)集")
+                                            .font(.caption2.weight(selectedBlock == bi ? .bold : .regular))
+                                            .padding(.horizontal, 12).padding(.vertical, 7)
+                                            .background(selectedBlock == bi
                                                         ? Color.white.opacity(0.30)
                                                         : Color.white.opacity(0.10),
-                                                        in: RoundedRectangle(cornerRadius: 7))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 7)
-                                                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                                            )
-                                            .foregroundStyle(model.currentLine == ep.index
-                                                             ? Color.accentColor : .primary)
+                                                        in: Capsule())
+                                            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+                                            .foregroundStyle(selectedBlock == bi ? Color.accentColor : .primary)
                                     }
+                                    .buttonStyle(.plain)
                                 }
+                            }
+                            .padding(.horizontal, 2)
+                        }
+                    }
+                    // 2026-09-30 用户：「选集里面多少集多大框好不好 明明一半大小就够弄那么大」
+                    // minimum: 34（每行 ≈11 格）、纵向内边距 7、字号 caption2 —— 密度翻倍且不挤。
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 34), spacing: 6)], spacing: 6) {
+                        // 格子文案 = **块内序号**（第1集…第N集），不再用源站那套重复的集名。
+                        ForEach(Array(activeBlockEps.enumerated()), id: \.offset) { k, ep in
+                            Button {
+                                showEpisodePanel = false
+                                // 2026-09-30 用户「面板…点不上」：同一集也照常重播并给提示，点哪一集都有反馈。
+                                model.playEpisode(ep.index)
+                                onEpisodeChange?(ep.name)
+                                showSeekToast("正在播放：第\(k + 1)集")
+                                scheduleHide()
+                            } label: {
+                                Text("第\(k + 1)集")
+                                    .font(.caption2.weight(.medium))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.75)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                                    // 2026-09-30 用户：「全局都是毛玻璃为什么要用黑框」。
+                                    // 未选中格用白色低透明，让面板材质透上来，与播放器其余浮层同一套语言。
+                                    .background(model.currentLine == ep.index
+                                                ? Color.white.opacity(0.30)
+                                                : Color.white.opacity(0.10),
+                                                in: RoundedRectangle(cornerRadius: 7))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                                    )
+                                    .foregroundStyle(model.currentLine == ep.index
+                                                     ? Color.accentColor : .primary)
                             }
                         }
                     }
@@ -1192,6 +1249,13 @@ public struct PlayerScreen: View {
                 //   用户体感就是「看不到是第几集」（主人本次第三条反馈）。放到下一轮 runloop，
                 //   等 LazyVGrid 真把格子建出来再滚，避免滚到空处。
                 .onAppear {
+                    // ★ 2026-10-17：默认停在「当前正在播的那一集」所在的线路块，
+                    //   否则换了源之后再打开面板，看到的是线路 1 的第 1 集，与正在播的对不上。
+                    if let bi = episodeBlocks.firstIndex(where: {
+                        $0.contains(where: { $0.index == model.currentLine })
+                    }) {
+                        selectedBlock = bi
+                    }
                     guard let e = currentEpisode else { return }
                     DispatchQueue.main.async {
                         withAnimation(.easeInOut(duration: 0.25)) {

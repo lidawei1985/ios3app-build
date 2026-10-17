@@ -47,8 +47,11 @@ public final class PosterLoader {
         Task.detached(priority: .background) { try? FileManager.default.removeItem(at: legacy) }
         let cfg = URLSessionConfiguration.default
         // 34包提速：超时 15→8s（慢图快速失败落占位，不堵整面墙）；每 host 并发 6→12（60 张墙排队减半）
-        cfg.timeoutIntervalForRequest = 8
-        cfg.httpMaximumConnectionsPerHost = 12
+        // ★ 2026-10-17 再收（主人图 3「这三个海报一直转圈」）：
+        //   旧实现是 **8s/次 × 2 次内循环 × 3 轮（首发+两轮退避）= 最坏 48s** 才落占位 ——
+        //   用户看到的就是"永远转圈"。现在 6s × 2 次 = 最坏 12s，正常 6s 内要么出图要么落占位。
+        cfg.timeoutIntervalForRequest = 6
+        cfg.httpMaximumConnectionsPerHost = 6
         cfg.urlCache = URLCache(memoryCapacity: 32 << 20, diskCapacity: 256 << 20, directory: dir)
         session = URLSession(configuration: cfg)
         primeBundledToDisk()
@@ -213,7 +216,9 @@ public final class PosterLoader {
             }
             var data = await self.downloadData(urlString)
             // 重试退避（2026-09-21 增强：弱网/拥塞场景 1→3 轮；被墙 IP 重试仍失败则落占位）
-            for backoff in [400_000_000.0, 2_000_000_000.0] where data == nil {
+            // ★ 2026-10-17：3 轮 → **1 轮 300ms**。图是装饰，用户的耐心不是 ——
+            //   原来 3 轮叠加单次 2 次内循环，一张坏图要 48s 才落占位，整面墙跟着转圈。
+            for backoff in [300_000_000.0] where data == nil {
                 try? await Task.sleep(nanoseconds: UInt64(backoff))
                 data = await self.downloadData(urlString)
             }
@@ -237,11 +242,10 @@ public final class PosterLoader {
 
     private func downloadData(_ urlString: String) async -> Data? {
         guard let url = URL(string: urlString) else { return nil }
-        for _ in 0..<2 {
-            if let (data, resp) = try? await session.data(from: url),
-               (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
-                return data
-            }
+        // ★ 2026-10-17：内循环 2 次 → 1 次（重试统一交给上层那一轮退避，避免 2×3=6 次叠加）
+        if let (data, resp) = try? await session.data(from: url),
+           (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
+            return data
         }
         return nil
     }

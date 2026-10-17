@@ -94,11 +94,15 @@ public actor TVBoxSiteClient {
     public init(site: TVBoxSite) {
         self.site = site
         let cfg = URLSessionConfiguration.default
-        // 52包（用户报「公网片源暂时全部不可达」）：实测剧集源 ac=detail 常 20-40s 才回
-        // （弱网更久）→ 20s 一掐，几个剧集源接连超时就成了"全部不可达"的假象。
-        // 放宽单请求到 30s、整体 60s（快源不受影响，慢源不再被误杀）。
-        cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 60
+        // 52包：放宽到 30s/60s，是为了不让几个慢源被误杀。
+        // ★ 2026-10-17 主人报「换源后一直转圈出不来」实测改口：
+        //   同一批源站 **HTTP 明文 4.3s 就回、HTTPS 并发握手 25s 直接超时**
+        //   （_probe_sites.py 十路并发对照，见台账）。30s 的超时在这里不是"耐心"，
+        //   而是**把一次握手失败拖成半分钟白屏**。收到 15s/25s：够慢源回，又不至于长转。
+        cfg.timeoutIntervalForRequest = 9
+        cfg.timeoutIntervalForResource = 20
+        // 同 host 连接池 6 条：与 enrichPosters 的并发上限对齐（并发握手正是被源站掐的那个点）
+        cfg.httpMaximumConnectionsPerHost = 6
         session = URLSession(configuration: cfg)
         // 2026-10-02「搜索好慢」实测 78 源同一关键词：中位 2.1s，但**最慢 38.6s**，
         // 且 6 个源超过 22s。搜索是**交互操作**，等 30s 的源毫无意义——
@@ -139,16 +143,37 @@ public actor TVBoxSiteClient {
         var items = comps.queryItems ?? []
         for (k, v) in query { items.append(URLQueryItem(name: k, value: v)) }
         comps.queryItems = items
+        let s = sess ?? session
+        if let data = await Self.fetch(comps, session: s) { return data }
+
+        // ★ 2026-10-17（主人：「换源不要说是源的问题，我用别的方式很快就打开」）——
+        //   **HTTPS 握手被掐，不是源站没内容**。实测同一源站同一秒：
+        //     https://www.hongniuzy4.com/…/vod/?ac=list&pg=1  → 25.4s 握手超时，0 字节
+        //     http ://www.hongniuzy4.com/…/vod/?ac=list&pg=1  →  4.3s，HTTP 200 / 6465 字节
+        //     https://suoniapi.com/…/vod?ac=list&pg=1         → 25.4s 超时
+        //     http ://suoniapi.com（同参数）                   →  4.3s 有数据
+        //   十路并发里 **全部 HTTPS 失败、全部 HTTP 成功**（`ios_ctrl/_probe_sites.py`）。
+        //   所以：同 host 一律保留 HTTPS 优先（安全），**失败立刻降级 http 重试一次**。
+        //   这一条就是「换源后一直转圈」的直接解药 —— 不再拿 15s 去等一个被掐的握手。
+        guard (comps.scheme ?? "").lowercased() == "https" else { return nil }
+        comps.scheme = "http"
+        if let data = await Self.fetch(comps, session: s) {
+            LiveDiag.write("源请求降级 http 命中 host=\(comps.host ?? "?")")
+            return data
+        }
+        return nil
+    }
+
+    /// 单次 GET（200 且非空才算成功）；GBK 源在此归一化为 UTF-8。
+    private static func fetch(_ comps: URLComponents, session: URLSession) async -> Data? {
         guard let url = comps.url else { return nil }
         var req = URLRequest(url: url)
         // TVBox 原版以 okhttp UA 出请求；部分 CMS 对空/默认 UA 返回空体
         req.setValue("okhttp/4.10.0", forHTTPHeaderField: "User-Agent")
-        if let (data, resp) = try? await (sess ?? session).data(for: req),
-           (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
-            // GBK 源归一化为 UTF-8（FilmJSON 解码只认 UTF-8；TVBox 原版自动转码）
-            return Self.normalizeUTF8(data) ?? data
-        }
-        return nil
+        req.setValue("*/*", forHTTPHeaderField: "Accept")
+        guard let (data, resp) = try? await session.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return nil }
+        return normalizeUTF8(data) ?? data
     }
 
     /// 非 UTF-8 响应（常见 GBK）→ 转 UTF-8；已是 UTF-8 原样返回。
@@ -278,14 +303,20 @@ public actor TVBoxSiteClient {
         var items: [FeedItem] = []
         var pageCount = 0, total = 0, perPage = 0
         var ok = false
+        var responded = false   // 上游**应答成功**（哪怕是空列表）
         if let data = await api(q), let rsp = decodeCMS(data) {
             ok = true
+            responded = true
             items = (rsp.list ?? []).compactMap { map($0) }
             pageCount = rsp.pagecount?.value ?? 0
             total = rsp.total?.value ?? 0
             perPage = rsp.limit?.value ?? 0
         }
-        if items.isEmpty, pg <= 1 {
+        // ★ 2026-10-17：detail 兜底只治「list 端点坏（应答了但恒空）」，不治网络。
+        //   旧写法只要 `items.isEmpty` 就再发一条 detail —— 而红牛资源 2 的 detail 实测 **50s**
+        //   （比 list 慢一个数量级）→ 换源时白等一分钟，主人看到的就是「一直转圈」。
+        //   现在网络失败（responded=false）直接收工，交给上层报错/换源，不再二次受罪。
+        if items.isEmpty, pg <= 1, responded {
             var dq = ["ac": "detail", "pg": "1"]
             if let categoryId, !categoryId.isEmpty { dq["t"] = categoryId }
             if let data = await api(dq), let rsp = decodeCMS(data) {
@@ -344,7 +375,11 @@ public actor TVBoxSiteClient {
     /// 对无 poster 的条目并发补 detail 仅取图；picCache 防翻页/重进重复拉。
     private var picCache: [String: String] = [:]
 
-    public func enrichPosters(_ items: [FeedItem], limit: Int = 24) async -> [FeedItem] {
+    /// ★ 2026-10-17：并发 6→3、单轮上限 24→12。
+    ///   实测（图 3「索倪首行三张海报一直转圈」）：同 host 6 条 detail 并发会**互相掐握手**，
+    ///   而 ac=detail 是这条源最慢的端点（红牛 50s / 索倪 29s）→ 越并发越全挂。
+    ///   补图是"锦上添花"，宁可慢一点也不能把首屏拖成转圈墙：3 条并发 + 只补首屏这一屏。
+    public func enrichPosters(_ items: [FeedItem], limit: Int = 12) async -> [FeedItem] {
         var out = items
         func noPic(_ it: FeedItem) -> Bool { (it.poster?.url ?? "").isEmpty }
         // 先吃缓存
@@ -356,7 +391,7 @@ public actor TVBoxSiteClient {
         let targets = out.indices.filter { noPic(out[$0]) }.prefix(limit)
         guard !targets.isEmpty else { return out }
         await withTaskGroup(of: (Int, String?).self) { group in
-            // 限流 6 并发；回收的结果必须当场落盘应用，直接丢弃会白拉（34包修正）
+            // 限流 3 并发；回收的结果必须当场落盘应用，直接丢弃会白拉（34包修正）
             func apply(_ idx: Int, _ pic: String?) {
                 guard let pic, !pic.isEmpty else { return }
                 picCache[vodIdOf(out[idx])] = pic
@@ -364,7 +399,7 @@ public actor TVBoxSiteClient {
             }
             var inFlight = 0
             for idx in targets {
-                if inFlight >= 6 {
+                if inFlight >= 3 {
                     if let (doneIdx, pic) = await group.next() { apply(doneIdx, pic) }
                     inFlight -= 1
                 }
