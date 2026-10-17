@@ -572,7 +572,7 @@ public struct SiteBrowseView: View {
     }
 
     private var browseList: some View {
-        // 2026-10-17：翻页条撤掉后不再需要"翻页回顶"，proxy 只留给将来锚点用（改 `_` 免告警）。
+        // 翻页条撤掉后不再需要「翻页回顶」，proxy 只留给将来锚点用（改 `_` 免告警）。
         ScrollViewReader { _ in
         ScrollView(showsIndicators: false) {
             Color.clear.frame(height: 0).id("browseTop")
@@ -616,8 +616,12 @@ public struct SiteBrowseView: View {
                         .padding(.horizontal, 16).padding(.top, 10)
                 }
                 if searchResults == nil, totalCount > 0 || pageCount > 0 {
-                    // 总量明示（保留 35 包的目的：别让人以为"这分类只有三四十部"）。
-                    // ★ 2026-10-17：页码从「第 1/7340 页」改成「已加载 N 部」—— 分页没了，页码没意义。
+                    // 总量/页码明示（35包）：原来只有底部隐式「上滑加载更多」，
+                    // 用户不知道这个分类其实有几千部，误以为「只有三四十部」。
+                    // 尾巴加「源站就这么少」：个别叶子分类上游确实只有 1~几部
+                    // （用户 2026-09-22 报「那道源里就一部电影」），明示不是 App 丢条目。
+                    // ★ 2026-10-17（主人图 2「那个东西没啥必要，下滑自动加载」）：
+                    //   分页撤掉了，页码没意义 → 改成「共 X 部 · 已加载 N 部」。
                     Text((totalCount > 0 ? "共 \(totalCount) 部" : "")
                          + " · 已加载 \(items.count) 部"
                          + (totalCount > 0 && totalCount <= 5 ? "（源站这个分类就这么少）" : ""))
@@ -627,9 +631,6 @@ public struct SiteBrowseView: View {
                 }
                 PosterGrid(items: display, columns: 3)
                     .padding(.vertical, 12)
-                // ★ 2026-10-17（主人图 2：「那个东西没啥必要，下滑自动加载还是怎么弄」）：
-                //   翻页条整块撤掉，改回**滑到底自动追加**。页码信息保留在顶部一行小字里
-                //   （用户要知道"这源到底有多少"，但不需要按"下一页"）。
                 if searchResults == nil { loadMoreFooter }
             }
         }
@@ -638,7 +639,7 @@ public struct SiteBrowseView: View {
     }
 
     /// 列表底部（2026-10-17 取代 35 包的「上一页/下一页」翻页条）：
-    /// 露出就自动追加下一页，用户只管往下滑 —— 大牌 App 都是这个手感，不该让人按"下一页"。
+    /// 露出就自动追加下一页，用户只管往下滑 —— 不该让人按「下一页」。
     @ViewBuilder
     private var loadMoreFooter: some View {
         if reachedEnd {
@@ -704,26 +705,15 @@ public struct SiteBrowseView: View {
             loadError = "这是 Spider 爬虫源（\(site.api)），需要内置执行引擎才能出内容，移植开发中。点右上「选择线路」换一条可用线路。"
             return
         }
-        // 2026-10-03「内置源加载加速」：分类与第一页改并发，首屏砍一半。
-        // ★ 2026-10-17 改回**串行**（主人图 4「换个源一直转圈」）：
-        //   实测这批 CMS 站（hongniuzy4 / suoniapi）对**同 host 并发 TLS 握手**极不友好 ——
-        //   十路并发探测里 HTTPS 全挂（25s 握手超时）、HTTP 全过（4s）。并发两条请求正是
-        //   把换源卡死的那一下。串行共用同一条 keep-alive 连接：多一个 RTT，换来能出内容。
-        // ★ 2026-10-17 回滚：上一版为躲「同 host 并发握手被掐」把这里改成了**串行**，
-        //   结果首屏变成 2 个 RTT 相加（分类 10s + 第一页 10s = 20s 起步）——
-        //   用户实测「现在 40 秒都有」有它一半责任。协议问题已在 TVBoxSiteClient.api 根治
-        //   （http 优先，不再有 TLS 握手），这里恢复并发：首屏 = max(分类, 第一页)。
+        // 2026-10-03「内置源加载加速」：分类与第一页原来**串行**取 →
+        // 首屏耗时 = RTT(分类) + RTT(第一页)（实测中位源各 ~1s，慢源 2~3s）。
+        // 两者互不依赖（第一页取的是不带分类的「全站最新」），改为并发发出 →
+        // 首屏耗时降到 max(RTT1, RTT2)，冷启动大约砍一半。
+        // 语义不变：分类仅在本地为空时才需要走网络。
         let needCats = categories.isEmpty
         async let firstAsync = client.listPage(categoryId: nil, page: 1)
         if needCats { categories = await client.categories() }
-        var first = await firstAsync
-        // ★ 2026-10-17 三次修复（主人：「提示该源暂时不可用」）——
-        //   旧版**一次零应答就判死**（网络抖一下就整页报错）。而此刻协议偏好还没建立、
-        //   正处在「竞速刚探明」的瞬间，第二次请求通常几百毫秒就回。
-        //   改为：先自动重试一次，仍失败才报错 —— 抖动不再变成「该源不可用」。
-        if first.items.isEmpty, !first.ok {
-            first = await client.listPage(categoryId: nil, page: 1)
-        }
+        let first = await firstAsync
         selectedBucket = nil
         selectedCategory = nil
         subCategory = nil
@@ -733,12 +723,6 @@ public struct SiteBrowseView: View {
         totalCount = first.total
         reachedEnd = first.pageCount > 0 ? 1 >= first.pageCount : first.items.count < 10
         loading = false
-        // ★ 2026-10-17（主人图 4）：换源后「一直转圈」的最后一道闸 ——
-        //   上游**一个字节都没回**（ok=false）且列表为空时，直接给可操作错误，
-        //   而不是把用户丢进「加载中…」再重试一轮（那又是一次 12 秒白转）。
-        if items.isEmpty, !first.ok {
-            loadError = "这条源这次没有应答（握手/网络失败），点下面重试，或右上换一条线路。"
-        }
         enrichCurrent()
     }
 
@@ -755,10 +739,6 @@ public struct SiteBrowseView: View {
         skipNote = nil
         var cat = selectedCategory
         var first = await client.listPage(categoryId: cat?.id, page: 1)
-        // 同上：零应答先自动重试一次（协议偏好此刻已落盘，第二次几乎不会失败）。
-        if first.items.isEmpty, !first.ok {
-            first = await client.listPage(categoryId: cat?.id, page: 1)
-        }
         // 35包·空分类自动跳过（用户钦定 2026-09-22：「分类里比如电影就一部…那道源里就一部电影」）：
         // 上游**确实**存在空分类（实测：无尽资源「电影/动漫/资讯/头条/体育赛事」、
         // 360资源「篮球/反转爽剧」=0 条；金鹰资源则无一空分类）。
@@ -792,45 +772,13 @@ public struct SiteBrowseView: View {
         totalCount = first.total
         reachedEnd = first.pageCount > 0 ? 1 >= first.pageCount : first.items.count < 10
         loading = false
-        // 同 bootstrap：上游零应答 = 明确报错，别用「加载中」假装还在努力。
-        if items.isEmpty, !first.ok {
-            loadError = "这条源这次没有应答（握手/网络失败），点下面重试，或右上换一条线路。"
-        }
         enrichCurrent()
     }
 
     /// 翻页（替换式；用户钦定 2026-09-22：「点开一个分类最多三四十部，还是没有翻页功能导致的」）。
     /// 原实现只有隐式「上滑加载更多」，用户既不知道总量也翻不动页。
-    private func gotoPage(_ n: Int) async {
-        guard !paging, n >= 1 else { return }
-        if let b = activeBucket {
-            if pageCount > 0, n > pageCount { return }
-            if n == page, !items.isEmpty { return }
-            await loadBucket(b, page: n)
-            return
-        }
-        if pageCount > 0, n > pageCount { return }
-        if n == page, !items.isEmpty { return }
-        paging = true
-        loadError = nil
-        let r = await client.listPage(categoryId: selectedCategory?.id, page: n)
-        if r.items.isEmpty {
-            // 越过末页：把总页数钉在当前页，避免无限空翻
-            if n > 1 { pageCount = n - 1 }
-            if pageCount == 0 { pageCount = 0 }
-        } else {
-            page = n
-            items = scopedItems(r.items)
-            if r.pageCount > 0 { pageCount = r.pageCount }
-            if r.total > 0 { totalCount = r.total }
-            reachedEnd = pageCount > 0 && page >= pageCount
-        }
-        paging = false
-        enrichCurrent()
-    }
-
     /// ★ 2026-10-17（主人图 2：翻页条撤掉、下滑自动加载）—— **追加式**加载下一页。
-    /// 与旧 `gotoPage` 的区别：不清空 `items`、不回顶、不替换，一页接一页往下长。
+    /// 与 `gotoPage` 的区别：不清空 `items`、不回顶、不替换，一页接一页往下长。
     private func loadMore() async {
         guard !loadingMore, !paging, !reachedEnd, searchResults == nil else { return }
         if pageCount > 0, page >= pageCount { reachedEnd = true; return }
@@ -881,6 +829,34 @@ public struct SiteBrowseView: View {
         if let m = pageCounts.min() { pageCount = m }
         if added == 0 { reachedEnd = true }
         if pageCount > 0, n >= pageCount { reachedEnd = true }
+        enrichCurrent()
+    }
+
+    private func gotoPage(_ n: Int) async {
+        guard !paging, n >= 1 else { return }
+        if let b = activeBucket {
+            if pageCount > 0, n > pageCount { return }
+            if n == page, !items.isEmpty { return }
+            await loadBucket(b, page: n)
+            return
+        }
+        if pageCount > 0, n > pageCount { return }
+        if n == page, !items.isEmpty { return }
+        paging = true
+        loadError = nil
+        let r = await client.listPage(categoryId: selectedCategory?.id, page: n)
+        if r.items.isEmpty {
+            // 越过末页：把总页数钉在当前页，避免无限空翻
+            if n > 1 { pageCount = n - 1 }
+            if pageCount == 0 { pageCount = 0 }
+        } else {
+            page = n
+            items = scopedItems(r.items)
+            if r.pageCount > 0 { pageCount = r.pageCount }
+            if r.total > 0 { totalCount = r.total }
+            reachedEnd = pageCount > 0 && page >= pageCount
+        }
+        paging = false
         enrichCurrent()
     }
 

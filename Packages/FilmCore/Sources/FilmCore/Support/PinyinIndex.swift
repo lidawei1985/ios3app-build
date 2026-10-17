@@ -298,15 +298,6 @@ public enum PinyinIndex {
         q.replacingOccurrences(of: " ", with: "").lowercased()
     }
 
-    /// 是否含汉字（CJK 统一表意文字 U+4E00–U+9FFF）。
-    ///
-    /// 用途（2026-10-17）：判断一段文本能不能直接拿去喂 MacCMS 的 `wd=` 搜索。
-    /// 实测 3 源对照：`wd=蜜桃` → 非凡 6 条 / 猫眼 11 条 / 红牛3 17 条；
-    /// `wd=llz` → 全 0 条。**采集源只认中文**，所以拼音查询必须先翻成汉字再搜。
-    public static func hasHan(_ s: String) -> Bool {
-        s.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
-    }
-
     /// 片名档位：按 首字母前缀 > 全拼前缀 > 首字母包含 > 全拼包含 > 跳字容错 定档。
     public static func titleTier(_ key: Key, needle: String) -> Tier {
         guard !needle.isEmpty, !key.initials.isEmpty else { return .none }

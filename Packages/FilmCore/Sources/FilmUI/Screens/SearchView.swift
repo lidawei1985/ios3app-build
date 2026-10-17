@@ -103,18 +103,8 @@ public struct SearchView: View {
             EmptyStateView(icon: "magnifyingglass", title: "搜你想看的",
                            subtitle: "片名、演员、导演；也支持拼音首字母（如 lldq）")
         } else if results.isEmpty && tvResults.isEmpty {
-            // 2026-10-17：拼音查不到时给一句能落地的话，别让用户以为搜索坏了。
-            // 实测背景：采集源的 wd= 只匹配**片名**、且只认中文（wd=李丽珍 → 4 源全 0；
-            // wd=llz → 全 0；wd=蜜桃成熟时 → 2~4 条）。所以拼音能否命中，取决于本地是否
-            // 已经「见过」这部片（本地片库 / 浏览过的源标题）。没见过就只能打中文。
-            if PinyinIndex.isPinyinQuery(query) {
-                EmptyStateView(icon: "textformat.abc",
-                               title: "拼音没匹配到「\(query)」",
-                               subtitle: "源站只认中文片名。直接打中文试试，比如「蜜桃」或「蜜桃成熟时」")
-            } else {
-                EmptyStateView(icon: "questionmark.folder", title: "没有找到「\(query)」",
-                               subtitle: "试试更短的关键词")
-            }
+            EmptyStateView(icon: "questionmark.folder", title: "没有找到「\(query)」",
+                           subtitle: "试试更短的关键词")
         } else {
             ScrollView(showsIndicators: false) {
                 if !results.isEmpty {
@@ -336,14 +326,8 @@ public struct SearchView: View {
         let q = raw.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { results = []; searching = false; return }
         let snapshot = store.catalog.items          // 主线程取快照
-        // 2026-10-17：拼音桥接要用「演员名全集」做反向拼音匹配，主线程先取键快照
-        // （persons.json 几万演员；只拷 key，几毫秒，避免后台闭包碰 store）
-        let personNames = Array(store.personAvatars.keys)
         Task.detached(priority: .userInitiated) {   // 重活扔后台
             let found = FeedAdapter.searchHits(snapshot, query: q)
-            // 拼音查询的「翻译」也放后台：几万演员名逐个算拼音键，主线程做会卡输入
-            let isPy = PinyinIndex.isPinyinQuery(q)
-            let bridged = isPy ? Self.bridgeKeys(pinyin: q, found: found, personNames: personNames) : []
             await MainActor.run {
                 guard q == self.query else { return }   // 用户已继续输入：过期结果丢弃
                 self.results = found.map(\.item)
@@ -356,102 +340,17 @@ public struct SearchView: View {
                 self.badges = b
                 self.searching = false
                 self.suggestions = Self.makeSuggestions(from: found, query: q)
-                // ★ 2026-10-17 拼音桥接（主人：「换了索倪源……以前能搜到 LLZ 的蜜桃成熟时，现在搜不到，
-                //   也不显示内置源搜索结果」）——两个独立病因：
-                //   ① MacCMS 的 `wd=` **只认中文**：实测 wd=蜜桃 → 非凡 6 / 猫眼 11 / 红牛3 17 条，
-                //      而 wd=llz → 全 0 条。所以纯拼音丢给源必然 0 结果；
-                //   ② 索倪源站把搜索接口封了（wd= 恒 403，6 种 UA 全中，浏览 ac=list 正常）——
-                //      这条由 SearchGate 在运行期识别并跳过，不在本函数处理。
-                //   旧版只桥接「人名」，且要求本地片库先命中那个人；本地没有该片（成人/冷门片不进 feed）
-                //   就什么也桥不出来 → 用户看到「一条都没有」。现在人名 + 片名 + 演员表三路都试。
-                if isPy {
-                    if bridged.isEmpty { self.startTVSearch(q) }
-                    else { self.startTVSearchBridge(bridged) }
+                // v87：拼音查询命中人名 → 内置源改用「人名中文名」补一轮源搜。
+                // 采集源只认中文：wd=llz 实测 78 源只回 4 条不相干垃圾，wd=李丽珍 回 36 条
+                // （含《蜜桃成熟时》8 条）——这就是「以前打 LLZ 能看到蜜桃成熟时、现在没了」的根因。
+                // 找不到人名时退回原关键词，行为与旧版一致。
+                if PinyinIndex.isPinyinQuery(q) {
+                    if let cn = found.compactMap(\.matchedPerson).first {
+                        self.startTVSearch(cn)
+                    } else {
+                        self.startTVSearch(q)
+                    }
                 }
-            }
-        }
-    }
-
-    /// 把纯拼音查询翻成可以喂给采集源的中文关键词（2026-10-17）。
-    ///
-    /// 采集源只认中文，所以「LLZ」这类查询必须先在本地翻成中文，否则 78 个源全是 0 条。
-    /// 三路兜底，先准后全：
-    ///  ① 本地命中的人物（llz → 李丽珍）—— 最准；
-    ///  ② 本地命中的中文片名（mtscs → 蜜桃成熟时）—— 直接命中片名；
-    ///  ③ 前两路全空时，用**演员头像表**（persons.json，几万演员名）做反向拼音匹配。
-    ///     这是关键补位：成人片/冷门片不进本地 feed，但演员名常在 persons.json 里，
-    ///     于是 llz 仍能翻成「李丽珍」再去公网源搜。
-    /// 返回空数组 = 翻不出来，调用方退回「原拼音直接搜」（行为与旧版一致）。
-    static func bridgeKeys(pinyin q: String, found: [FeedAdapter.SearchHit],
-                           personNames: [String], limit: Int = 2) -> [String] {
-        var keys: [String] = []
-        // ① 本地命中的中文片名（mtscs → 蜜桃成熟时）—— 最准，直接是源认的搜索词
-        for h in found where keys.count < limit {
-            let t = h.item.title.trimmingCharacters(in: .whitespaces)
-            guard PinyinIndex.hasHan(t), !keys.contains(t) else { continue }
-            keys.append(t)
-        }
-        // ② 本地标题拼音库反查（浏览过的源片名都攒在里面）。
-        //    实测：采集源 `wd=` 只匹配片名、不匹配演员，所以「拼音 → 中文片名」才是唯一有效路径。
-        //    这就是「以前打 LLZ 能看到蜜桃成熟时」在今天还能复现的关键：只要这片被浏览过。
-        if keys.count < limit {
-            for t in TitlePinyinCache.lookup(pinyin: q, limit: limit - keys.count)
-            where !keys.contains(t) {
-                keys.append(t)
-            }
-        }
-        // ③ 实在翻不出片名，再退回「拼音 → 演员名」（本地片库可能按演员命中）。
-        if keys.isEmpty && !personNames.isEmpty {
-            let needle = PinyinIndex.normalize(q)
-            guard needle.count >= 2 else { return [] }
-            var hits: [(tier: Int, name: String)] = []
-            for name in personNames {
-                let t = PinyinIndex.personTier(name, needle: needle)
-                if t != .none { hits.append((t.rawValue, name)) }
-                if hits.count >= 2000 { break }     // 上限保护：热门音再长也够用
-            }
-            hits.sort { $0.tier > $1.tier || ($0.tier == $1.tier && $0.name.count < $1.name.count) }
-            for h in hits.prefix(limit) where !keys.contains(h.name) { keys.append(h.name) }
-        }
-        return keys
-    }
-
-    /// 多关键词桥接搜索：把 bridgeKeys 翻出来的中文词**依次**喂给全源搜索。
-    ///
-    /// 为什么顺序而不并发：单次 `GlobalSiteSearch.search` 内部已经有 10 个源在飞，
-    /// 再并几路就会把自家出网链路打爆 —— 这正是 v94 修掉的「好源集体假超时」根因。
-    /// 每个关键词 5s 预算，第一个词命中就立刻上屏，后面的词只做补充。
-    private func startTVSearchBridge(_ keys: [String]) {
-        let mode = store.profile.mode
-        guard !keys.isEmpty else { return }
-        tvSearching = true
-        let anchor = query
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 25_000_000_000)
-            if anchor == self.query { self.tvSearching = false }
-        }
-        tvSearchTask = Task {
-            defer { Task { @MainActor in if anchor == self.query { self.tvSearching = false } } }
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled, anchor == query else { return }
-            self.tvResults = []
-            var acc: [FeedItem] = []
-            var seen = Set<String>()
-            for k in keys {
-                guard !Task.isCancelled, anchor == query else { return }
-                let hits = await GlobalSiteSearch.search(k, mode: mode, budget: 5.0)
-                for it in hits {
-                    if seen.insert(it.title + "|" + (it.year ?? "")).inserted { acc.append(it) }
-                }
-                if !acc.isEmpty {
-                    let snap = Array(acc.prefix(36))
-                    await MainActor.run { if anchor == self.query { self.tvResults = snap } }
-                }
-                if acc.count >= 36 { break }
-            }
-            await MainActor.run {
-                guard anchor == self.query else { return }
-                self.tvResults = Array(acc.prefix(36))
             }
         }
     }
