@@ -400,7 +400,7 @@ public actor TVBoxSiteClient {
     ///
     ///   现在的口径：
     ///   · 先吃 picCache，再吃 **本地片库片名兜底**（`TitlePosterIndex`，零网络秒出图）；
-    ///   · 真的没有的才发 detail，走 `posterSession`（**5s/8s**）；
+    ///   · 真的没有的才发 detail，走 `posterSession`（**6s/10s**）；
     ///   · 整页补图**总预算 6s**，到点就带着已拿到的部分返回，剩下的留占位；
     ///   · 连挂 3 条判定该源 detail 端点当前不可用 → 立即收工（不再白等第 4 波）；
     ///   · 失败记 `picMiss` 负缓存（10 分钟），期间同一条目不再重试。

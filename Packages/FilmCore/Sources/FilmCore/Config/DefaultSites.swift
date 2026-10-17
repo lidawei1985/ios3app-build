@@ -32,6 +32,10 @@ public enum DefaultSites {
     /// 2026-09-20 实测 20 候选存活 8：并发 ac=list 校验分类+条目，ac=detail 校验播放地址真实。
     /// key 统一 "builtin:" 前缀 —— 删除走 deletedBuiltinKeys 持久化，可一键恢复。
     public static let builtinVodSources: [TVBoxSite] = [
+        // ★ 2026-10-17 新增（184 个候选 host 实测筛出：ac=list 20 条、中位 0.79s、
+        //   ac=detail 有海报、10009 页）。分类表 5 类（影视片/影视剧/综艺/动漫/短剧），
+        //   **零成人词** → 可进双端池（含心屋）。
+        TVBoxSite(key: "builtin:hgzy",   name: "HG资源",     api: "https://hong.hgyx.vip/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:baofeng", name: "暴风资源", api: "https://bfzyapi.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:liangzi", name: "量子资源", api: "http://cj.lziapi.com/api.php/provide/vod/at/xml", type: 1),
         TVBoxSite(key: "builtin:wujin",   name: "无尽资源", api: "https://api.wujinapi.me/api.php/provide/vod", type: 1),
@@ -100,6 +104,13 @@ public enum DefaultSites {
     /// 隔离由 `NavPolicy.allowsCategory/isAdultCategory`（分类级）+ `NavPolicy.allowsItem`
     /// （条目级）双闸门保证——**成人分类永远不会出现在星幕/心屋**。
     public static let builtinMixedVodSources: [TVBoxSite] = [
+        // ★ 2026-10-17 新增，**只进星幕池**：分类表含成人词，按主人 2026-10-01 口径
+        //   「心屋源池里不许有带成人内容的源」→ 绝不能放 builtinVodSources。
+        //   蓝天90：1.3s 返回《蜜桃成熟时1993》(演员:李丽珍) 且带海报 —— 实测唯一能做到的源；
+        //           分类 8 个，含「理论 / 福利」→ mixed。
+        //   天涯资源2：tyyszy.com 的可用镜像（原域名实测 15s 无响应），分类含「伦理」→ mixed。
+        TVBoxSite(key: "builtin:lan90",  name: "蓝天90",     api: "https://90sr.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:tianya5", name: "天涯资源2", api: "https://ty.tyyszy5.com/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:suoni", name: "索倪", api: "https://suoniapi.com/api.php/provide/vod", type: 1),
     ]
 
