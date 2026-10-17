@@ -90,22 +90,6 @@ public actor TVBoxSiteClient {
     private let session: URLSession
     /// 搜索专用短会话（见 init 注释：78 源实测，慢源能把整批拖死 → 搜索必须短超时）
     private let searchSession: URLSession
-    /// ★ 2026-10-17：已证实**只有 https 能通**的 host（明文连接被拒）。
-    /// 持久化到 UserDefaults —— 实例内的 Set 靠不住（日志里同一 host 被"记住"三次仍每次重撞），
-    /// 而 UserDefaults 跨实例、跨进页面、跨冷启动都有效。
-    private static let httpsOnlyKey = "TVBoxHTTPSOnlyHosts"
-
-    private var httpsOnlyHosts: Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: Self.httpsOnlyKey) ?? [])
-    }
-
-    private func markHTTPSOnly(_ host: String) {
-        guard !host.isEmpty else { return }
-        var a = UserDefaults.standard.stringArray(forKey: Self.httpsOnlyKey) ?? []
-        guard !a.contains(host) else { return }
-        a.append(host)
-        UserDefaults.standard.set(a, forKey: Self.httpsOnlyKey)
-    }
 
     public init(site: TVBoxSite) {
         self.site = site
@@ -178,56 +162,94 @@ public actor TVBoxSiteClient {
         comps.queryItems = items
         let s = sess ?? session
         let host = comps.host ?? ""
-        let isHTTPS = (comps.scheme ?? "").lowercased() == "https"
         usedScheme = comps.scheme ?? "-"
         guard let origin = comps.url else { lastErr = " url非法"; return nil }
-
-        // ★★ 2026-10-17（主人：「10秒出内容以前几秒就出来了 现在40秒都有！你自己看日志吧」）
+        // ★ 2026-10-17 三次修复：竞速用的**另一个协议**地址（https ↔ http）。
+        var altComps = comps
+        altComps.scheme = (comps.scheme?.lowercased() == "https") ? "http" : "https"
+        let altURL = altComps.url ?? origin
+        // ★★★ 2026-10-17 三次修复（主人：「点播源的速度还是没解决」）★★★
         //
-        // 实盘日志（livediag.txt）三次连打，**同一个 host 记住三次**：
-        //   18:38:41 源请求降级 http 并记住 host=suoniapi.com
-        //   18:38:59 源请求降级 http 并记住 host=suoniapi.com
-        //   18:39:06 源请求降级 http 并记住 host=suoniapi.com
-        // 结论：① 「记住」没有跨请求生效（实例内 Set 靠不住）；② 每条请求都先白等一次握手超时。
-        // 进一个分类页要发 2~4 条请求（分类 / 第一页 / 详情 / 补图），一条 6s+4s = 10s，
-        // 串起来正好 30~40s —— 与用户体感完全对得上。
+        // 上一版把协议改成「http 优先、失败回退 https」，**这是错的**，实测反驳（`_probe_all.py`
+        // 50 源 + `_probe_serial.py` 串行复测，本机同一分钟）：
+        //   · 索倪 / 红牛 / 优酷  ：https 16~18s 超时，http 1.6~2.9s 有数据   ← http 才对
+        //   · 猫眼资源            ：https **276ms**，http 1094ms               ← https 快 4 倍
+        //   · 天涯资源            ：串行下 https 4762ms / http 2266ms 都通
+        //   · 大量源 http 直接连不上（仅 https 可用）→ 被强制降级后**必死**
+        // 也就是说「哪边快」**每个 host 都不一样**，一刀切必然坑掉一半源。
         //
-        // 处置：不再"HTTPS 优先、失败再降级"，改成 **http 优先**（安全兜底仍在）。
-        // 依据是同一秒十路并发实测（ios_ctrl/_probe_sites.py）：
-        //   https://www.hongniuzy4.com/…/?ac=list&pg=1 → 25.4s 握手超时，0 字节
-        //   http ://www.hongniuzy4.com/…/?ac=list&pg=1 →  4.3s，200 / 6465 字节
-        //   https://suoniapi.com/…/?ac=list&pg=1        → 25.4s 超时
-        //   http ://suoniapi.com（同参数）              →  4.3s 有数据
-        // 首次就把 10s 的等待砍成 4s；且走过的结果**持久化**（UserDefaults），冷启动后依然有效。
-        if isHTTPS, var pc = URLComponents(url: origin, resolvingAgainstBaseURL: false) {
-            if httpsOnlyHosts.contains(host) {
-                // 这条源已证实只有 https 能通 → 别再浪费时间试明文
-                usedScheme = "https(记忆)"
-                if let data = await Self.fetchURL(origin, session: s) { hit = true; return data }
-                usedScheme = "http(重试)"
-            } else {
-                pc.scheme = "http"
-                usedScheme = "http(优先)"
-                if let pu = pc.url, let data = await Self.fetchURL(pu, session: s) { hit = true; return data }
-                usedScheme = "https(回退)"
-            }
-            // 明文不通 → 回 https（只支持 https 的源照常可用），成功则记住它是 https-only
-            if let data = await Self.fetchURL(origin, session: s) {
+        // 另外发现**并发才是更大的病**：50 源同时发时，好源也集体假超时；
+        // 串行复测立刻恢复正常 → 之前那些「全死」是自家链路被打爆，不是源死。
+        //
+        // 所以现在两条铁律：
+        //   ① 有协议记忆 → 单发，失败再换另一个（最省）；
+        //   ② 无记忆 → **两个协议同时发，谁先回用谁**（最坏 = 一次超时，不是两次相加）。
+        //      实测这条把「换源首屏」从 6+4=10s 压到 1.6~2.9s（取更快的那条）。
+        if let pref = Self.schemePref(host) {
+            let first = (origin.scheme ?? "") == pref ? origin : altURL
+            let second = (first == origin) ? altURL : origin
+            usedScheme = "\(pref)(记忆)"
+            if let data = await Self.fetchURL(first, session: s) { hit = true; return data }
+            usedScheme = "\(pref)→换协议"
+            if let data = await Self.fetchURL(second, session: s) {
                 hit = true
-                markHTTPSOnly(host)
+                Self.setSchemePref(host, to: second.scheme ?? "")
                 return data
             }
             lastErr = " 双协议均失败"
             return nil
         }
-        // 源本身就配成 http：单发即可
-        if let data = await Self.fetchURL(origin, session: s) { hit = true; return data }
-        lastErr = " http失败"
+
+        usedScheme = "竞速"
+        if let (data, sch) = await Self.race(origin, altURL, session: s) {
+            hit = true
+            Self.setSchemePref(host, to: sch)
+            return data
+        }
+        lastErr = " 双协议均失败"
         return nil
     }
 
-    /// 实测「HTTPS 与 HTTP 并发竞速」不采用：这批 CMS 站对同 host 并发握手极不友好
-    /// （十路并发里 TLS 全挂），多开一条连接反而拖慢首包。故只做单发 + 协议优先级记忆。
+    // MARK: - 协议记忆（哪个协议快就记哪个，跨冷启动有效）
+
+    private static let schemePrefKey = "TVBoxHostSchemePref"   // host -> "https" / "http"
+
+    private static func schemePref(_ host: String) -> String? {
+        guard !host.isEmpty else { return nil }
+        let m = UserDefaults.standard.dictionary(forKey: schemePrefKey) as? [String: String]
+        return m?[host]
+    }
+
+    private static func setSchemePref(_ host: String, to scheme: String) {
+        guard !host.isEmpty, !scheme.isEmpty else { return }
+        var m = (UserDefaults.standard.dictionary(forKey: schemePrefKey) as? [String: String]) ?? [:]
+        guard m[host] != scheme else { return }
+        m[host] = scheme
+        UserDefaults.standard.set(m, forKey: schemePrefKey)
+    }
+
+    /// 双协议**同时**发，先成功者胜（另一个立刻取消）。
+    /// 这是「换源首屏慢」的根治：串行要等第一条彻底失败（6~8s）才试第二条，
+    /// 竞速则是 **max(两者中较快的那个)** —— 实测索倪 1.6s、猫眼 276ms。
+    private static func race(_ a: URL, _ b: URL, session: URLSession) async -> (Data, String)? {
+        await withTaskGroup(of: (Data, String)?.self) { group in
+            group.addTask {
+                if let d = await Self.fetchURL(a, session: session) { return (d, a.scheme ?? "") }
+                return nil
+            }
+            group.addTask {
+                if let d = await Self.fetchURL(b, session: session) { return (d, b.scheme ?? "") }
+                return nil
+            }
+            for await r in group {
+                if let r {
+                    group.cancelAll()
+                    return r
+                }
+            }
+            return nil
+        }
+    }
 
     /// 单次 GET（200 且非空才算成功）；GBK 源在此归一化为 UTF-8。
     private static func fetchURL(_ url: URL, session: URLSession) async -> Data? {

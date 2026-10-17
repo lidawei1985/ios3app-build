@@ -716,7 +716,14 @@ public struct SiteBrowseView: View {
         let needCats = categories.isEmpty
         async let firstAsync = client.listPage(categoryId: nil, page: 1)
         if needCats { categories = await client.categories() }
-        let first = await firstAsync
+        var first = await firstAsync
+        // ★ 2026-10-17 三次修复（主人：「提示该源暂时不可用」）——
+        //   旧版**一次零应答就判死**（网络抖一下就整页报错）。而此刻协议偏好还没建立、
+        //   正处在「竞速刚探明」的瞬间，第二次请求通常几百毫秒就回。
+        //   改为：先自动重试一次，仍失败才报错 —— 抖动不再变成「该源不可用」。
+        if first.items.isEmpty, !first.ok {
+            first = await client.listPage(categoryId: nil, page: 1)
+        }
         selectedBucket = nil
         selectedCategory = nil
         subCategory = nil
@@ -748,6 +755,10 @@ public struct SiteBrowseView: View {
         skipNote = nil
         var cat = selectedCategory
         var first = await client.listPage(categoryId: cat?.id, page: 1)
+        // 同上：零应答先自动重试一次（协议偏好此刻已落盘，第二次几乎不会失败）。
+        if first.items.isEmpty, !first.ok {
+            first = await client.listPage(categoryId: cat?.id, page: 1)
+        }
         // 35包·空分类自动跳过（用户钦定 2026-09-22：「分类里比如电影就一部…那道源里就一部电影」）：
         // 上游**确实**存在空分类（实测：无尽资源「电影/动漫/资讯/头条/体育赛事」、
         // 360资源「篮球/反转爽剧」=0 条；金鹰资源则无一空分类）。

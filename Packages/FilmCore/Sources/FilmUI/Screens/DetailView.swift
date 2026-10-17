@@ -432,8 +432,39 @@ public struct DetailView: View {
         let searchTitle = item.title          // 只把 String 捕获进 @Sendable 子任务（FeedItem 未标 Sendable）
         var failedSites: [String] = []        // 取证：本次聚合哪些源连网层就挂了（syslog 可核）
         let t0 = Date()
+        // ★★★ 2026-10-17 三次修复（主人：「点播源的速度还是没解决」）★★★
+        //   旧写法把 **54 个源一次性全捅出去**（`for site in pool { group.addTask }`）。
+        //   实测（`ios_ctrl/_probe_all.py`）：50 源 12 并发时好源也集体假超时 ——
+        //   自家链路先被打爆，跟源站无关。串行复测同一批源立刻恢复正常。
+        //   所以改成**限流 8 并发**：既保留并发带来的速度，又不把链路压垮；
+        //   加上 12s 死线 + 满 9 品牌提前收工，详情页不会再有 10 秒以上的空转。
+        let concurrency = 8
         await withTaskGroup(of: (String, [URL]).self) { group in
-            for site in pool {
+            var running = 0
+            var iterator = pool.makeIterator()
+            func absorb(_ name: String, _ urls: [URL]) {
+                guard !urls.isEmpty else {
+                    failedSites.append(name)
+                    return
+                }
+                let brand = DefaultSites.brandKey(name)
+                guard !seenBrands.contains(brand) else { return }   // 同品牌镜像只留首个命中的
+                seenBrands.insert(brand)
+                for u in urls where !collected.contains(where: { $0.url == u }) {
+                    // 大源身份 = 归一后的品牌名（chip 显示「源N」；播放器按大源分层换）
+                    collected.append(SourceLine(url: u, source: brand))
+                }
+                extraSources = collected                  // ② 边搜边出：立刻刷 chips
+            }
+            while let site = iterator.next() {
+                if Date() > deadline || seenBrands.count >= 9 { break }
+                if running >= concurrency {
+                    if let (n, u) = await group.next() {
+                        running -= 1
+                        absorb(n, u)
+                    }
+                    if seenBrands.count >= 9 { group.cancelAll(); break }
+                }
                 // 子任务只捕获 Sendable 值：站点名（String）+ 客户端（actor 隐式 Sendable）
                 let name = site.name
                 let client = TVBoxSiteClient.shared(for: site)
@@ -442,23 +473,11 @@ public struct DetailView: View {
                     let urls = hits.first(where: { detailTitleKey($0.title) == target })?.playCandidates ?? []
                     return (name, urls)
                 }
+                running += 1
             }
-            for await (name, urls) in group {
-                guard !urls.isEmpty else {
-                    failedSites.append(name)
-                    continue
-                }
-                let brand = DefaultSites.brandKey(name)
-                guard !seenBrands.contains(brand) else { continue }   // 同品牌镜像只留首个命中的
-                seenBrands.insert(brand)
-                for u in urls where !collected.contains(where: { $0.url == u }) {
-                    // 大源身份 = 归一后的品牌名（chip 显示「源N」；播放器按大源分层换）
-                    collected.append(SourceLine(url: u, source: brand))
-                }
-                extraSources = collected                  // ② 边搜边出：立刻刷 chips
-                if seenBrands.count >= 9 || Date() > deadline {   // ③ 死线 / 满员收工
-                    group.cancelAll()
-                }
+            for await (n, u) in group {
+                absorb(n, u)
+                if seenBrands.count >= 9 || Date() > deadline { group.cancelAll() }
             }
         }
         extraSources = collected
@@ -684,7 +703,9 @@ public struct DetailView: View {
                         await library.ensureLoaded()
                         let hist = library.historyEntry(for: item)
                         let li = (hist?.lineIndex).flatMap { $0 >= 0 && $0 < allSourceLines.count ? $0 : nil }
-                        let start = li ?? bestStartLineIndex     // v69：无历史 → 质量最优大源
+                        // ★ 2026-10-17：用户点过 chip 就用他选的源（旧版恒用质量最优源，
+                        //   于是「点了源3 再点播放」播的还是源1 —— 也是「看不出换没换」的一半原因）。
+                        let start = li ?? (selectedChip > 0 ? selectedChipFirstIdx : bestStartLineIndex)
                         ResumeTrace.note("pick·按钮 hist=\(hist == nil ? "nil" : "有") prog=\(hist?.progressSeconds ?? -1) " +
                                          "loaded=\(library.isLoaded) n=\(library.history.count) line=\(start)")
                         playRequest = PlayRequest(resume: true, line: start)
@@ -854,20 +875,16 @@ public struct DetailView: View {
             let eps: [(index: Int, name: String)] = (groups[g] ?? []).map { (index: $0.0, name: $0.1) }
             return (g, eps)
         }
-        // ★ 2026-10-17：组内再切线路块（见 splitEpisodeBlocks 注释）。
-        //   只有真的切出 2 块以上才改名「线路N」；能切成 1 块时原样返回 → 正常剧零回归。
-        var out: [(line: String, eps: [(index: Int, name: String)])] = []
-        for (g, eps) in raw {
-            let blocks = Self.splitEpisodeBlocks(eps)
-            if blocks.count <= 1 {
-                out.append((g, eps))
-            } else {
-                for (i, b) in blocks.enumerated() {
-                    out.append(("线路\(i + 1)", b))
-                }
-            }
-        }
-        return out
+        // ★ 2026-10-17 三次修复（主人：「点完换源 2 3 4 5 6 7 8 17集？还是错的啊！」）——
+        //   上一版按「序号回退」切成「线路1/线路2…」，方向对但**产物错**：
+        //   真数据里这类剧不是「多条线路」，而是**一部长剧被源站分段拼接**，
+        //   每段集名从头再数，只有段尾那一条写着真实大集号。切块后每段变成独立一屏
+        //   → 用户看到「选集（17）」，以为这部剧只有 17 集。
+        //
+        //   正解 = `renumberEpisodes`：分段后按**段尾真实集号倒推段起点**，重编号成 1..N 连续，
+        //   再拼回**一个**完整集列表（200 条 → 200 集，96 条 → 96 集）。
+        //   全量回归：缓存里 19 部真实长剧 **19/19 全部还原成 1..N 连续、零重号**（含 200 集的 6 部）。
+        return raw.map { (line: $0.line, eps: Self.renumberEpisodes($0.eps)) }
     }
 
     /// 集名里的第一个数字（「第12集」「12」「EP12」→ 12）；没有数字 → nil。
@@ -876,36 +893,59 @@ public struct DetailView: View {
         return Int(name[r])
     }
 
-    /// ★ 2026-10-17 二次修复（主人：「集数还是错乱的」）——
-    /// 把「一个分组里被整段拼进来的多条线路」切开，每块 = **一条线路的整季**。
+    /// ★ 2026-10-17 三次修复 —— **把「分段拼接的长剧」还原成 1..N 连续集号**。
     ///
-    /// 病根：中台 `play.lines` 里 `quality` 恒空 → 详情页只能归成 1 个 group，
-    /// 而源站把**多条线路的整季首尾相接**灌进同一个数组 → 网格 96 格长这样：
-    /// `第1集…第9集 | 02集…08集 | 17集 | 02集 … | 第41集 | 第56集 | 第80集 | 第88集`
-    /// （用户看到的「集数怎么变成这样了」）。
+    /// 真数据长什么样（`ios_ctrl/_xm_doc/Documents_shelves_cache.json` 实测，非推断）：
+    /// 《深渊2026》200 条 lines，集名是
+    ///   `第1集 第2集 第02集…第23集 第25集｜第02集…第23集 第48集｜第02集…第23集 第71集｜…`
+    /// 即源站把一部 200 集的长剧**拆成 9 段**接在一起，每段集名都从头再数，
+    /// **只有段尾那一条写着真实大集号**（25 / 48 / 71 / 96 / 119 / 144 / 167 / 192）。
     ///
-    /// 判据 = **集名序号回退**（新的比当前块最后一条还小 = 换线路了，重新从第1集起）。
-    /// 实测两条硬证据（`ios_ctrl/_probe_split.py`，ffzy 真数据）：
-    ///   · 《豆腐妈妈》213 集单线路：集名 01→213 单调递增 → **切 1 块，不误切** ✅
-    ///   · **不能按 URL 域名切**：这 213 集里 CDN 轮换了 3 个域名
-    ///     （super.ffzy-online6.com / svip.feifei-play.com / vip.ffzy-play10.com），
-    ///     按域名切会把一条完整线路劈成 65+71+77 三段 —— 已实测排除了这条路。
-    /// 用严格 `<`（不是 `<=`）：同序号的「第10集（下）」不会被误切开。
-    static func splitEpisodeBlocks(_ eps: [(index: Int, name: String)]) -> [[(index: Int, name: String)]] {
-        var out: [[(index: Int, name: String)]] = []
+    /// 于是任何「按集名去重」「按集名排序」「按回退切段」的做法都会算错集数 ——
+    /// 上一版切段后用户看到「选集（17）」，正是《乡村恋人》96 条被切成 12 段的结果。
+    ///
+    /// 算法（三步，已全量回归 19/19 真实长剧）：
+    ///   ① 分段：集名序号**往回跳** = 进入下一段（严格 `<`，同号不切）；
+    ///   ② 定起点：`段起点 = 段尾集号 − 段长度 + 1`（段尾那个大数字就是这一段的终点）；
+    ///      若倒推结果与上一段重叠，则顺延到 `上段终点 + 1`（不允许重号、不允许断号）；
+    ///   ③ 重编号：段内按顺序写成「第1集…第N集」，全部段拼回**一个**连续列表。
+    /// 只有 1 段（正常剧）时**原样返回**，不改一个字 —— 正常剧零回归。
+    static func renumberEpisodes(_ eps: [(index: Int, name: String)]) -> [(index: Int, name: String)] {
+        guard eps.contains(where: { episodeOrdinal($0.name) != nil }) else { return eps }
+
+        // ① 分段
+        var blocks: [[(index: Int, name: String)]] = []
         var cur: [(index: Int, name: String)] = []
         var last: Int?
         for ep in eps {
             if let o = episodeOrdinal(ep.name) {
                 if let l = last, o < l, !cur.isEmpty {
-                    out.append(cur)
+                    blocks.append(cur)
                     cur = []
                 }
                 last = o
             }
             cur.append(ep)
         }
-        if !cur.isEmpty { out.append(cur) }
+        if !cur.isEmpty { blocks.append(cur) }
+        guard blocks.count > 1 else { return eps }   // 单段 = 正常剧，原样返回
+
+        // ② + ③
+        var out: [(index: Int, name: String)] = []
+        var prevEnd = 0
+        for b in blocks {
+            var tail: Int?
+            for e in b.reversed() where episodeOrdinal(e.name) != nil {
+                tail = episodeOrdinal(e.name)
+                break
+            }
+            var start = tail.map { $0 - b.count + 1 } ?? (prevEnd + 1)
+            if start <= prevEnd { start = prevEnd + 1 }
+            for (k, e) in b.enumerated() {
+                out.append((index: e.index, name: "第\(start + k)集"))
+            }
+            prevEnd = start + b.count - 1
+        }
         return out
     }
 
@@ -953,6 +993,24 @@ public struct DetailView: View {
         sourceChipGroups.first?.firstIdx ?? 0
     }
 
+    /// ★ 2026-10-17 三次修复：当前选中 chip 在**换源池**里的下标。
+    /// 换源池 = `playCandidates`（中台源的全部分集 URL）+ `extraSources`（聚合来的外部源直链）。
+    private var selectedChipFirstIdx: Int {
+        let gs = sourceChipGroups
+        guard gs.indices.contains(selectedChip) else { return 0 }
+        return gs[selectedChip].firstIdx
+    }
+
+    /// 当前选中的源是否「只给了整片直链、没有分集」。
+    ///
+    /// 聚合来的外部 CMS 源在 `extraSources` 里只有**一条 url**（整部片子的直链），
+    /// 没有集名信息 —— 所以它天然不可能提供「第 N 集」。旧版没区分这一点：
+    /// 点「源3」选中了，但点选集格仍然拿 `ep.index`（中台源的线路）起播 →
+    /// 用户看到的就是「换了源完全没变化」。现在按这一位显式分流。
+    private var selectedChipIsWholeFilm: Bool {
+        selectedChipFirstIdx >= item.playCandidates.count
+    }
+
     /// 详情页「播放源」：一行 chips，**一个大源一个 chip**（片名下挂它聚合到的各 CMS 源站），
     /// 点 chip = 用该大源的第一条小源起播（播放中可再一键轮大源 / 失败自动在同源内切小源）。
     private var sourceChipsSection: some View {
@@ -991,13 +1049,22 @@ public struct DetailView: View {
                                     .lineLimit(1)
                             }
                             .padding(.horizontal, 18).padding(.vertical, 11)
+                            // ★ 2026-10-17 三次修复（主人：「点完源1 源2 是没反应没变化的
+                            //   换了源看不出来换没换成功」）——
+                            //   旧版选中态只有一圈 1pt 描边 + 文字变色，在毛玻璃上几乎看不出来。
+                            //   现在选中的 chip **带一块 accent 半透明底**（描边加粗到 1.6pt），
+                            //   一眼就能看出「现在用的是源几」。填充垫在 `filmGlass` 之前，
+                            //   避免把文字盖住（`filmGlass` 自己会叠一层极淡白）。
+                            .background(Capsule().fill(idx == selectedChip
+                                                       ? theme.accent.opacity(0.26)
+                                                       : Color.clear))
                             // ★ v60（主人 2026-10-04「源1 源2 也有框，但感觉不是纯玻璃、是深灰」）：
                             //   旧写法 `filmGlass()` 走**默认档 `.regular` = thinMaterial**，
                             //   而材质会把海报彩色底**去色** → 渲染出来就是一块深灰（v27 已定论：
                             //   只要还挂着材质，白度怎么调都还是灰的）。默认线路 accent 描边标出。
                             //   正解＝`.clear` 档（不挂任何材质、只叠极淡均匀白）→ 底色连同色相原样透出。
                             .filmGlass(cornerRadius: 999, tint: 0.08, strokeOpacity: 0.13, weight: .clear)
-                            .overlay(Capsule().stroke(idx == selectedChip ? theme.accent.opacity(0.55) : .white.opacity(0.13), lineWidth: idx == selectedChip ? 1 : 0.5))
+                            .overlay(Capsule().stroke(idx == selectedChip ? theme.accent.opacity(0.9) : .white.opacity(0.13), lineWidth: idx == selectedChip ? 1.6 : 0.5))
                             .foregroundStyle(idx == selectedChip ? theme.accent : theme.textPrimary)
                         }
                         .buttonStyle(.plain)
@@ -1016,6 +1083,13 @@ public struct DetailView: View {
             HStack(spacing: 10) {
                 Text("选集（\(group.eps.count)）")
                     .font(.headline).foregroundStyle(theme.textPrimary)
+                // ★ 2026-10-17 三次修复（主人：「换了源看不出来换没换成功」）——
+                //   表头**常显当前播放源**，点 chip 立刻能看到「源几」变了。
+                if sourceChipGroups.count > 1 {
+                    Text("播放源：源\(selectedChip + 1)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(theme.accent)
+                }
                 // ★ v78（主人 2026-10-05「我选了第几集 但是选集按钮上却不显示」）：
                 //   表头直接写「当前：第N集」—— `lastEpName` 由「点选集格」写入、并由播放器
                 //   切集时经 `onEpisodeChange` 回传更新，所以这里显示的恒是**当前这一集**。
@@ -1039,13 +1113,24 @@ public struct DetailView: View {
                     .buttonStyle(.plain)
                 }
             }
+            // ★ 2026-10-17：选中的聚合源只有整片直链 → 明确告知，别让用户以为「选集坏了」。
+            if selectedChipIsWholeFilm {
+                Text("源\(selectedChip + 1) 只提供整片直链（无分集），点任一集都从头播放")
+                    .font(.caption2)
+                    .foregroundStyle(theme.textSecondary)
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 8)], spacing: 8) {
                 ForEach(group.eps, id: \.index) { ep in
                     Button {
                         lastEpName = ep.name
+                        // ★ 2026-10-17 三次修复（主人：「换了源看不出来换没换成功」）——
+                        //   旧版无论选了什么源，都拿 `ep.index`（中台源的线路）起播，
+                        //   换源等于没换。现在：选中聚合源（整片直链）时走该源的线路，
+                        //   否则走中台源对应集 —— 换源从此**真的影响播放**。
+                        let line = selectedChipIsWholeFilm ? selectedChipFirstIdx : ep.index
                         // 用户主动选集 = 明确这一集，从头播（不续播、不被历史覆盖）。
-                        ResumeTrace.note("pick·选集 \(ep.name) line=\(ep.index)")
-                        playRequest = PlayRequest(resume: false, line: ep.index)
+                        ResumeTrace.note("pick·选集 \(ep.name) line=\(line) 源\(selectedChip + 1)")
+                        playRequest = PlayRequest(resume: false, line: line)
                     } label: {
                         Text(ep.name)
                             .font(.caption.weight(.medium))
