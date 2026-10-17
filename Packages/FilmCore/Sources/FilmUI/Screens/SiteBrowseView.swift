@@ -40,6 +40,9 @@ public struct SiteBrowseView: View {
     @State private var pageCount = 0      // 上游给的权威总页数（0=没给）
     @State private var totalCount = 0     // 上游给的权威总条数（0=没给）
     @State private var paging = false     // 翻页请求中（防连点）
+    /// 下一页「拉失败」标记（2026-10-17）：失败不等于到底，底部给一个可点的重试入口，
+    /// 否则用户滑到底、最后一格已经 appear 过 → 再也不会自动触发，又变成「卡住不动」。
+    @State private var loadMoreFailed = false
     @State private var skipNote: String?  // 「该分类空 → 已自动跳到 X」轻提示（35包·空分类自动跳过）
     @State private var loadError: String?
     @State private var searchText = ""
@@ -671,6 +674,14 @@ public struct SiteBrowseView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
+        } else if loadMoreFailed {
+            Button { loadMoreFailed = false; Task { await loadMore() } } label: {
+                Label("这一页没加载出来 · 点此重试", systemImage: "arrow.clockwise")
+                    .font(.caption2).foregroundStyle(theme.accent)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+            }
+            .buttonStyle(.plain)
         } else {
             Text(pageCount > 0 && totalCount > items.count
                  ? "上滑继续加载 · 还有 \(totalCount - items.count) 部"
@@ -812,7 +823,7 @@ public struct SiteBrowseView: View {
         let r = await client.listPage(categoryId: selectedCategory?.id, page: n)
         // 2026-10-17：**网络失败 ≠ 没有下一页**。旧实现只要 items 为空就判「到底」，
         // 一次抖动就把这个源的分页永久判死（之后怎么滑都不再加载，只留「正在加载更多」）。
-        if !r.ok && r.items.isEmpty { return }          // 这一页没拉成：保持可继续加载
+        if !r.ok && r.items.isEmpty { loadMoreFailed = true; return }   // 没拉成：保持可继续加载（底部给重试）
         if r.items.isEmpty {
             if n > 1 { pageCount = max(1, n - 1) }
             reachedEnd = true
@@ -820,6 +831,7 @@ public struct SiteBrowseView: View {
             let seen = Set(items.map(\.dedupId))
             let fresh = scopedItems(r.items).filter { !seen.contains($0.dedupId) }
             if fresh.isEmpty { reachedEnd = true } else { items.append(contentsOf: fresh) }
+            loadMoreFailed = false
             page = n
             if r.pageCount > 0 { pageCount = r.pageCount }
             if r.total > 0 { totalCount = r.total }
@@ -851,7 +863,8 @@ public struct SiteBrowseView: View {
             }
         }
         // 2026-10-17 同 `loadMore`：全组都没应答（网络抖动）→ 不判到底，保留继续加载
-        guard anyOk else { return }
+        guard anyOk else { loadMoreFailed = true; return }
+        loadMoreFailed = false
         page = n
         if let m = pageCounts.min() { pageCount = m }
         if added == 0 { reachedEnd = true }
