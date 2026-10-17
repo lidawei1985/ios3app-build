@@ -172,7 +172,8 @@ public actor TVBoxSiteClient {
         }
     }
 
-    private func api(_ query: [String: String], via sess: URLSession? = nil) async -> Data? {
+    private func api(_ query: [String: String], via sess: URLSession? = nil,
+                     allowUAFallback: Bool = false) async -> Data? {
         guard var comps = URLComponents(string: site.api), comps.scheme != nil else { return nil }
         var items = comps.queryItems ?? []
         for (k, v) in query { items.append(URLQueryItem(name: k, value: v)) }
@@ -184,8 +185,10 @@ public actor TVBoxSiteClient {
             // GBK 源归一化为 UTF-8（FilmJSON 解码只认 UTF-8；TVBox 原版自动转码）
             return Self.normalizeUTF8(data) ?? data
         }
-        // 被 WAF 挡（有应答但非 200）→ 换兜底 UA 再试一次；超时则不重试
-        if first.answered {
+        // 被 WAF 挡（有应答但非 200）→ 换兜底 UA 再试一次；超时则不重试。
+        // **只在短会话（搜索 / 补图）启用**：长会话一次可能 30s，多打一次会把列表页拖爆，
+        // 403 在浏览/详情场景下等价于「该源当前不可达」，直接失败更体面。
+        if allowUAFallback, first.answered {
             let second = await fetch(url, ua: Self.fallbackUA, session: s)
             if let data = second.data { return Self.normalizeUTF8(data) ?? data }
         }
@@ -367,7 +370,7 @@ public actor TVBoxSiteClient {
     /// 搜索（ac=detail&wd=）。空结果≠源坏（可能真没这片），只有网络层失败才记熔断。
     public func search(_ keyword: String) async -> [FeedItem] {
         // 走短会话（8s）：慢源不再拖住整屏搜索，见 init 注释里的实测数据
-        guard let data = await api(["ac": "detail", "wd": keyword], via: searchSession),
+        guard let data = await api(["ac": "detail", "wd": keyword], via: searchSession, allowUAFallback: true),
               let rsp = decodeCMS(data) else {
             // 空结果≠源坏（可能真没这片），只有网络层失败才记熔断。
             // 但**被预算取消**不算失败（见 GlobalSiteSearch 的 budget：到点就 cancelAll），
@@ -412,7 +415,7 @@ public actor TVBoxSiteClient {
 
     /// 补图专用 detail：**不写 SourceHealth**（补图失败是装饰问题，不能把源判死）。
     private func detailForPic(_ vodId: String) async -> String? {
-        guard let data = await api(["ac": "detail", "ids": vodId], via: posterSession),
+        guard let data = await api(["ac": "detail", "ids": vodId], via: posterSession, allowUAFallback: true),
               let rsp = decodeCMS(data),
               let first = rsp.list?.first else { return nil }
         return normalizedPic(first.vodPic)

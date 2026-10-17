@@ -234,18 +234,22 @@ public struct SiteBrowseView: View {
     }
 
     /// 搜索结果补图（与列表同策略：ac=list 无图 → 并发 detail 补，按 dedupId 合并，不整体覆盖）。
+    /// 2026-10-17 同 `enrichCurrent`：分两批上屏，第一批出图立刻可见。
     private func enrichResults(_ list: [FeedItem]) {
         guard list.contains(where: { ($0.poster?.url ?? "").isEmpty }) else { return }
         Task { @MainActor in
-            let enriched = await client.enrichPosters(list)
-            var pics: [String: String] = [:]
-            for it in enriched {
-                if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }
-            }
-            guard !pics.isEmpty, let cur = searchResults else { return }
-            searchResults = cur.map { it in
-                if (it.poster?.url ?? "").isEmpty, let u = pics[it.dedupId] { return it.withPoster(u) }
-                return it
+            let chunks: [[FeedItem]] = [Array(list.prefix(15)), Array(list.dropFirst(15))]
+            for chunk in chunks where !chunk.isEmpty {
+                let enriched = await client.enrichPosters(chunk, limit: chunk.count)
+                var pics: [String: String] = [:]
+                for it in enriched {
+                    if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }
+                }
+                guard !pics.isEmpty, let cur = searchResults else { continue }
+                searchResults = cur.map { it in
+                    if (it.poster?.url ?? "").isEmpty, let u = pics[it.dedupId] { return it.withPoster(u) }
+                    return it
+                }
             }
         }
     }
@@ -922,19 +926,26 @@ public struct SiteBrowseView: View {
     /// 列表补图（34包根修「内置源海报不显示」）：ac=list 的 vod_pic 全空（图只在 ac=detail），
     /// 后台并发补 detail 取图，命中按 dedupId 合并回当前列表——不整体覆盖，
     /// 防补图期间翻页追加的条目被丢。
+    ///
+    /// 2026-10-17 改「**分两批上屏**」：旧实现要等整页 20~24 条 detail 全回来才刷一次，
+    /// 慢源（索倪 detail 实测 1.2s / 7.2s / 10s 超时都有）一拖，用户看到的就是整页一直转圈。
+    /// 现在先补第一屏（前 15 条）→ 出图立刻上屏，剩余条目后台再补第二批。
     private func enrichCurrent() {
         let snapshot = items
         guard snapshot.contains(where: { ($0.poster?.url ?? "").isEmpty }) else { return }
         Task { @MainActor in
-            let enriched = await client.enrichPosters(snapshot)
-            var pics: [String: String] = [:]
-            for it in enriched {
-                if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }
-            }
-            guard !pics.isEmpty else { return }
-            items = items.map { it in
-                if (it.poster?.url ?? "").isEmpty, let u = pics[it.dedupId] { return it.withPoster(u) }
-                return it
+            let chunks: [[FeedItem]] = [Array(snapshot.prefix(15)), Array(snapshot.dropFirst(15))]
+            for chunk in chunks where !chunk.isEmpty {
+                let enriched = await client.enrichPosters(chunk, limit: chunk.count)
+                var pics: [String: String] = [:]
+                for it in enriched {
+                    if let u = it.poster?.url, !u.isEmpty { pics[it.dedupId] = u }
+                }
+                guard !pics.isEmpty else { continue }
+                items = items.map { it in
+                    if (it.poster?.url ?? "").isEmpty, let u = pics[it.dedupId] { return it.withPoster(u) }
+                    return it
+                }
             }
         }
     }
