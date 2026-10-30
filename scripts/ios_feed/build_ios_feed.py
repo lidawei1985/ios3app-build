@@ -121,11 +121,18 @@ def build_mode(mode, key):
         cat_count[name] = cat_count.get(name, 0) + 1
     cats = sorted([{"id": "agg_" + n, "name": n, "count": c} for n, c in cat_count.items()],
                   key=lambda x: -x["count"])
+    # 2026-10-30 主视觉修法：源条目无时间戳（文件按片名字母序），
+    # 原先 posters=文件前 40 条 → 首页主视觉永远是同一批"爱X"片，天天不变。
+    # 改为：质量分头部池 + 按日期播种轮换 —— 每天自动换一批不同的高分配片。
     with_poster = [it for it in items if it["poster"]["url"]]
+    head = sorted(with_poster, key=lambda x: -(x.get("quality_score") or 0))[:1000]
+    day_seed = time.strftime("%Y-%m-%d") + mode
+    import random
+    rotated = random.Random(day_seed).sample(head, 40) if len(head) >= 40 else head
     home = {"ok": True, "mode": mode, "version": version, "total": total,
             "categories": cats[:40],
-            "posters": [it["poster"]["url"] for it in with_poster[:40]],
-            "pool": with_poster[:500]}
+            "posters": [it["poster"]["url"] for it in rotated],
+            "pool": head[:500]}
     out["v1/feed/%s/home.json" % mode] = enc(key, json.dumps(home, ensure_ascii=False).encode())
 
     # 分片
