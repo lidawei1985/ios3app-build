@@ -1,7 +1,7 @@
 {
-  "stamp": "806861372942",
-  "note": "fix(search+browse): v99 \u4e09\u6839\u4fee\uff08\u4e3b\u4eba\u771f\u673a\u5b9e\u6d4b\u6295\u8bc9 2026-10-18\uff09 [build-fix]",
-  "builtAt": "2026-10-17T17:57:46Z",
+  "stamp": "81dc748da45b",
+  "note": "fix(poster+feed): v100 \u53cc\u6839\u4fee\uff08\u661f\u5e55\u7247\u5e93<2\u4e07+\u6d77\u62a5\u6162\u7aef\u5230\u7aef\u81ea\u68c0 2026-10-30\uff09 [build-fix]",
+  "builtAt": "2026-10-30T06:15:48Z",
   "apps": {
     "xingmu": {
       "asset": "XingmuISO.ipa"
