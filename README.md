@@ -1,5 +1,15 @@
 # 星幕 / 心屋 — iPhone 版两款独立 App
 
+## ⬇️ 下载最新版（固定链接，永远指向最新）
+
+| App | 直装 IPA（免签工具/爱思签名后安装） |
+|---|---|
+| 星幕（普通影视） | [XingmuISO.ipa](https://github.com/lidawei1985/ios3app-build/releases/download/latest/XingmuISO.ipa) |
+| 心屋（儿童影视） | [XinwuISO.ipa](https://github.com/lidawei1985/ios3app-build/releases/download/latest/XinwuISO.ipa) |
+
+- 固定入口 [Releases · 最新构建](https://github.com/lidawei1985/ios3app-build/releases/latest)，每次发版自动覆盖，无需翻版本。
+- IPA 为未签名包：用爱思助手/SideStore 等自签后安装。
+
 现有两款 Android TV APK（星幕·普通 / 心屋·儿童）的 iOS 迁移工程。
 一套公共移动核心（FilmCore + FilmUI）+ 两个独立产品 Target，共享代码、独立身份、独立内容池。
 
