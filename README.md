@@ -8,6 +8,7 @@
 | 心屋（儿童影视） | [XinwuISO.ipa](https://github.com/lidawei1985/ios3app-build/releases/download/latest/XinwuISO.ipa) |
 
 - 固定入口 [Releases · 最新构建](https://github.com/lidawei1985/ios3app-build/releases/latest)，每次发版自动覆盖，无需翻版本。
+- 国内直连（GitHub 慢/打不开时用）：[XingmuISO.ipa](http://120.26.233.93/dl/XingmuISO.ipa) · [XinwuISO.ipa](http://120.26.233.93/dl/XinwuISO.ipa)
 - IPA 为未签名包：用爱思助手/SideStore 等自签后安装。
 
 现有两款 Android TV APK（星幕·普通 / 心屋·儿童）的 iOS 迁移工程。
