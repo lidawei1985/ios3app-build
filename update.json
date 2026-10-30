@@ -1,7 +1,7 @@
 {
-  "stamp": "8c386c73f73e",
-  "note": "ci: iOS v1/feed \u4e91\u7aef\u53d1\u5e03\u5668\u4e0a\u4e91\uff08E\u76d8\u574f\u540e\u672c\u673a\u94fe\u6b7b\u2192\u6539\u5403 ci_auto \u6bcf\u65e5\u8001\u4ed3\uff0cFCVB1 \u52a0\u5bc6\u63a8 xingmu/xinwu\uff09",
-  "builtAt": "2026-10-30T06:33:05Z",
+  "stamp": "2750ebcc1c9c",
+  "note": "fix(ios-feed): git config cwd \u4fee\u5230\u4ed3\u5e93\u76ee\u5f55",
+  "builtAt": "2026-10-30T06:36:06Z",
   "apps": {
     "xingmu": {
       "asset": "XingmuISO.ipa"
