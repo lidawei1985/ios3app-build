@@ -149,10 +149,10 @@ def push(repo, files):
     url = f"https://x-access-token:{tok}@github.com/lidawei1985/{repo}.git"
     tmp = f"/tmp/{repo}"
     subprocess.run(["rm", "-rf", tmp], check=True)
-    for cmd, kw in [(["git", "clone", "--depth", "1", url, tmp], {}),
-                    (["git", "config", "user.email", "fc-ios-feed@ci"], {}),
-                    (["git", "config", "user.name", "fc-ios-feed"], {})]:
-        subprocess.run(cmd, cwd="/tmp", check=True, **kw)
+    subprocess.run(["git", "clone", "--depth", "1", url, tmp], cwd="/tmp", check=True)
+    for cfg in [["git", "config", "user.email", "fc-ios-feed@ci"],
+                ["git", "config", "user.name", "fc-ios-feed"]]:
+        subprocess.run(cfg, cwd=tmp, check=True)
     changed = 0
     for rel, blob in files.items():
         p = os.path.join(tmp, rel)
