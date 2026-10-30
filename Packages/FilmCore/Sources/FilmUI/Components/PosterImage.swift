@@ -264,7 +264,20 @@ public final class PosterLoader {
 
     private func downloadData(_ urlString: String) async -> Data? {
         guard let url = URL(string: urlString) else { return nil }
-        // 单次尝试（不再内部 for 0..<2 双打——外层已有一次重试，双打会把最坏耗时乘 2）
+        // 2026-10-30 海报 403 根修（两段式 UA）：
+        //   CMS 源站图床 img.dytt-tupian.com(28%) / hongniuzyimage.com(11%) 对 Safari UA 直接 403，
+        //   实测只有 okhttp UA 200（图床本就是给安卓采集链服务的）。而 10-17 的 Safari UA 是为
+        //   另一批挂起域修的，不能一刀切 → 先 okhttp 打头（覆盖 4 成海报域），失败再回落
+        //   session 默认（Safari）。两段共 2 次请求，失败域由负缓存 10 分钟挡住重复。
+        let okhttpReq = URLRequest(url: url)
+        do {
+            var req = okhttpReq
+            req.setValue("okhttp/4.9.3", forHTTPHeaderField: "User-Agent")
+            if let (data, resp) = try? await session.data(for: req),
+               (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
+                return data
+            }
+        }
         if let (data, resp) = try? await session.data(from: url),
            (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
             return data

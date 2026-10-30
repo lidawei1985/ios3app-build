@@ -87,6 +87,9 @@ public struct FeedBases: Sendable {
             //        ③ contents API 对 >1MB 文件不回 base64 → FeedClient 对该域统一加
             //          Accept: application/vnd.github.raw（raw 回包 ≤100MB，真分片 5.5MB 实测 2.3s）。
             b.append("https://api.github.com/repos/lidawei1985/\(profile.feedRepo)/contents")
+            // 2026-10-30：新增 gh-proxy.com raw 镜像——实测 2.9MB 分片 1.4s（fastly 同片 3.2~6.2s），
+            // 不占 api.github 配额、墙内稳定；排在 fastly 前，快通道优先。
+            b.append("https://gh-proxy.com/https://raw.githubusercontent.com/lidawei1985/\(profile.feedRepo)/main")
             b.append("https://fastly.jsdelivr.net/gh/lidawei1985/\(profile.feedRepo)@main")
             b.append("https://raw.githubusercontent.com/lidawei1985/\(profile.feedRepo)/main")
             authToken = token
