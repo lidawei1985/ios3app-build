@@ -174,15 +174,16 @@ def build_mode(mode, key):
                      if (it.get("year") or "") in ("2026", "2025", "2024")
                      and it.get("playable") and it.get("content_type") in ("movie", "tv")]
         else:
-            # 儿童库年份缺失严重(大量 "0")、且以动漫为主(App 主视觉本就排除动漫)——
-            # 不卡年份,全库电影/电视剧逐条 TMDB 匹配高清横版
+            # 儿童库年份缺失严重(大量 "0")、且以动漫为主——不卡年份不排动漫,
+            # 全库逐条 TMDB 匹配(动漫按 TV 搜),保证心屋主视觉同样高清横版
             cands = [it for it in items
-                     if it.get("playable") and it.get("content_type") in ("movie", "tv")]
+                     if it.get("playable") and it.get("content_type") in ("movie", "tv", "anime")]
         cands.sort(key=lambda x: -(x.get("quality_score") or 0))
         log(f"TMDB 匹配候选(近三年可播) {len(cands)}")
 
         def _match(it):
-            hit = _tmdb_hit(it["title"], it.get("year"), it.get("content_type") == "tv")
+            is_tv = it.get("content_type") in ("tv", "anime")
+            hit = _tmdb_hit(it["title"], it.get("year"), is_tv)
             return None if hit is None else (it, hit)
 
         done = 0
