@@ -29,6 +29,10 @@ MAGIC = b"FCVB1"
 TMDB_KEY = os.environ.get("TMDB_API_KEY", "")
 # 星幕兜底成人词（老仓 scope=NORMAL 已过闸，这里是双保险；命中即弃）
 ADULT_WORDS = ("伦理", "三级", "情色", "有码", "无码", "里番", "两性", "写真热舞")
+# 儿童端专用加强词表(2026-10-30 污染实测提取):色情/软色情一律不得进心屋
+PORNO_WORDS = ("巨乳", "骚", "内射", "操", "穴", "奸", "淫", "做爱", "口交", "肛", "萝莉控",
+               "人妻", "熟女", "援助", "情色", "三级", "伦理", "有码", "无码", "里番", "18禁",
+               "制服诱惑", "肉欲", "欲女", "春药", "偷情", "换妻", "群交", "自慰", "勃起")
 
 
 def log(m):
@@ -56,7 +60,12 @@ def enc(key, plain: bytes) -> bytes:
 def convert(raw_item, mode):
     """老仓 schema2.1 条目 → iOS FeedItem 契约（docs/DATA_CONTRACT.md）。"""
     title = raw_item.get("name") or ""
-    if mode == "normal" and any(w in (raw_item.get("originalCategoryName") or "") + title for w in ADULT_WORDS):
+    # 2026-10-30 P0：心屋 child 池实锤被采集源污染(头部片名含"极品巨乳/内射"等色情内容)。
+    # 儿童端零容忍:child 模式用加强色情词表逐条剔除,normal 沿用原成人词兜底。
+    blob = (raw_item.get("originalCategoryName") or "") + title + (raw_item.get("summary") or "")[:120]
+    if mode == "normal" and any(w in blob for w in ADULT_WORDS):
+        return None
+    if mode == "child" and any(w in blob for w in PORNO_WORDS):
         return None
     poster = raw_item.get("poster") or raw_item.get("cover") or ""
     play_url = raw_item.get("playUrl") or ""
