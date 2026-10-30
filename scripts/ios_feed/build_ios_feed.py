@@ -160,9 +160,15 @@ def build_mode(mode, key):
 
     hero_items = []
     if TMDB_KEY:
-        cands = [it for it in items
-                 if (it.get("year") or "") in ("2026", "2025", "2024")
-                 and it.get("playable") and it.get("content_type") in ("movie", "tv")]
+        if mode == "normal":
+            cands = [it for it in items
+                     if (it.get("year") or "") in ("2026", "2025", "2024")
+                     and it.get("playable") and it.get("content_type") in ("movie", "tv")]
+        else:
+            # 儿童库年份缺失严重(大量 "0")、且以动漫为主(App 主视觉本就排除动漫)——
+            # 不卡年份,全库电影/电视剧逐条 TMDB 匹配高清横版
+            cands = [it for it in items
+                     if it.get("playable") and it.get("content_type") in ("movie", "tv")]
         cands.sort(key=lambda x: -(x.get("quality_score") or 0))
         log(f"TMDB 匹配候选(近三年可播) {len(cands)}")
 
