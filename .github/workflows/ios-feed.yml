@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - run: pip install cryptography
+      - run: pip install cryptography pillow  # pillow=主视觉候选图实测尺寸
 
       - name: 转契约 + FCVB1 加密 + 推目标仓
         env:

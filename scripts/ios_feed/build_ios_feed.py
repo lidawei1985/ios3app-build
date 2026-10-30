@@ -121,17 +121,58 @@ def build_mode(mode, key):
         cat_count[name] = cat_count.get(name, 0) + 1
     cats = sorted([{"id": "agg_" + n, "name": n, "count": c} for n, c in cat_count.items()],
                   key=lambda x: -x["count"])
-    # 2026-10-30 主视觉修法：源条目无时间戳（文件按片名字母序），
-    # 原先 posters=文件前 40 条 → 首页主视觉永远是同一批"爱X"片，天天不变。
-    # 改为：质量分头部池 + 按日期播种轮换 —— 每天自动换一批不同的高分配片。
+    # 2026-10-30 主视觉硬标准（用户钦定，不得违背）：
+    #   只放 高清大图（宽>=800、体积>=60KB）、横图（宽>高，竖屏/模糊一律踢）、
+    #   2026 年新片优先（当年即热映主力），不足按 2025→更早年横向补齐。
+    #   每张候选在 CI 里真实下载测尺寸，肉眼级"模糊/小图/竖图"进不来。
+    #   按日期播种轮换，每天换一批不同面孔。
+    import io, random
+    from concurrent.futures import ThreadPoolExecutor
+
     with_poster = [it for it in items if it["poster"]["url"]]
     head = sorted(with_poster, key=lambda x: -(x.get("quality_score") or 0))[:1000]
+
+    def _img_ok(url):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "okhttp/4.9.3"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                if r.status != 200:
+                    return None
+                data = r.read(600000)
+            if len(data) < 60000:
+                return None
+            from PIL import Image
+            im = Image.open(io.BytesIO(data))
+            w, h = im.size
+            if w >= 800 and w > h:
+                return url
+        except Exception:
+            pass
+        return None
+
+    def _pick(years, limit=150):
+        batch = [it for it in with_poster if (it.get("year") or "") in years]
+        batch.sort(key=lambda x: -(x.get("quality_score") or 0))
+        urls = [it["poster"]["url"] for it in batch[:limit]]
+        with ThreadPoolExecutor(12) as ex:
+            return [u for u in ex.map(_img_ok, urls) if u]
+
+    chosen = _pick({"2026"})
+    log(f"主视觉合格(2026 横图HD): {len(chosen)}")
+    if len(chosen) < 40:
+        more = _pick({"2025"})
+        chosen += [u for u in more if u not in set(chosen)]
+        log(f"补 2025 后: {len(chosen)}")
+    if len(chosen) < 40:
+        more = _pick({"2024", "2023", "2022"})
+        chosen += [u for u in more if u not in set(chosen)]
+        log(f"补早年横图HD后: {len(chosen)}")
+
     day_seed = time.strftime("%Y-%m-%d") + mode
-    import random
-    rotated = random.Random(day_seed).sample(head, 40) if len(head) >= 40 else head
+    rotated_urls = random.Random(day_seed).sample(chosen, 40) if len(chosen) > 40 else chosen
     home = {"ok": True, "mode": mode, "version": version, "total": total,
             "categories": cats[:40],
-            "posters": [it["poster"]["url"] for it in rotated],
+            "posters": rotated_urls,
             "pool": head[:500]}
     out["v1/feed/%s/home.json" % mode] = enc(key, json.dumps(home, ensure_ascii=False).encode())
 
