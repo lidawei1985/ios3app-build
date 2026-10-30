@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -25,6 +26,7 @@ SRC = "https://raw.githubusercontent.com/lidawei1985/filmcollector-pages/main/fe
 TARGETS = {"normal": "filmcollector-pages-xingmu", "child": "filmcollector-pages-xinwu"}
 PART_SIZE = 500
 MAGIC = b"FCVB1"
+TMDB_KEY = os.environ.get("TMDB_API_KEY", "")
 # 星幕兜底成人词（老仓 scope=NORMAL 已过闸，这里是双保险；命中即弃）
 ADULT_WORDS = ("伦理", "三级", "情色", "有码", "无码", "里番", "两性", "写真热舞")
 
@@ -121,58 +123,77 @@ def build_mode(mode, key):
         cat_count[name] = cat_count.get(name, 0) + 1
     cats = sorted([{"id": "agg_" + n, "name": n, "count": c} for n, c in cat_count.items()],
                   key=lambda x: -x["count"])
-    # 2026-10-30 主视觉硬标准（用户钦定，不得违背）：
-    #   只放 高清大图（宽>=800、体积>=60KB）、横图（宽>高，竖屏/模糊一律踢）、
-    #   2026 年新片优先（当年即热映主力），不足按 2025→更早年横向补齐。
-    #   每张候选在 CI 里真实下载测尺寸，肉眼级"模糊/小图/竖图"进不来。
-    #   按日期播种轮换，每天换一批不同面孔。
-    import io, random
+    # 2026-10-30 主视觉硬标准（用户钦定）：高清横版大图 + 2026/近三年全网热门。
+    # 根治路径：CMS 图床全是 270-400px 竖版小图，永远过不了 App 端 hero 高清红线
+    # （PosterLoader.isKnownHDNetwork 只认 TMDB original / w780+，未知图床不冒充高清）。
+    # → 近三年片逐条 TMDB 匹配，命中带横版 backdrop 的：poster/backdrop 换成 TMDB 原图
+    #   （官方 1920px+ 横图，天然高清不模糊不竖屏），votes/rating 回填（真热门判据）。
+    # → 同时修 posters 类型 bug：iOS 契约 FeedHome.posters=[FeedItem]，此前发 URL 字符串数组，
+    #   home.json 在端上解析失败，主视觉只能吃陈旧兜底 —— 这就是"一直是最早那些"的根因。
     from concurrent.futures import ThreadPoolExecutor
 
     with_poster = [it for it in items if it["poster"]["url"]]
     head = sorted(with_poster, key=lambda x: -(x.get("quality_score") or 0))[:1000]
 
-    def _img_ok(url):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "okhttp/4.9.3"})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                if r.status != 200:
-                    return None
-                data = r.read(600000)
-            if len(data) < 60000:
+    def _tmdb_hit(title, year, is_tv):
+        kind = "tv" if is_tv else "movie"
+        q = urllib.parse.quote(title or "")
+        if not q:
+            return None
+        url = (f"https://api.themoviedb.org/3/search/{kind}?api_key={TMDB_KEY}"
+               f"&query={q}&language=zh-CN&include_adult=false")
+        if year:
+            url += ("&first_air_date_year=" + year) if is_tv else ("&year=" + year)
+        for _ in range(2):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "fc-ios-feed/1.0"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    res = json.loads(r.read())
+                for h2 in (res.get("results") or []):
+                    if h2.get("backdrop_path"):
+                        return h2
                 return None
-            from PIL import Image
-            im = Image.open(io.BytesIO(data))
-            w, h = im.size
-            if w >= 800 and w > h:
-                return url
-        except Exception:
-            pass
+            except Exception as e:
+                log(f"tmdb retry: {e}")
+                time.sleep(3)
         return None
 
-    def _pick(years, limit=150):
-        batch = [it for it in with_poster if (it.get("year") or "") in years]
-        batch.sort(key=lambda x: -(x.get("quality_score") or 0))
-        urls = [it["poster"]["url"] for it in batch[:limit]]
-        with ThreadPoolExecutor(12) as ex:
-            return [u for u in ex.map(_img_ok, urls) if u]
+    hero_items = []
+    if TMDB_KEY:
+        cands = [it for it in items
+                 if (it.get("year") or "") in ("2026", "2025", "2024")
+                 and it.get("playable") and it.get("content_type") in ("movie", "tv")]
+        cands.sort(key=lambda x: -(x.get("quality_score") or 0))
+        log(f"TMDB 匹配候选(近三年可播) {len(cands)}")
 
-    chosen = _pick({"2026"})
-    log(f"主视觉合格(2026 横图HD): {len(chosen)}")
-    if len(chosen) < 40:
-        more = _pick({"2025"})
-        chosen += [u for u in more if u not in set(chosen)]
-        log(f"补 2025 后: {len(chosen)}")
-    if len(chosen) < 40:
-        more = _pick({"2024", "2023", "2022"})
-        chosen += [u for u in more if u not in set(chosen)]
-        log(f"补早年横图HD后: {len(chosen)}")
+        def _match(it):
+            hit = _tmdb_hit(it["title"], it.get("year"), it.get("content_type") == "tv")
+            return None if hit is None else (it, hit)
 
-    day_seed = time.strftime("%Y-%m-%d") + mode
-    rotated_urls = random.Random(day_seed).sample(chosen, 40) if len(chosen) > 40 else chosen
+        done = 0
+        with ThreadPoolExecutor(8) as ex:
+            for pair in ex.map(_match, cands[:300]):
+                done += 1
+                if done % 50 == 0:
+                    log(f"TMDB 进度 {done}")
+                if not pair:
+                    continue
+                it, hit = pair
+                hd = "https://image.tmdb.org/t/p/original" + hit["backdrop_path"]
+                it["poster"] = {"url": hd, "thumb": hd}
+                it["backdrop"] = {"url": hd, "thumb": hd}
+                it["votes"] = hit.get("vote_count") or 0
+                it["rating"] = round(hit.get("vote_average") or 0, 1)
+                hero_items.append(it)
+        log(f"TMDB 命中(带横版原图): {len(hero_items)}")
+        hero_items.sort(key=lambda x: -(x.get("votes") or 0))
+        hero_items = hero_items[:40]
+    else:
+        log("!! 无 TMDB_API_KEY，主视觉退化为 head 前 40")
+
     home = {"ok": True, "mode": mode, "version": version, "total": total,
             "categories": cats[:40],
-            "posters": rotated_urls,
+            "posters": hero_items if hero_items else head[:40],
             "pool": head[:500]}
     out["v1/feed/%s/home.json" % mode] = enc(key, json.dumps(home, ensure_ascii=False).encode())
 
