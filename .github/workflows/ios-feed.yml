@@ -1,0 +1,45 @@
+# iOS v1/feed 云端发布（2026-10-30 立项）
+#
+# 为什么：星幕/心屋 iOS 的片库 feed（v1/feed/*，FCVB1 加密）此前只由本机
+# FilmCollector 发布 —— E 盘损坏后本机链死，片库冻结在 10-11（19 天无新片）。
+# 本 workflow 改吃云端 ci_auto 每日自动更新的 filmcollector-pages 老仓
+# （schema 2.1，含 originalCategoryName），转 iOS 契约 → FCVB1 加密 → 推
+# filmcollector-pages-xingmu(normal) / -xinwu(child)。
+#
+# 单写者纪律：只写 v1/feed/<mode>/ 与 FEED_INFO.json；直播表 normal.m3u /
+# xingmu.m3u 的作者各自独立，本 workflow 一律不碰。
+#
+# 密钥：FC_VAULT_KEY（32B 原始密钥的 base64，与 iOS 包内注入的同钥）。
+
+name: ios-feed
+
+on:
+  schedule:
+    - cron: '10 22 * * *'   # UTC 22:10 ≈ 北京 06:10，在 ci_auto（UTC 21:30）之后
+  workflow_dispatch:
+    inputs:
+      modes:
+        description: '只发某一端（normal / child），留空=两端'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install cryptography
+
+      - name: 转契约 + FCVB1 加密 + 推目标仓
+        env:
+          FC_VAULT_KEY: ${{ secrets.FC_VAULT_KEY }}
+          GH_TOKEN: ${{ secrets.FEED_TOKEN }}
+        run: python scripts/ios_feed/build_ios_feed.py ${{ github.event.inputs.modes }}
