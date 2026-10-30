@@ -8,6 +8,14 @@ name: build-ipa-2apps
 on:
   push:
     branches: [main]
+    # 2026-10-30：只有 **App 代码**变更才出包并刷 update.json（App 更新信号）。
+    # 之前 on:push 全量触发——feed/发布器/脚本类提交也会把 stamp 顶到 HEAD，
+    # 而 Release latest 里的 IPA 只有本机链才刷新 → 信号说有新版、包没变，永远对不上。
+    paths:
+      - "Packages/**"
+      - "Apps/**"
+      - "project.yml"
+      - ".github/workflows/build-ipa.yml"
   workflow_dispatch:
 
 # 「Publish update.json」那步要 PUT `/repos/<repo>/contents/update.json`（写 gh-pages 分支）。
