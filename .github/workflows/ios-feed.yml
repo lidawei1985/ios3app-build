@@ -42,4 +42,5 @@ jobs:
         env:
           FC_VAULT_KEY: ${{ secrets.FC_VAULT_KEY }}
           GH_TOKEN: ${{ secrets.FEED_TOKEN }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: python scripts/ios_feed/build_ios_feed.py ${{ github.event.inputs.modes }}
