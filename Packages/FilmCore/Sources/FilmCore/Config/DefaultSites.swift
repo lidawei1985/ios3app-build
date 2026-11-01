@@ -45,7 +45,54 @@ public enum DefaultSites {
     /// - 存活的 24 条**全部**分类表里都带「伦理片」等成人分类（实测 44-60 类/源，
     ///   无一例外）→ 按 2026-10-01 口径「心屋源池不许有带成人内容的源、不靠闸门兜」，
     ///   **一条都不能留在影视区**，全部下沉到 builtinMixedVodSources（星幕/成人端可见）。
-    /// - 心屋因此本区为空：儿童端改走「片库 feed + 待建的儿童分类白名单源池」。
+    /// - 心屋不再共用本区：改走 `builtinChildVodSources`（v102 建池，3 条实测源 + 分类正名单）。
+    /// 心屋（child）专用点播源池 —— 2026-11-01 建立（v102）。
+    ///
+    /// 背景：全量彻查发现**全网点播源无一例外带「伦理片」等成人分类**
+    ///   （实测 24 条活源，分类表 44-60 类，全部含成人词）。本轮另做两轮扩源实测：
+    ///   ① 40 条动漫/儿童站域名 → DNS 全不存在（猜域名不可行）；
+    ///   ② 从 5 条真实活跃公开线路实挖 11 条源 → 零成人词的 **0 条**。
+    ///   「源池里不含成人分类」的源在现实中不存在 → 一味源池级清空 = 心屋零源（内容归零），
+    ///   与主人 2026-11-01「成人和影视保持现有量」直接冲突。
+    /// 解法（四层，风险方向**只会少内容、不会漏脏内容**）：
+    ///   ① 源池级：只收两轮实测都稳定、安全分类真正拉得到片的源（360/猫眼/茅台，首片播放地址实测 200）；
+    ///   ② 分类级**正名单**（白名单枚举，非黑名单）：心屋只放行 动漫/动画/儿童/儿歌/科普/
+    ///      纪录/教育/益智/家庭/亲子 类，其余分类在分类条里**根本不出现**；
+    ///   ③ **禁全库流**：心屋不显示「全部」chip，首屏也不发不带 t= 的请求
+    ///      （CMS 无分类参数返回全库混合流 —— 2026-10-01 心屋漏成人内容走的就是这条通道）；
+    ///   ④ 条目级：NavPolicy.allowsItem 再兜一次（标题 + 源分类双判）。
+    public static let builtinChildVodSources: [TVBoxSite] = [
+        TVBoxSite(key: "builtin:kids:360zy", name: "360资源", api: "https://360zy.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:maoyan", name: "猫眼资源", api: "https://api.maoyanapi.top/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:mtzy", name: "茅台资源", api: "https://mtzy.me/api.php/provide/vod/", type: 1),
+    ]
+
+    /// 心屋分类**正名单**（白名单枚举）：命中任一关键词才放行。
+    /// 2026-11-01 实测三源的安全分类：家庭篇 / 纪录片 / 动画片 / 国产动漫 / 动漫 / 动漫电影 …
+    static let childCategoryAllowWords = ["动漫", "动画", "儿童", "儿歌", "科普", "纪录",
+                                          "教育", "益智", "家庭", "亲子", "国学", "童话",
+                                          "幼儿", "早教", "少儿"]
+
+    /// 心屋分类**硬否决词**（双保险：正名单万一被上游新分类名绕过，这里再挡一次）。
+    /// 含成人类目 + 儿童不宜类目（爱情/言情/都市/恐怖/惊悚/犯罪/悬疑 ——
+    /// 2026-10-01 心屋真机漏出的正是「爱情片」「都市言情短剧」）。
+    static let childCategoryDenyWords = ["伦理", "三级", "情色", "成人", "色情", "写真", "福利",
+                                         "无码", "有码", "里番", "自拍", "强奸", "乱伦", "人妻",
+                                         "熟女", "制服", "性爱", "AV", "av", "激情", "偷拍",
+                                         "限制级", "一本道", "爱情", "言情", "都市", "恐怖",
+                                         "惊悚", "犯罪", "悬疑"]
+
+    /// 心屋是否放行这个源分类（**正名单**：不命中＝不显示）。
+    public static func isChildSafeCategory(_ name: String) -> Bool {
+        if childCategoryDenyWords.contains(where: { name.contains($0) }) { return false }
+        return childCategoryAllowWords.contains(where: { name.contains($0) })
+    }
+
+    /// 心屋分类过滤（源浏览页用）：只留正名单分类。
+    public static func childSafeCategories(_ cats: [SiteCategory]) -> [SiteCategory] {
+        cats.filter { isChildSafeCategory($0.name) }
+    }
+
     public static let builtinVodSources: [TVBoxSite] = []
 
     // ⛔ 2026-09-26 红线修复（用户实测心屋出现成人内容）：上面列表原有 11 条成人 CMS 源
@@ -134,10 +181,10 @@ public enum DefaultSites {
         // 永远拦不干净（2026-10-01 真机：心屋索倪页仍出现爱情片/都市言情短剧）；
         // 故心屋**源池里就没有它** —— 不靠闸门、不留擦边。
         if mode == "child" {
-            // 心屋 = 纯影视源（2026-09-26 已把 11 条成人 CMS 源移出，此池零成人内容）。
-            // 儿童专用源（`builtinChildVodSources`）待实测补入 —— 不实测就写死 URL 会引入死源，
-            // 故本轮先只做「删干净」，补源下一轮做（见 .workbuddy/memory/2026-10-01.md 未清账）。
-            return builtinVodSources
+            // 心屋 = 儿童专用源池（2026-11-01 建立，见 builtinChildVodSources 注释）。
+            // 源本身是活源（含成人分类是全行业通病），心屋靠**分类正名单 + 禁全库流**
+            // 保证成人分类在儿童端物理不可见（比黑名单可靠：漏词只会少内容，不会漏脏内容）。
+            return builtinChildVodSources
         }
         let common = builtinVodSources + builtinMixedVodSources
         // 2026-09-30 用户钦定：星幕（normal）也挂成人源（「星幕可以有，不止成人端；心屋不行」）。

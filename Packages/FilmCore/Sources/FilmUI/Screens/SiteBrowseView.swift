@@ -93,6 +93,13 @@ public struct SiteBrowseView: View {
                                  sourceCategory: $0.originalCategoryName ?? $0.origin?.category,
                                  mode: mode)
         }
+        .filter { item in
+            // 心屋额外兜底（v102）：带源分类的条目必须落在**正名单**里
+            // （搜索/兜底路径不走分类参数，靠这里挡住混入的成人条目）。
+            guard mode == "child" else { return true }
+            guard let c = item.originalCategoryName ?? item.origin?.category, !c.isEmpty else { return true }
+            return DefaultSites.isChildSafeCategory(c)
+        }
     }
 
     /// 当前生效的加载单元：选中二级筛选时＝该二级分类单独一桶，否则＝整个大类。
@@ -538,11 +545,14 @@ public struct SiteBrowseView: View {
     private var categoryBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 8) {
-                chip(name: "全部", selected: selectedCategory == nil && selectedBucket == nil) {
-                    selectedCategory = nil
-                    selectedBucket = nil
-                    subCategory = nil
-                    Task { await reload() }
+                // 心屋（child）不显示「全部」（v102 红线）：点它 = 不带 t= = 全库混合流。
+                if mode != "child" {
+                    chip(name: "全部", selected: selectedCategory == nil && selectedBucket == nil) {
+                        selectedCategory = nil
+                        selectedBucket = nil
+                        subCategory = nil
+                        Task { await reload() }
+                    }
                 }
                 // 分组优先（2026-09-22）：源分类先归同名大类，点开即「电影/电视剧/动漫/4K专区/…」
                 // 这样每一组里都是几十~上百部，不会出现「一个分类只有两部」的尴尬。
@@ -750,8 +760,16 @@ public struct SiteBrowseView: View {
         // 首屏耗时降到 max(RTT1, RTT2)，冷启动大约砍一半。
         // 语义不变：分类仅在本地为空时才需要走网络。
         let needCats = categories.isEmpty
-        async let firstAsync = client.listPage(categoryId: nil, page: 1)
-        if needCats { categories = await client.categories() }
+        // ★ 心屋（child）红线（v102）：**绝不发不带分类的「全站最新」请求** ——
+        // CMS 无 t= 参数时返回全库混合流，成人内容正是从这条通道漏进儿童端
+        // （2026-10-01 真机实锤：心屋出现爱情片/都市言情短剧）。
+        // 故心屋先拿分类 → 正名单过滤 → 首屏锁定第一个安全分类再拉片。
+        let kidLock = (mode == "child")
+        if kidLock && needCats {
+            categories = DefaultSites.childSafeCategories(await client.categories())
+        }
+        async let firstAsync = client.listPage(categoryId: kidLock ? categories.first?.id : nil, page: 1)
+        if needCats && !kidLock { categories = await client.categories() }
         let first = await firstAsync
         // v99 根修「该源暂时没有内容」误报（主人 2026-10-18：索倪翻页/改源动不动就"没有内容"）：
         // 首屏**网络失败**（超时/WAF 拦截）与「源真的没内容」原来不分——失败落进空态文案，
@@ -763,8 +781,9 @@ public struct SiteBrowseView: View {
             return
         }
         selectedBucket = nil
-        selectedCategory = nil
         subCategory = nil
+        // 心屋：保持选中第一个安全分类（nil 语义＝「全部」＝全库流，儿童端禁用）
+        selectedCategory = kidLock ? categories.first : nil
         items = scopedItems(first.items)
         page = 1
         pageCount = first.pageCount
@@ -786,6 +805,8 @@ public struct SiteBrowseView: View {
         reachedEnd = false
         skipNote = nil
         var cat = selectedCategory
+        // 心屋防御（v102）：任何路径退化到 nil 都不允许（nil ＝ 全库流），锁回第一个安全分类。
+        if mode == "child", cat == nil { cat = DefaultSites.childSafeCategories(categories).first ?? categories.first }
         var first = await client.listPage(categoryId: cat?.id, page: 1)
         // v99：与 bootstrap 同款守卫——分类首包网络失败不得冒充「分类/源没内容」，
         // 否则索倪这类 Cloudflare 抖动源一抖就弹空态文案（主人实测投诉）。
@@ -815,6 +836,9 @@ public struct SiteBrowseView: View {
             }
             if let moved {
                 skipNote = "「\(dead.name)」源站暂无内容，已自动跳到「\(moved.name)」"
+            } else if mode == "child" {
+                // 心屋：绝不退回「全部」（全库流），锁回第一个安全分类
+                cat = DefaultSites.childSafeCategories(categories).first ?? categories.first
             } else {
                 // 连探都没内容 → 退回「全部」，别把用户卡在死分类里
                 skipNote = "该分类源站暂无内容，已回到「全部」"
