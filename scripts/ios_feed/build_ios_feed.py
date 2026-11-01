@@ -18,6 +18,7 @@ import os
 import sys
 import time
 import urllib.parse
+import difflib
 import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -144,23 +145,55 @@ def build_mode(mode, key):
     with_poster = [it for it in items if it["poster"]["url"]]
     head = sorted(with_poster, key=lambda x: -(x.get("quality_score") or 0))[:1000]
 
-    def _tmdb_hit(title, year, is_tv):
+    def _norm(x):
+        x = (x or "").lower()
+        return re.sub(r"[\s:：\u00b7\-\u2014_()\uff08\uff09\u3001,\uff0c.\u3002!\uff01?\uff1f'\"\u201c\u201d\u2018\u2019\[\]\u3010\u3011*]+", "", x)
+
+    def _year_ok(h2, year, is_tv):
+        """TMDB 年份与源年份相差 <=1 才认（源年份缺失/为 0 时不校验）"""
+        if not (year and str(year).isdigit() and int(year) >= 1950):
+            return True
+        d = h2.get("first_air_date") or "" if is_tv else h2.get("release_date") or ""
+        if not d or not d[:4].isdigit():
+            return False
+        return abs(int(d[:4]) - int(year)) <= 1
+
+    def _title_ok(nt, h2, thresh):
+        """标题实质一致才算命中：防『决战』配到『勇敢者游戏：决战丛林』这类张冠李戴"""
+        pool = [h2.get("title"), h2.get("original_title"),
+                h2.get("name"), h2.get("original_name")]
+        for c in pool:
+            if c and _norm(c) == nt:
+                return True
+        for c in pool:
+            c2 = _norm(c)
+            if c2 and difflib.SequenceMatcher(None, nt, c2).ratio() >= thresh:
+                return True
+        return False
+
+    def _tmdb_hit(title, year, is_tv, thresh=0.80):
         kind = "tv" if is_tv else "movie"
         q = urllib.parse.quote(title or "")
         if not q:
             return None
         url = (f"https://api.themoviedb.org/3/search/{kind}?api_key={TMDB_KEY}"
                f"&query={q}&language=zh-CN&include_adult=false")
-        if year:
+        if year and str(year).isdigit() and int(year) >= 1950:
             url += ("&first_air_date_year=" + year) if is_tv else ("&year=" + year)
+        nt = _norm(title)
         for _ in range(2):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "fc-ios-feed/1.0"})
                 with urllib.request.urlopen(req, timeout=15) as r:
                     res = json.loads(r.read())
                 for h2 in (res.get("results") or []):
-                    if h2.get("backdrop_path"):
-                        return h2
+                    if not h2.get("backdrop_path"):
+                        continue
+                    if not _title_ok(nt, h2, thresh):
+                        continue
+                    if not _year_ok(h2, year, is_tv):
+                        continue
+                    return h2
                 return None
             except Exception as e:
                 log(f"tmdb retry: {e}")
@@ -181,29 +214,42 @@ def build_mode(mode, key):
         cands.sort(key=lambda x: -(x.get("quality_score") or 0))
         log(f"TMDB 匹配候选(近三年可播) {len(cands)}")
 
-        def _match(it):
-            is_tv = it.get("content_type") in ("tv", "anime")
-            hit = _tmdb_hit(it["title"], it.get("year"), is_tv)
-            return None if hit is None else (it, hit)
+        def _run(thresh):
+            out = []
+            def _match(it):
+                is_tv = it.get("content_type") in ("tv", "anime")
+                hit = _tmdb_hit(it["title"], it.get("year"), is_tv, thresh)
+                return None if hit is None else (it, hit)
+            with ThreadPoolExecutor(8) as ex:
+                for pair in ex.map(_match, cands[:400]):
+                    if not pair:
+                        continue
+                    it, hit = pair
+                    hd = "https://image.tmdb.org/t/p/original" + hit["backdrop_path"]
+                    it["poster"] = {"url": hd, "thumb": hd}
+                    it["backdrop"] = {"url": hd, "thumb": hd}
+                    it["votes"] = hit.get("vote_count") or 0
+                    it["rating"] = round(hit.get("vote_average") or 0, 1)
+                    out.append(it)
+            return out
 
-        done = 0
-        with ThreadPoolExecutor(8) as ex:
-            for pair in ex.map(_match, cands[:300]):
-                done += 1
-                if done % 50 == 0:
-                    log(f"TMDB 进度 {done}")
-                if not pair:
-                    continue
-                it, hit = pair
-                hd = "https://image.tmdb.org/t/p/original" + hit["backdrop_path"]
-                it["poster"] = {"url": hd, "thumb": hd}
-                it["backdrop"] = {"url": hd, "thumb": hd}
-                it["votes"] = hit.get("vote_count") or 0
-                it["rating"] = round(hit.get("vote_average") or 0, 1)
-                hero_items.append(it)
-        log(f"TMDB 命中(带横版原图): {len(hero_items)}")
+        # 第一轮严格阈值 0.80（宁缺毋滥，图绝不能配错片）
+        hero_items = _run(0.80)
+        log(f"TMDB 严格命中(标题+年份校验): {len(hero_items)}")
+        # 儿童库片名冷门/年份缺失，严格轮可能过少 -> 放宽到 0.62 补一轮
+        if len(hero_items) < 12:
+            more = _run(0.62)
+            seen = {id(x) for x in hero_items}
+            hero_items += [x for x in more if id(x) not in seen]
+            log(f"TMDB 放宽后命中: {len(hero_items)}")
+
         hero_items.sort(key=lambda x: -(x.get("votes") or 0))
-        hero_items = hero_items[:40]
+        # 每日轮换：在热门池(votes 前 150)里按日期播种抽 40 条，
+        # 保证「都是热门高清」的同时「每天换一批面孔」，杜绝天天同一批。
+        import random
+        hot = hero_items[:150]
+        day_seed = time.strftime("%Y-%m-%d") + mode
+        hero_items = random.Random(day_seed).sample(hot, 40) if len(hot) > 40 else hot
     else:
         log("!! 无 TMDB_API_KEY，主视觉退化为 head 前 40")
 
