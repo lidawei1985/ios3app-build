@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+import re
 import urllib.parse
 import difflib
 import urllib.request
