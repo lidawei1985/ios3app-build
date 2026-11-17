@@ -1,7 +1,7 @@
 {
-  "stamp": "e627c707f937",
-  "note": "feat(vod): \u6e90\u8868\u6539\u8fdc\u7aef\u70ed\u66f4\uff08\u963f\u91cc\u4e91/ota/ios_vod_sources.json\uff0c6h TTL\uff0c\u62c9\u4e0d\u5230\u56de\u843d\u5305\u5185\u515c\u5e95\uff09+ \u5355\u8bf7\u6c42\u8d85\u65f6 30s\u219212s\uff08\u6b7b\u6e90\u4e0d\u518d\u5361\u6ee1 30 \u79d2\uff09",
-  "builtAt": "2026-11-17T06:33:50Z",
+  "stamp": "c22e586e4d56",
+  "note": "fix(vod): \u5305\u91cc\u515c\u5e95\u6e90\u8868\u6362\u6210\u5b9e\u6d4b\u53ef\u64ad 66 \u6761 + \u8fdc\u7aef\u843d\u5730\u540e\u901a\u77e5\u754c\u9762\u91cd\u7b97",
+  "builtAt": "2026-11-17T06:37:44Z",
   "apps": {
     "xingmu": {
       "asset": "XingmuISO.ipa"
