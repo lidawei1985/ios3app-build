@@ -27,6 +27,8 @@ struct XinwuApp: App {
     init() {
         // 产品隔离：心屋=child → 内置线路 = 空集（用户钦定：心屋不要 TVBox 线路）
         TVBoxConfigStore.shared.configure(productMode: ProductProfile.xinwu.mode)
+        // 2026-11-17：启动静默拉远端源表（阿里云，6h TTL，失败用缓存/兜底，绝不阻塞首屏）
+        RemoteVodSites.shared.bootstrap()
     }
 
     var body: some Scene {

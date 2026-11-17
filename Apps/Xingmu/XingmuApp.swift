@@ -29,6 +29,8 @@ struct XingmuApp: App {
         MainThreadMark.set("App init")   // v76.1：截图窗口内的责任动作链起点
         // 产品隔离：星幕=normal → 内置线路仅影视组（无成人组）
         TVBoxConfigStore.shared.configure(productMode: ProductProfile.xingmu.mode)
+        // 2026-11-17：启动静默拉远端源表（阿里云，6h TTL，失败用缓存/兜底，绝不阻塞首屏）
+        RemoteVodSites.shared.bootstrap()
     }
 
     var body: some Scene {

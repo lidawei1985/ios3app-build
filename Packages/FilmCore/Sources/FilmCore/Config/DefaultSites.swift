@@ -8,7 +8,7 @@ import Foundation
 public enum DefaultSites {
 
     /// 公网 CMS 源（2026-09-20 实测存活顺序）
-    public static let tvDramaSources: [TVBoxSite] = [
+    static let tvDramaFallback: [TVBoxSite] = [
         // 2026-11-01 全量彻查：原 量子/天涯/非凡/卧龙 已全灭
         //   （cj.lziapi 404、tyyszy 连接被重置、cj.ffzyapi 403、collect.wolongzyw 200 但零条目）。
         //   判据不是「HTTP 200 就算活」，而是 ①ac=videolist 拉到片 ②取首部片详情
@@ -61,7 +61,7 @@ public enum DefaultSites {
     ///   ③ **禁全库流**：心屋不显示「全部」chip，首屏也不发不带 t= 的请求
     ///      （CMS 无分类参数返回全库混合流 —— 2026-10-01 心屋漏成人内容走的就是这条通道）；
     ///   ④ 条目级：NavPolicy.allowsItem 再兜一次（标题 + 源分类双判）。
-    public static let builtinChildVodSources: [TVBoxSite] = [
+    static let builtinChildFallback: [TVBoxSite] = [
         TVBoxSite(key: "builtin:kids:360zy", name: "360资源", api: "https://360zy.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:kids:maoyan", name: "猫眼资源", api: "https://api.maoyanapi.top/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:kids:mtzy", name: "茅台资源", api: "https://mtzy.me/api.php/provide/vod/", type: 1),
@@ -117,7 +117,7 @@ public enum DefaultSites {
     /// （ac=videolist 有片 → 详情有播放地址 → 播放地址 okhttp/Referer/浏览器 UA 实测 200）。
     /// 被替换掉的 34 条已确认真死（详见 builtinVodSources 注释），不再占位误导用户。
     /// 全部 44-60 分类且均含「伦理片」等成人分类，故只进混合区，由源池级隔离挡在心屋之外。
-    public static let builtinMixedVodSources: [TVBoxSite] = [
+    static let builtinMixedFallback: [TVBoxSite] = [
         TVBoxSite(key: "builtin:harv:360zy-com-api-php-provide-vod", name: "360资源", api: "https://360zy.com/api.php/provide/vod", type: 1),
         TVBoxSite(key: "builtin:harv:360zy4-com-api-php-provide-vod", name: "360资源", api: "https://360zy4.com/api.php/provide/vod/", type: 1),
         TVBoxSite(key: "builtin:harv:360zy8-com-api-php-provide-vod", name: "360资源", api: "https://360zy8.com/api.php/provide/vod/", type: 1),
@@ -158,6 +158,26 @@ public enum DefaultSites {
         case mixed = "混合（影视+成人分类）"
         case custom = "自定义"
         case adult = "成人"
+    }
+
+    // MARK: - 远端热更源表（2026-11-17）
+    /// 三套池子改成**远端优先、包里兜底**：
+    /// 源表存阿里云 `/ota/ios_vod_sources.json`，App 启动静默拉一次（6h TTL，落盘缓存）。
+    /// 源死了改云端 JSON → 手机自动生效，**不用改代码、不用云构建、不用重签**。
+    /// 远端拉不到（无网/服务器挂/首启动）→ 自动回落到包里这份硬编码清单，绝不空池。
+    /// 详见 `RemoteVodSites.swift`。
+    public static var tvDramaSources: [TVBoxSite] {
+        RemoteVodSites.shared.sites("drama") ?? tvDramaFallback
+    }
+
+    /// 星幕/通用影视池（含成人分类，浏览层由 NavPolicy 拦）。
+    public static var builtinMixedVodSources: [TVBoxSite] {
+        RemoteVodSites.shared.sites("mixed") ?? builtinMixedFallback
+    }
+
+    /// 心屋儿童池（分类正名单 + 禁全库流在 NavPolicy/SiteBrowseView 侧）。
+    public static var builtinChildVodSources: [TVBoxSite] {
+        RemoteVodSites.shared.sites("child") ?? builtinChildFallback
     }
 
     /// 站点 → 分区。按 key 精确判定（同域名可能既在影视也在成人列表，key 才是唯一身份）：

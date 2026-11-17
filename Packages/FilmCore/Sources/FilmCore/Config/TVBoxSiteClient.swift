@@ -100,8 +100,14 @@ public actor TVBoxSiteClient {
         // 52包（用户报「公网片源暂时全部不可达」）：实测剧集源 ac=detail 常 20-40s 才回
         // （弱网更久）→ 20s 一掐，几个剧集源接连超时就成了"全部不可达"的假象。
         // 放宽单请求到 30s、整体 60s（快源不受影响，慢源不再被误杀）。
-        cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 60
+        // 2026-11-17（伟哥：「心屋卡到怀疑人生」「星幕不出海报」）：
+        // 旧 30s/60s 是当年为了救「慢源被误杀」放宽的，代价是**死源每条卡满 30 秒**——
+        // 心屋两个死源就能让首屏白等 60s，观感就是"卡死"。
+        // 现在远端源表只下发实测可播的活源（最慢 4.5s、多数 <1.5s），12s 对活源绰绰有余，
+        // 死源 12 秒即止损。配合 SourceHealth 熔断（连挂 3 次拉黑 10 分钟），
+        // 首屏不会再被死源拖住，慢源也仍有余量。
+        cfg.timeoutIntervalForRequest = 12
+        cfg.timeoutIntervalForResource = 25
         session = URLSession(configuration: cfg)
         // 2026-10-02「搜索好慢」实测 78 源同一关键词：中位 2.1s，但**最慢 38.6s**，
         // 且 6 个源超过 22s。搜索是**交互操作**，等 30s 的源毫无意义——
