@@ -103,6 +103,8 @@ public final class RemoteVodSites: @unchecked Sendable {
             UserDefaults.standard.set(data, forKey: Self.bodyKey)
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.stampKey)
             UserDefaults.standard.set(version, forKey: Self.versionKey)
+            // 让已装配的界面立刻换上新源表（远端通常比首帧晚 0.5~1s 到）
+            NotificationCenter.default.post(name: .remoteVodSitesDidUpdate, object: nil)
         }
     }
 
@@ -150,4 +152,9 @@ public final class RemoteVodSites: @unchecked Sendable {
             }
         }
     }
+}
+
+public extension Notification.Name {
+    /// 远端源表更新完成（TVBoxConfigStore 监听后刷新界面；改名/复用前先确认没人拿它做别的）。
+    static let remoteVodSitesDidUpdate = Notification.Name("RemoteVodSitesDidUpdate")
 }

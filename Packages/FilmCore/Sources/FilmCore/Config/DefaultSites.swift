@@ -9,15 +9,18 @@ public enum DefaultSites {
 
     /// 公网 CMS 源（2026-09-20 实测存活顺序）
     static let tvDramaFallback: [TVBoxSite] = [
-        // 2026-11-01 全量彻查：原 量子/天涯/非凡/卧龙 已全灭
-        //   （cj.lziapi 404、tyyszy 连接被重置、cj.ffzyapi 403、collect.wolongzyw 200 但零条目）。
-        //   判据不是「HTTP 200 就算活」，而是 ①ac=videolist 拉到片 ②取首部片详情
-        //   解析播放地址 ③播放地址带 okhttp UA / Referer / 浏览器 UA 三种头实测 HTTP 200。
-        //   以下 4 条为当轮实测全通过者（多源自动容灾：挂了自动切下一个）。
-        TVBoxSite(key: "drama:hongniu4", name: "红牛资源", api: "https://www.hongniuzy4.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "drama:jinying",  name: "金鹰资源", api: "https://jinyingzy.com/api.php/provide/vod", type: 1),
-        TVBoxSite(key: "drama:hhzy",     name: "豪华资源", api: "https://hhzyapi.com/api.php/provide/vod/?ac=list", type: 1),
-        TVBoxSite(key: "drama:subocj",   name: "速播资源", api: "https://subocj.com/api.php/provide/vod/?ac=videolist", type: 1),
+        // ⚠️ 兜底清单（drama 区）：2026-11-17 14:27 本网实测可播 —— 由 ios_ctrl/vod_emit.py 生成，勿手改；
+        //    远端源表（阿里云 /ota/ios_vod_sources.json）拉不到时才用这份。
+        TVBoxSite(key: "drama:live:ffzy-tv-api-php-provide-vod", name: "影视 | 非凡[直连]", api: "http://ffzy.tv/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "drama:live:caiji-dyttzyapi-com-api-php-provide-vod-from", name: "🎞️天堂┃采集", api: "http://caiji.dyttzyapi.com/api.php/provide/vod/from/dyttm3u8/at/m3u8/", type: 1),
+        TVBoxSite(key: "drama:live:bfzyapi-com-api-php-provide-vod-ac-list", name: "❤暴风资源", api: "https://bfzyapi.com/api.php/provide/vod/?ac=list", type: 1),
+        TVBoxSite(key: "drama:live:api-ffzyapi-com-api-php-provide-vod", name: "非凡资源", api: "https://api.ffzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "drama:live:api-okzyw-net-api-php-provide-vod-ac-videoli", name: "OK资源", api: "http://api.okzyw.net/api.php/provide/vod/?ac=videolist", type: 1),
+        TVBoxSite(key: "drama:live:api-zuidapi-com-api-php-provide-vod", name: "最大资源", api: "https://api.zuidapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "drama:live:360zy9-com-api-php-provide-vod", name: "360zy9.com", api: "https://360zy9.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "drama:live:bfzyapi-com-api-php-provide-vod", name: "暴风资源", api: "https://bfzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "drama:live:tyyszy3-com-api-php-provide-vod", name: "tyyszy3", api: "http://tyyszy3.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "drama:live:cj-lziapi-com-api-php-provide-vod", name: "量子资源", api: "https://cj.lziapi.com/api.php/provide/vod", type: 1),
     ]
 
     /// ★ v69 品牌归一（详情页聚合扩容配套，主人 2026-10-04「源的数量再给我扩扩」）：
@@ -62,9 +65,36 @@ public enum DefaultSites {
     ///      （CMS 无分类参数返回全库混合流 —— 2026-10-01 心屋漏成人内容走的就是这条通道）；
     ///   ④ 条目级：NavPolicy.allowsItem 再兜一次（标题 + 源分类双判）。
     static let builtinChildFallback: [TVBoxSite] = [
-        TVBoxSite(key: "builtin:kids:360zy", name: "360资源", api: "https://360zy.com/api.php/provide/vod", type: 1),
-        TVBoxSite(key: "builtin:kids:maoyan", name: "猫眼资源", api: "https://api.maoyanapi.top/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:kids:mtzy", name: "茅台资源", api: "https://mtzy.me/api.php/provide/vod/", type: 1),
+        // ⚠️ 兜底清单（child 区）：2026-11-17 14:27 本网实测可播 —— 由 ios_ctrl/vod_emit.py 生成，勿手改；
+        //    远端源表（阿里云 /ota/ios_vod_sources.json）拉不到时才用这份。
+        TVBoxSite(key: "builtin:kids:ffzy-tv-api-php-provide-vod", name: "影视 | 非凡[直连]", api: "http://ffzy.tv/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:caiji-dyttzyapi-com-api-php-provide-vod-from", name: "🎞️天堂┃采集", api: "http://caiji.dyttzyapi.com/api.php/provide/vod/from/dyttm3u8/at/m3u8/", type: 1),
+        TVBoxSite(key: "builtin:kids:bfzyapi-com-api-php-provide-vod-ac-list", name: "❤暴风资源", api: "https://bfzyapi.com/api.php/provide/vod/?ac=list", type: 1),
+        TVBoxSite(key: "builtin:kids:api-ffzyapi-com-api-php-provide-vod", name: "非凡资源", api: "https://api.ffzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:api-okzyw-net-api-php-provide-vod-ac-videoli", name: "OK资源", api: "http://api.okzyw.net/api.php/provide/vod/?ac=videolist", type: 1),
+        TVBoxSite(key: "builtin:kids:api-zuidapi-com-api-php-provide-vod", name: "最大资源", api: "https://api.zuidapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy9-com-api-php-provide-vod", name: "360zy9.com", api: "https://360zy9.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:bfzyapi-com-api-php-provide-vod", name: "暴风资源", api: "https://bfzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:tyyszy3-com-api-php-provide-vod", name: "tyyszy3", api: "http://tyyszy3.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:cj-lziapi-com-api-php-provide-vod", name: "量子资源", api: "https://cj.lziapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:www-wsyzy-cc-api-php-provide-vod", name: "www.wsyzy.cc", api: "http://www.wsyzy.cc/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:cj-ffzyapi-com-api-php-provide-vod", name: "非凡资源", api: "https://cj.ffzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:cj-yayazy-net-api-php-provide-vod", name: "丫丫资源", api: "https://cj.yayazy.net/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:www-huyaapi-com-api-php-provide-vod-from-hym", name: "🐯虎牙采集", api: "https://www.huyaapi.com/api.php/provide/vod/from/hym3u8", type: 1),
+        TVBoxSite(key: "builtin:kids:api-guangsuapi-com-api-php-provide-vod-from-", name: "❤光速资源", api: "https://api.guangsuapi.com/api.php/provide/vod/from/gsm3u8/", type: 1),
+        TVBoxSite(key: "builtin:kids:sdzyapi-com-api-php-provide-vod", name: "♻️闪电.云播", api: "http://sdzyapi.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy4-com-api-php-provide-vod", name: "360zy4.com", api: "http://360zy4.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy6-com-api-php-provide-vod", name: "360zy6.com", api: "http://360zy6.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy-net-api-php-provide-vod", name: "360zy.net", api: "http://360zy.net/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy8-com-api-php-provide-vod", name: "360zy8.com", api: "http://360zy8.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy-com-api-php-provide-vod", name: "360资源", api: "https://360zy.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy-com-api-php-provide-vod-ac-videolist", name: "360资源", api: "https://360zy.com/api.php/provide/vod/?ac=videolist", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy7-com-api-php-provide-vod", name: "360zy7.com", api: "http://360zy7.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:hhzyapi-com-api-php-provide-vod-ac-list", name: "影视 | 豪华资源", api: "https://hhzyapi.com/api.php/provide/vod/?ac=list", type: 1),
+        TVBoxSite(key: "builtin:kids:360zy10-com-api-php-provide-vod", name: "360zy10.com", api: "http://360zy10.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:kids:taopianapi-com-cjapi-mc-vod-json-html", name: "❤淘片资源", api: "https://taopianapi.com/cjapi/mc/vod/json.html", type: 1),
+        TVBoxSite(key: "builtin:kids:tyyszyapi-com-api-php-provide-vod-ac-videoli", name: "天涯资源", api: "https://tyyszyapi.com/api.php/provide/vod/?ac=videolist", type: 1),
+        TVBoxSite(key: "builtin:kids:api-wujinapi-net-api-php-provide-vod", name: "无尽 | 采集", api: "https://api.wujinapi.net/api.php/provide/vod/", type: 1),
     ]
 
     /// 心屋分类**正名单**（白名单枚举）：命中任一关键词才放行。
@@ -118,30 +148,36 @@ public enum DefaultSites {
     /// 被替换掉的 34 条已确认真死（详见 builtinVodSources 注释），不再占位误导用户。
     /// 全部 44-60 分类且均含「伦理片」等成人分类，故只进混合区，由源池级隔离挡在心屋之外。
     static let builtinMixedFallback: [TVBoxSite] = [
-        TVBoxSite(key: "builtin:harv:360zy-com-api-php-provide-vod", name: "360资源", api: "https://360zy.com/api.php/provide/vod", type: 1),
-        TVBoxSite(key: "builtin:harv:360zy4-com-api-php-provide-vod", name: "360资源", api: "https://360zy4.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:360zy8-com-api-php-provide-vod", name: "360资源", api: "https://360zy8.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:360zy9-com-api-php-provide-vod", name: "360资源", api: "https://360zy9.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:360zy10-com-api-php-provide-vod", name: "360资源", api: "http://360zy10.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:www-wsyzy-cc-api-php-provide-vod", name: "无水印资源", api: "http://www.wsyzy.cc/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:api-wsyzy-net-api-php-provide-vod-ac-vid", name: "无水印资源", api: "https://api.wsyzy.net/api.php/provide/vod/?ac=videolist", type: 1),
-        TVBoxSite(key: "builtin:harv:api-guangsuapi-com-api-php-provide-vod", name: "光速资源", api: "https://api.guangsuapi.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:api-xinlangapi-com-xinlangapi-php-provid", name: "新浪云播", api: "http://api.xinlangapi.com/xinlangapi.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:jszyapi-com-api-php-provide-vod", name: "极速资源", api: "https://jszyapi.com/api.php/provide/vod", type: 1),
-        TVBoxSite(key: "builtin:harv:www-jszyapi-com-api-php-provide-vod", name: "极速资源", api: "https://www.jszyapi.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:api-maoyanapi-top-api-php-provide-vod", name: "猫眼资源", api: "https://api.maoyanapi.top/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:www-hongniuzy2-com-api-php-provide-vod", name: "红牛资源", api: "https://www.hongniuzy2.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:www-hongniuzy3-com-api-php-provide-vod", name: "红牛资源", api: "https://www.hongniuzy3.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:www-hongniuzy4-com-api-php-provide-vod", name: "红牛资源", api: "https://www.hongniuzy4.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:www-huyaapi-com-api-php-provide-vod-from", name: "虎牙采集", api: "https://www.huyaapi.com/api.php/provide/vod/from/hym3u8", type: 1),
-        TVBoxSite(key: "builtin:harv:hhzyapi-com-api-php-provide-vod-ac-list", name: "豪华资源", api: "https://hhzyapi.com/api.php/provide/vod/?ac=list", type: 1),
-        TVBoxSite(key: "builtin:harv:subocj-com-api-php-provide-vod-ac-videol", name: "速播资源", api: "https://subocj.com/api.php/provide/vod/?ac=videolist", type: 1),
-        TVBoxSite(key: "builtin:harv:subocaiji-com-api-php-provide-vod", name: "速播资源", api: "https://subocaiji.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:jinyingzy-com-api-php-provide-vod", name: "金鹰资源", api: "https://jinyingzy.com/api.php/provide/vod", type: 1),
-        TVBoxSite(key: "builtin:harv:www-jinyingzy-com-api-php-provide-vod", name: "金鹰资源", api: "https://www.jinyingzy.com/api.php/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:jyzyapi-com-provide-vod", name: "金鹰资源", api: "https://jyzyapi.com/provide/vod/", type: 1),
-        TVBoxSite(key: "builtin:harv:caiji-maotaizy-cc-api-php-provide-vod-at", name: "茅台资源", api: "https://caiji.maotaizy.cc/api.php/provide/vod/at/josn/", type: 1),
-        TVBoxSite(key: "builtin:harv:mtzy-me-api-php-provide-vod", name: "茅台资源", api: "https://mtzy.me/api.php/provide/vod/", type: 1),
+        // ⚠️ 兜底清单（mixed 区）：2026-11-17 14:27 本网实测可播 —— 由 ios_ctrl/vod_emit.py 生成，勿手改；
+        //    远端源表（阿里云 /ota/ios_vod_sources.json）拉不到时才用这份。
+        TVBoxSite(key: "builtin:live:ffzy-tv-api-php-provide-vod", name: "影视 | 非凡[直连]", api: "http://ffzy.tv/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:caiji-dyttzyapi-com-api-php-provide-vod-from", name: "🎞️天堂┃采集", api: "http://caiji.dyttzyapi.com/api.php/provide/vod/from/dyttm3u8/at/m3u8/", type: 1),
+        TVBoxSite(key: "builtin:live:bfzyapi-com-api-php-provide-vod-ac-list", name: "❤暴风资源", api: "https://bfzyapi.com/api.php/provide/vod/?ac=list", type: 1),
+        TVBoxSite(key: "builtin:live:api-ffzyapi-com-api-php-provide-vod", name: "非凡资源", api: "https://api.ffzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:live:api-okzyw-net-api-php-provide-vod-ac-videoli", name: "OK资源", api: "http://api.okzyw.net/api.php/provide/vod/?ac=videolist", type: 1),
+        TVBoxSite(key: "builtin:live:api-zuidapi-com-api-php-provide-vod", name: "最大资源", api: "https://api.zuidapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:live:360zy9-com-api-php-provide-vod", name: "360zy9.com", api: "https://360zy9.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:bfzyapi-com-api-php-provide-vod", name: "暴风资源", api: "https://bfzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:live:tyyszy3-com-api-php-provide-vod", name: "tyyszy3", api: "http://tyyszy3.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:live:cj-lziapi-com-api-php-provide-vod", name: "量子资源", api: "https://cj.lziapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:live:www-wsyzy-cc-api-php-provide-vod", name: "www.wsyzy.cc", api: "http://www.wsyzy.cc/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:cj-ffzyapi-com-api-php-provide-vod", name: "非凡资源", api: "https://cj.ffzyapi.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:live:cj-yayazy-net-api-php-provide-vod", name: "丫丫资源", api: "https://cj.yayazy.net/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:www-huyaapi-com-api-php-provide-vod-from-hym", name: "🐯虎牙采集", api: "https://www.huyaapi.com/api.php/provide/vod/from/hym3u8", type: 1),
+        TVBoxSite(key: "builtin:live:api-guangsuapi-com-api-php-provide-vod-from-", name: "❤光速资源", api: "https://api.guangsuapi.com/api.php/provide/vod/from/gsm3u8/", type: 1),
+        TVBoxSite(key: "builtin:live:sdzyapi-com-api-php-provide-vod", name: "♻️闪电.云播", api: "http://sdzyapi.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:360zy4-com-api-php-provide-vod", name: "360zy4.com", api: "http://360zy4.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:360zy6-com-api-php-provide-vod", name: "360zy6.com", api: "http://360zy6.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:360zy-net-api-php-provide-vod", name: "360zy.net", api: "http://360zy.net/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:360zy8-com-api-php-provide-vod", name: "360zy8.com", api: "http://360zy8.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:360zy-com-api-php-provide-vod", name: "360资源", api: "https://360zy.com/api.php/provide/vod", type: 1),
+        TVBoxSite(key: "builtin:live:360zy-com-api-php-provide-vod-ac-videolist", name: "360资源", api: "https://360zy.com/api.php/provide/vod/?ac=videolist", type: 1),
+        TVBoxSite(key: "builtin:live:360zy7-com-api-php-provide-vod", name: "360zy7.com", api: "http://360zy7.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:hhzyapi-com-api-php-provide-vod-ac-list", name: "影视 | 豪华资源", api: "https://hhzyapi.com/api.php/provide/vod/?ac=list", type: 1),
+        TVBoxSite(key: "builtin:live:360zy10-com-api-php-provide-vod", name: "360zy10.com", api: "http://360zy10.com/api.php/provide/vod/", type: 1),
+        TVBoxSite(key: "builtin:live:taopianapi-com-cjapi-mc-vod-json-html", name: "❤淘片资源", api: "https://taopianapi.com/cjapi/mc/vod/json.html", type: 1),
+        TVBoxSite(key: "builtin:live:tyyszyapi-com-api-php-provide-vod-ac-videoli", name: "天涯资源", api: "https://tyyszyapi.com/api.php/provide/vod/?ac=videolist", type: 1),
+        TVBoxSite(key: "builtin:live:api-wujinapi-net-api-php-provide-vod", name: "无尽 | 采集", api: "https://api.wujinapi.net/api.php/provide/vod/", type: 1),
     ]
 
     /// 成人内置点播源（2026-09-30 起星幕 normal / 成人端 adult 可见；心屋 child 物理不可见——儿童端红线）。

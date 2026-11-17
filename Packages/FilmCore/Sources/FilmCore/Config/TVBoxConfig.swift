@@ -296,6 +296,11 @@ public final class TVBoxConfigStore: ObservableObject {
         stateURL = dir.appendingPathComponent("tvbox_active_state.json")
         customURL = dir.appendingPathComponent("tvbox_custom_sources.json")
         load()
+        // 远端源表落地后（App 启动约 1s）重算展示集合：否则界面停留在包里兜底清单直到下次导航。
+        NotificationCenter.default.addObserver(forName: .remoteVodSitesDidUpdate,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.objectWillChange.send() }
+        }
     }
 
     // MARK: 配置历史管理
